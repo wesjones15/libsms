@@ -24,6 +24,19 @@ sim.advance(&mut World, &pad, /* camera_yaw */ 0, 1.0 / 60.0);
 Read `docs/behavior-spec.md` for what is implemented, the tuning numbers, and what still needs
 verifying against the real game.
 
+## Running sample
+
+A 3D obstacle course with a third-person camera: stairs, a wall-kick shaft, a high platform for
+hover/rocket, a bridge, and gentle and slippery ramps, with FLUDD water droplets.
+
+```
+cargo run -p viewer
+```
+
+It looks for your extracted disc data in `extracted/sms` (or a path argument / `SMS_DATA`) and
+says on screen whether it found it. WASD move, Space jump, F dive, Z ground pound, Ctrl crouch,
+Shift spray, X swap nozzle, 1-4 pick nozzle, arrows orbit the camera, R respawn.
+
 ```
 cargo test
 cargo run -p libsms --example report
