@@ -1,0 +1,12 @@
+[package]
+name = "libsms-ffi"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+name = "sms"
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+libsms.workspace = true

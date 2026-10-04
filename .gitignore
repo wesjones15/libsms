@@ -1,0 +1,21 @@
+/target
+
+# Never commit game data (see CLAUDE.md)
+*.iso
+*.ciso
+*.gcm
+*.rvz
+*.wia
+*.wbfs
+*.gcz
+*.nfs
+*.tgc
+*.z64
+*.dol
+*.bin
+*.szs
+*.arc
+*.bti
+*.mod
+/extracted/
+/assets/
