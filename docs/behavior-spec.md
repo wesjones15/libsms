@@ -5,6 +5,9 @@ disc). Function names in parentheses are decomp symbols. Numbers marked **(disc)
 `.prm` files in `params.szs` on the user's disc; the constructors' code defaults differ and are
 only fallbacks.
 
+Asset pipeline: `libsms::extract` reads the user's disc (plain ISO/CISO), decompresses `.szs` (Yaz0) and
+unpacks RARC archives; output is verified byte-identical to decomp-toolkit's. See the README.
+
 Status of each rule: **ported** (implemented and tested), **partial**, **not yet**, or
 **unverified** (ported as written but contradicts expectation; see the end).
 

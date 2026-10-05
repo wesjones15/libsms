@@ -11,7 +11,8 @@ This folder is the repo root. Sibling folders are read-only references:
   96-100% (`src/Player/`, `src/NPC/`). Only JPN and PAL are supported upstream; the user's USA
   disc will not build.
 - `assets/` (inside this repo, git-ignored): the user's disc files, built by
-  `python tools/extract_assets.py <iso>` (needs dtk; the script finds a built decomp's). `params_mario/` =
+  `cargo run -p libsms --bin sms-extract -- <iso>` (pure Rust: ISO/CISO, Yaz0, RARC; `libsms::extract`),
+  or `python tools/extract_assets.py <iso>` for RVZ/WIA/WBFS (needs dtk). `params_mario/` =
   `params.szs:mario/*.prm` (tuning), `bck/` = `mario.szs:bck/*.bck` (clips), `bmd/ma_mdl1.bmd` (rig).
   Never commit it. `libsms::assets::find` locates it. The older copy at `../extracted/sms` is not used.
 - `../libpikmin/`: the pattern to follow (Host trait, fixed step, events, disc-parsed params).
@@ -31,7 +32,8 @@ Workspace:
 - **Tuning values come from the disc, not the code defaults.** `Params::from_dir` reads the `.prm`
   files; `Default` is the code default and differs (gravity 0.8 vs 1.0, run max 45 vs 80,...).
 - No Nintendo data in git: no discs, no extracted `.prm`/`.bck`/`.bmd`. Everything comes from
-  `assets/`, which only `tools/extract_assets.py` fills, from the user's own disc.
+  `assets/`, which only the extractor fills, from the user's own disc. Hosts call `Assets::ensure`
+  on first run, then ignore the disc.
 - Tests that need the shipped tuning skip themselves when `assets/` is missing; the rest must pass
   on a clean checkout.
 - Meshes, materials and textures are not read. The viewer poses a neutral mannequin from the real

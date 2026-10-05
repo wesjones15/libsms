@@ -59,6 +59,19 @@ impl Assets {
         }
     }
 
+    /// First-run helper: if `dir` is not a complete extraction, build it from the disc image at
+    /// `iso` (see [`crate::extract`]), then load it. The disc is not touched again afterwards.
+    pub fn ensure(
+        iso: &Path,
+        dir: &Path,
+        log: &mut dyn FnMut(&str),
+    ) -> Result<Assets, crate::extract::ExtractError> {
+        if !crate::extract::is_complete(dir) {
+            crate::extract::extract_assets(iso, dir, log)?;
+        }
+        Ok(Assets::load(dir))
+    }
+
     /// `find` then `load`.
     pub fn discover(explicit: Option<&Path>) -> Option<Assets> {
         find(explicit).map(|d| Assets::load(&d))

@@ -12,8 +12,9 @@
 //!   R               respawn                              H        toggle help
 //!
 //! Tuning, animation clips and the skeleton come from your own disc: run
-//! `python tools/extract_assets.py <your .iso>` once to build the git-ignored `assets/` folder
-//! (a path argument or `SMS_ASSETS` overrides where it is looked for). Without it the decomp's
+//! `sms-viewer --iso <your disc image>` once (or `cargo run -p libsms --bin sms-extract -- <iso>`,
+//! or `python tools/extract_assets.py <iso>`) to build the git-ignored `assets/` folder; a path
+//! argument or `SMS_ASSETS` overrides where it is looked for. Without it the decomp's
 //! code defaults and a plain capsule are used, and the HUD says so. `--demo` replays a script.
 
 use std::path::Path;
@@ -507,7 +508,7 @@ fn hud(sim: &Sim, data: &str, rig: Option<&Rig>, show_help: bool) {
             r.skeleton.len(),
             r.clips.len()
         ),
-        None => "rig: none (run tools/extract_assets.py), showing a plain capsule".to_owned(),
+        None => "rig: none (needs assets/), showing a plain capsule".to_owned(),
     });
     for (i, r) in rows.iter().enumerate() {
         draw_text(r, 14.0, 24.0 + 22.0 * i as f32, 22.0, WHITE);
@@ -598,8 +599,29 @@ fn spawn() -> Sim {
 async fn main() {
     let demo = std::env::args().any(|a| a == "--demo");
     // The user's own disc files, extracted by `tools/extract_assets.py` into `assets/` (git-ignored).
-    let explicit = std::env::args().skip(1).find(|a| !a.starts_with("--"));
-    let assets = libsms::Assets::discover(explicit.as_deref().map(Path::new));
+    // `--iso <disc image>` builds `assets/` from your disc first if it is not there yet.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let iso = args
+        .iter()
+        .position(|a| a == "--iso")
+        .and_then(|i| args.get(i + 1));
+    let explicit = args
+        .iter()
+        .enumerate()
+        .find(|(i, a)| !a.starts_with("--") && (*i == 0 || args[i - 1] != "--iso"))
+        .map(|(_, a)| a.clone());
+    let mut assets = libsms::Assets::discover(explicit.as_deref().map(Path::new));
+    if assets.is_none() {
+        if let Some(iso) = iso {
+            println!("no assets/ yet: extracting from {iso}");
+            match libsms::Assets::ensure(Path::new(iso), Path::new("assets"), &mut |m| {
+                println!("{m}")
+            }) {
+                Ok(a) => assets = Some(a),
+                Err(e) => eprintln!("extraction failed: {e}"),
+            }
+        }
+    }
     let rig = assets.as_ref().and_then(Rig::from_assets);
     let (params, anims, data_label) = match &assets {
         Some(a) => (
@@ -610,7 +632,7 @@ async fn main() {
         None => (
             Params::default(),
             AnimTable::default(),
-            "no assets/ folder: run tools/extract_assets.py <iso>; using code defaults".to_owned(),
+            "no assets/: run with --iso <disc> (or sms-extract); using code defaults".to_owned(),
         ),
     };
     let mk = || {

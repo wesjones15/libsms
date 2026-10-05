@@ -1,0 +1,303 @@
+//! Builds the `assets/` folder from the user's own disc image, with no external tools.
+//!
+//! This is the same job as `tools/extract_assets.py`, in Rust so a host (a mod DLL, for example)
+//! can do it on first run: open the disc, pull the three archives' contents, write them to a cache
+//! folder, and never touch the disc again.
+//!
+//! ```no_run
+//! # use std::path::Path;
+//! let report = libsms::extract::extract_assets(
+//!     Path::new("Super Mario Sunshine.iso"),
+//!     Path::new("assets"),
+//!     &mut |msg| println!("{msg}"),
+//! )?;
+//! println!("{} prm, {} clips", report.prm_files, report.clips);
+//! # Ok::<(), libsms::extract::ExtractError>(())
+//! ```
+//!
+//! Supported inputs: plain GameCube images (`.iso`, `.gcm`) and CISO. Dolphin's compressed formats
+//! (RVZ, WIA, WBFS) are refused with a clear message; convert them or use the Python script.
+
+pub mod gcm;
+pub mod rarc;
+pub mod yaz0;
+
+use std::fmt;
+use std::path::{Component, Path, PathBuf};
+
+pub use gcm::Disc;
+
+#[derive(Debug)]
+pub enum ExtractError {
+    Io(std::io::Error),
+    /// The data is not what the format says it should be.
+    Format(&'static str),
+    /// A file expected on the disc or in an archive is not there.
+    Missing(String),
+    Unsupported(&'static str),
+    /// A valid disc, but not Super Mario Sunshine.
+    WrongGame(String),
+}
+
+impl fmt::Display for ExtractError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ExtractError::Io(e) => write!(f, "I/O error: {e}"),
+            ExtractError::Format(m) => write!(f, "bad data: {m}"),
+            ExtractError::Missing(p) => write!(f, "not found on the disc: {p}"),
+            ExtractError::Unsupported(m) => write!(f, "{m}"),
+            ExtractError::WrongGame(id) => {
+                write!(
+                    f,
+                    "this disc is {id}, not Super Mario Sunshine (GMSE01/GMSJ01/GMSP01)"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for ExtractError {}
+
+impl From<std::io::Error> for ExtractError {
+    fn from(e: std::io::Error) -> Self {
+        ExtractError::Io(e)
+    }
+}
+
+/// Where each piece comes from: `(archive under data/, path inside it, destination under out)`.
+/// A path ending in `/` is a whole folder. Matches `tools/extract_assets.py`.
+pub const EXTRACTS: [(&str, &str, &str); 3] = [
+    ("params.szs", "mario/", "params_mario"),
+    ("mario.szs", "bck/", "bck"),
+    ("mario.szs", "bmd/ma_mdl1.bmd", "bmd/ma_mdl1.bmd"),
+];
+
+/// Files that must exist for the library and viewer to work.
+pub const REQUIRED: [&str; 7] = [
+    "params_mario/run.prm",
+    "params_mario/jump.prm",
+    "params_mario/mario.prm",
+    "params_mario/watergun/nozzledeform.prm",
+    "bck/ma_wait.bck",
+    "bck/ma_run2.bck",
+    "bmd/ma_mdl1.bmd",
+];
+
+pub const GAME_IDS: [(&str, &str); 3] = [
+    ("GMSJ01", "Japan"),
+    ("GMSE01", "USA"),
+    ("GMSP01", "Europe (PAL)"),
+];
+
+/// Is `dir` a complete extraction?
+pub fn is_complete(dir: &Path) -> bool {
+    REQUIRED.iter().all(|r| dir.join(r).is_file())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Report {
+    pub game_id: String,
+    pub prm_files: usize,
+    pub clips: usize,
+    pub out: PathBuf,
+}
+
+/// A destination path built from archive-supplied names must stay under the output folder.
+fn safe_join(base: &Path, rel: &str) -> Result<PathBuf, ExtractError> {
+    let p = Path::new(rel);
+    if p.components().any(|c| !matches!(c, Component::Normal(_))) {
+        return Err(ExtractError::Format(
+            "archive path escapes the output folder",
+        ));
+    }
+    Ok(base.join(p))
+}
+
+/// Extracts everything libsms needs from the disc at `iso` into `out`. Skips the work if `out`
+/// is already complete. `log` receives short progress messages.
+pub fn extract_assets(
+    iso: &Path,
+    out: &Path,
+    log: &mut dyn FnMut(&str),
+) -> Result<Report, ExtractError> {
+    let mut disc = Disc::open(iso)?;
+    if !GAME_IDS.iter().any(|(id, _)| *id == disc.game_id) {
+        return Err(ExtractError::WrongGame(disc.game_id.clone()));
+    }
+    let region = GAME_IDS
+        .iter()
+        .find(|(id, _)| *id == disc.game_id)
+        .map(|x| x.1)
+        .unwrap_or("?");
+    log(&format!("disc: {} {region}", disc.game_id));
+
+    let count = |dir: &str, ext: &str| -> usize {
+        std::fs::read_dir(out.join(dir))
+            .map(|rd| {
+                rd.flatten()
+                    .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some(ext))
+                    .count()
+            })
+            .unwrap_or(0)
+    };
+    let prm_count = |out: &Path| -> usize {
+        walk(&out.join("params_mario"))
+            .iter()
+            .filter(|p| p.ends_with(".prm"))
+            .count()
+    };
+
+    if is_complete(out) {
+        log("assets already complete; nothing to do");
+        return Ok(Report {
+            game_id: disc.game_id,
+            prm_files: prm_count(out),
+            clips: count("bck", "bck"),
+            out: out.to_path_buf(),
+        });
+    }
+
+    let mut cache: Option<(String, rarc::Archive)> = None;
+    for (archive, inner, dest) in EXTRACTS {
+        if cache.as_ref().map(|c| c.0.as_str()) != Some(archive) {
+            log(&format!("reading {archive}"));
+            let raw = disc.read_file(&format!("data/{archive}"))?;
+            let bytes = if yaz0::is_yaz0(&raw) {
+                yaz0::decompress(&raw)?
+            } else {
+                raw
+            };
+            cache = Some((archive.to_owned(), rarc::Archive::parse(bytes)?));
+        }
+        let arc = &cache.as_ref().unwrap().1;
+
+        if let Some(folder) = inner.strip_suffix('/') {
+            let prefix = format!("{folder}/");
+            let mut n = 0;
+            for (rel, data) in arc.under(&prefix) {
+                let path = safe_join(&out.join(dest), rel)?;
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::write(path, data)?;
+                n += 1;
+            }
+            if n == 0 {
+                return Err(ExtractError::Missing(format!("{archive}:{inner}")));
+            }
+            log(&format!("{archive}:{inner} -> {dest}/ ({n} files)"));
+        } else {
+            let data = arc
+                .file(inner)
+                .ok_or_else(|| ExtractError::Missing(format!("{archive}:{inner}")))?;
+            let path = safe_join(out, dest)?;
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(path, data)?;
+            log(&format!("{archive}:{inner} -> {dest}"));
+        }
+    }
+
+    if !is_complete(out) {
+        return Err(ExtractError::Missing(
+            "expected files after extraction".into(),
+        ));
+    }
+    let report = Report {
+        game_id: disc.game_id.clone(),
+        prm_files: prm_count(out),
+        clips: count("bck", "bck"),
+        out: out.to_path_buf(),
+    };
+    std::fs::write(
+        out.join("SOURCE.txt"),
+        format!(
+            "extracted from: {}\ngame id: {}\nfiles: {} prm, {} bck, ma_mdl1.bmd\nby: libsms::extract\n",
+            iso.file_name().and_then(|s| s.to_str()).unwrap_or("?"),
+            report.game_id,
+            report.prm_files,
+            report.clips
+        ),
+    )?;
+    log(&format!(
+        "done: {} .prm files, {} clips",
+        report.prm_files, report.clips
+    ));
+    Ok(report)
+}
+
+/// All files under `dir`, as `/`-separated paths relative to it.
+fn walk(dir: &Path) -> Vec<String> {
+    fn go(base: &Path, dir: &Path, out: &mut Vec<String>) {
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                go(base, &p, out);
+            } else if let Ok(rel) = p.strip_prefix(base) {
+                out.push(rel.to_string_lossy().replace('\\', "/"));
+            }
+        }
+    }
+    let mut v = Vec::new();
+    go(dir, dir, &mut v);
+    v.sort();
+    v
+}
+
+#[cfg(test)]
+mod tests {
+    use super::gcm::tests::{Mem, disc_with};
+    use super::*;
+
+    /// Yaz0 "compression" that stores everything as literals (valid, just not small).
+    fn yaz0_literal(data: &[u8]) -> Vec<u8> {
+        let mut v = b"Yaz0".to_vec();
+        v.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        v.extend_from_slice(&[0; 8]);
+        for chunk in data.chunks(8) {
+            v.push(0xFFu8 << (8 - chunk.len()));
+            v.extend_from_slice(chunk);
+        }
+        v
+    }
+
+    #[test]
+    fn wrong_game_is_refused() {
+        let img = disc_with(b"GALE01", &[("opening.bnr", b"x")]);
+        let dir = std::env::temp_dir().join("libsms_wrong_game.iso");
+        std::fs::write(&dir, img).unwrap();
+        let err = extract_assets(
+            &dir,
+            &std::env::temp_dir().join("libsms_wrong_game_out"),
+            &mut |_| {},
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, ExtractError::WrongGame(ref id) if id == "GALE01"),
+            "{err}"
+        );
+        let _ = std::fs::remove_file(dir);
+    }
+
+    #[test]
+    fn disc_to_archive_round_trip() {
+        // A disc whose data/mario.szs is a Yaz0-wrapped RARC: read it back through all layers.
+        let szs = yaz0_literal(&rarc::tests::sample());
+        let img = disc_with(b"GMSP01", &[("data/mario.szs", &szs)]);
+        let mut disc = Disc::from_reader(Box::new(Mem(img))).unwrap();
+        let raw = disc.read_file("data/mario.szs").unwrap();
+        let arc = rarc::Archive::parse(yaz0::decompress(&raw).unwrap()).unwrap();
+        assert_eq!(arc.file("sub/b.bin").unwrap(), [1, 2, 3]);
+    }
+
+    #[test]
+    fn path_traversal_is_rejected() {
+        assert!(safe_join(Path::new("out"), "../evil").is_err());
+        assert!(safe_join(Path::new("out"), "/abs").is_err());
+        assert!(safe_join(Path::new("out"), "watergun/nozzle.prm").is_ok());
+    }
+}

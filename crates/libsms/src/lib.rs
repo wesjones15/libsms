@@ -9,6 +9,7 @@ pub mod anim;
 pub mod assets;
 pub mod clock;
 pub mod event;
+pub mod extract;
 pub mod fludd;
 pub mod host;
 pub mod input;

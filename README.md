@@ -26,17 +26,20 @@ verifying against the real game.
 ## Your own game files
 
 The repository contains no game data. Build the git-ignored `assets/` folder once from your own
-disc image (any region; tested with PAL):
+disc image (any region; tested with PAL), with no external tools:
 
 ```
-python tools/extract_assets.py "path/to/Super Mario Sunshine.iso"
+cargo run --release -p libsms --bin sms-extract -- "path/to/Super Mario Sunshine.iso"
 ```
 
-It needs [decomp-toolkit](https://github.com/encounter/decomp-toolkit/releases)'s `dtk` (pass
-`--dtk`, set `DTK`, put it on PATH, or have a built decomp checkout beside this repo) and writes
-the tuning `.prm` files, the animation clips and the skeleton source into `assets/`. Everything
-else (`Assets::discover`, the tests, the viewer) reads from there and falls back to the decomp's
-code defaults when it is missing.
+That reads a plain ISO/GCM or CISO image, decompresses the archives inside it, and writes the
+tuning `.prm` files, the animation clips and the skeleton source into `assets/` in about a second.
+A host does the same on first run with `Assets::ensure(iso, dir, log)`, then never touches the
+disc again. Everything else (`Assets::discover`, the tests, the viewer) reads from `assets/` and
+falls back to the decomp's code defaults when it is missing.
+
+RVZ, WIA and WBFS images are not supported by the Rust extractor; convert to ISO, or use
+`python tools/extract_assets.py <image>`, which delegates to decomp-toolkit's `dtk`.
 
 ## Running sample
 
@@ -47,7 +50,7 @@ hover/rocket, a bridge, and gentle and slippery ramps, with FLUDD water droplets
 cargo run -p viewer
 ```
 
-It reads `assets/` (a path argument or `SMS_ASSETS` overrides it) and says on screen whether it
+`cargo run -p viewer -- --iso "path/to/disc.iso"` extracts on first run if `assets/` is missing. It reads `assets/` (a path argument or `SMS_ASSETS` overrides it) and says on screen whether it
 found it. With the rig present, a neutral mannequin is posed from the game's real animation clips
 the sim is playing; without it, a plain capsule. `--demo` replays a scripted loop. WASD move, Space jump, F dive, Z ground pound, Ctrl crouch,
 Shift spray, X swap nozzle, 1-4 pick nozzle, arrows orbit the camera, R respawn.
