@@ -6,6 +6,7 @@
 //! 120 Hz ([`TICK_HZ`]).
 
 pub mod anim;
+pub mod assets;
 pub mod clock;
 pub mod event;
 pub mod fludd;
@@ -15,12 +16,14 @@ pub mod mario;
 pub mod math;
 pub mod params;
 pub mod prm;
+pub mod skeleton;
 
 mod air;
 mod ground;
 mod physics;
 
 pub use anim::{AnimState, AnimTable, ClipInfo, LoopMode};
+pub use assets::Assets;
 pub use clock::{FixedClock, TICK_DT, TICK_HZ};
 pub use event::{Event, JumpKind, WaterEmit};
 pub use fludd::{Fludd, TriggerState};
@@ -29,6 +32,7 @@ pub use host::{FlatHost, GroundHit, Host, RoofHit, SurfaceFlags, WallHit};
 pub use input::{Input, Pad};
 pub use mario::{Mario, Options, Status, UpperState};
 pub use params::{NozzleKind, Params};
+pub use skeleton::{Clip, ClipLibrary, Skeleton};
 
 /// A Mario plus the fixed-step clock that drives him.
 #[derive(Debug, Clone)]

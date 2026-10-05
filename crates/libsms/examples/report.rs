@@ -1,7 +1,5 @@
 //! Prints headline numbers from the sim, to eyeball against the real game.
-//! Run: `cargo run -p libsms --example report` (uses `../extracted/sms` if present).
-
-use std::path::Path;
+//! Run: `cargo run -p libsms --example report` (uses `assets/` if present).
 
 use libsms::{
     AnimTable, Event, FlatHost, Host, NozzleKind, Pad, Params, Sim, Status, TICK_HZ, Vec2, Vec3,
@@ -18,15 +16,12 @@ impl Host for Log {
 }
 
 fn sim() -> Sim {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../extracted/sms");
-    let (params, anims) = if dir.join("params_mario").is_dir() {
-        (
-            Params::from_dir(&dir.join("params_mario")).0,
-            AnimTable::from_dir(&dir.join("bck")),
-        )
-    } else {
-        eprintln!("(no extracted disc data: using code defaults)");
-        (Params::default(), AnimTable::default())
+    let (params, anims) = match libsms::Assets::discover(None) {
+        Some(a) => (a.params, a.anim_table),
+        None => {
+            eprintln!("(no assets/ folder: using code defaults; run tools/extract_assets.py)");
+            (Params::default(), AnimTable::default())
+        }
     };
     Sim::new(params, anims, Vec3::ZERO, 0)
 }

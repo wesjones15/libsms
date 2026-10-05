@@ -1,19 +1,19 @@
 //! Headless scenarios: drive Mario on a flat test host and check behaviour against the decomp.
 //!
-//! If the user's disc data has been extracted to `../extracted/sms` (see CLAUDE.md), the
+//! If the user's disc data has been extracted to `../extracted/sms` , the
 //! tests run with the real `.prm` tuning and animation lengths; otherwise they use the code
 //! defaults. Assertions are written to hold either way unless a test says otherwise.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use libsms::{
     AnimTable, Event, FlatHost, Host, Mario, NozzleKind, Pad, Params, Sim, Status, TICK_HZ, Vec2,
     Vec3, WaterEmit,
 };
 
+/// The git-ignored `assets/` folder built by `tools/extract_assets.py`, if present.
 fn extracted() -> Option<PathBuf> {
-    let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../extracted/sms");
-    p.join("params_mario").is_dir().then_some(p)
+    libsms::assets::find(None)
 }
 
 fn params() -> (Params, bool) {
@@ -25,6 +25,16 @@ fn params() -> (Params, bool) {
         }
         None => (Params::default(), false),
     }
+}
+
+/// Tests whose numbers depend on the shipped tuning (nozzle tanks and rates, slip thresholds)
+/// are skipped without the user's disc files; run `python tools/extract_assets.py <iso>`.
+fn need_disc() -> bool {
+    let ok = params().1;
+    if !ok {
+        eprintln!("skipped: needs assets/ from tools/extract_assets.py");
+    }
+    !ok
 }
 
 fn anims() -> AnimTable {
@@ -181,6 +191,9 @@ fn reversing_the_stick_turns_around() {
 
 #[test]
 fn standing_jump_height_matches_physics() {
+    if need_disc() {
+        return;
+    }
     let mut s = Scene::flat();
     s.pad.a = true; // holding jump gives the full-height jump
     s.step(1);
@@ -224,6 +237,9 @@ fn releasing_jump_early_cuts_the_jump_short() {
 
 #[test]
 fn double_and_triple_jump_chain() {
+    if need_disc() {
+        return;
+    }
     let mut s = Scene::flat();
     s.run_forward();
     s.secs(1.0);
@@ -359,6 +375,9 @@ fn walking_off_a_ledge_falls() {
 
 #[test]
 fn steep_slope_makes_mario_slip() {
+    if need_disc() {
+        return;
+    }
     struct Slope;
     impl Host for Slope {
         fn ground(&self, p: Vec3) -> Option<libsms::GroundHit> {
@@ -390,6 +409,9 @@ fn steep_slope_makes_mario_slip() {
 
 #[test]
 fn spraying_drains_the_tank_and_recoils() {
+    if need_disc() {
+        return;
+    }
     let mut s = Scene::flat();
     s.sim.mario.give_fludd();
     let p = s.mario().params.clone();
@@ -430,6 +452,9 @@ fn an_empty_tank_does_not_spray() {
 
 #[test]
 fn hover_nozzle_lifts_and_holds_then_runs_out() {
+    if need_disc() {
+        return;
+    }
     let mut s = Scene::flat();
     s.sim.mario.give_fludd();
     {
@@ -467,6 +492,9 @@ fn hover_nozzle_lifts_and_holds_then_runs_out() {
 
 #[test]
 fn rocket_nozzle_needs_charge_then_launches() {
+    if need_disc() {
+        return;
+    }
     let mut s = Scene::flat();
     s.sim.mario.give_fludd();
     {
@@ -497,6 +525,9 @@ fn rocket_nozzle_needs_charge_then_launches() {
 
 #[test]
 fn x_swaps_nozzles_and_rescales_the_tank() {
+    if need_disc() {
+        return;
+    }
     let mut s = Scene::flat();
     s.sim.mario.give_fludd();
     let p = s.mario().params.clone();
@@ -524,4 +555,70 @@ fn disc_parameters_are_used_when_available() {
     assert_eq!(p.nozzle(NozzleKind::Spray).amount_max, 10_000);
     assert_eq!(p.nozzle(NozzleKind::Rocket).amount_max, 2_100);
     assert!(anims().len() > 100);
+}
+
+// ---- skeleton and clips --------------------------------------------------------------------
+
+fn skeleton() -> Option<(libsms::Skeleton, libsms::ClipLibrary)> {
+    let dir = extracted()?;
+    let bmd = std::fs::read(dir.join("bmd/ma_mdl1.bmd")).ok()?;
+    Some((
+        libsms::Skeleton::from_bmd(&bmd)?,
+        libsms::ClipLibrary::from_dir(&dir.join("bck")),
+    ))
+}
+
+#[test]
+fn rig_and_clips_load_from_the_disc() {
+    let Some((rig, clips)) = skeleton() else {
+        eprintln!("skipped: no extracted rig (run tools/extract_assets.py)");
+        return;
+    };
+    assert_eq!(rig.len(), 29);
+    assert_eq!(rig.names[1], "center");
+    assert_eq!(rig.parents[0], None);
+    assert_eq!(
+        rig.parents[rig.find("jnt_head").unwrap()],
+        rig.find("jnt_chest")
+    );
+    assert!(clips.len() > 150, "{} clips", clips.len());
+    let wait = clips.get("wait").expect("wait clip");
+    assert_eq!(wait.joint_count(), 29);
+
+    // Standing idle: head well above the pelvis, feet near the floor, everything finite.
+    let pose = rig.pose(wait, 0.0);
+    let y = |name: &str| pose[rig.find(name).unwrap()].w_axis.y;
+    assert!(pose.iter().all(|m| m.is_finite()));
+    assert!(
+        (40.0..80.0).contains(&y("center")),
+        "pelvis {}",
+        y("center")
+    );
+    assert!(
+        y("jnt_head") > y("center") + 30.0,
+        "head {} pelvis {}",
+        y("jnt_head"),
+        y("center")
+    );
+    assert!(
+        y("jnt_foot_R") < y("center") - 30.0,
+        "foot {}",
+        y("jnt_foot_R")
+    );
+}
+
+#[test]
+fn run_clip_moves_the_legs() {
+    let Some((rig, clips)) = skeleton() else {
+        return;
+    };
+    let run = clips.get("run2").expect("run2");
+    let foot = rig.find("jnt_foot_R").unwrap();
+    let ys: Vec<f32> = (0..20)
+        .map(|i| rig.pose(run, i as f32 * run.frames / 20.0)[foot].w_axis.y)
+        .collect();
+    let (lo, hi) = ys
+        .iter()
+        .fold((f32::MAX, f32::MIN), |(l, h), &v| (l.min(v), h.max(v)));
+    assert!(hi - lo > 8.0, "foot barely moves: {lo}..{hi}");
 }

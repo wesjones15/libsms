@@ -11,11 +11,12 @@
 //!   1 2 3 4         fit Spray / Hover / Rocket / Turbo   G        refill tank
 //!   R               respawn                              H        toggle help
 //!
-//! Tuning and animation lengths are read from your disc's extracted files if found
-//! (`extracted/sms` next to the repo, or a path as the first argument / `SMS_DATA`), otherwise the
-//! decomp's code defaults are used (the HUD says which).
+//! Tuning, animation clips and the skeleton come from your own disc: run
+//! `python tools/extract_assets.py <your .iso>` once to build the git-ignored `assets/` folder
+//! (a path argument or `SMS_ASSETS` overrides where it is looked for). Without it the decomp's
+//! code defaults and a plain capsule are used, and the HUD says so. `--demo` replays a script.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use libsms::math::to_angle;
 use libsms::{
@@ -275,18 +276,6 @@ impl Host for World {
     }
 }
 
-/// Finds the user's extracted disc data.
-fn find_data() -> Option<PathBuf> {
-    let arg = std::env::args()
-        .nth(1)
-        .or_else(|| std::env::var("SMS_DATA").ok());
-    let mut cands: Vec<PathBuf> = arg.into_iter().map(PathBuf::from).collect();
-    for base in [".", "..", "../..", "../../.."] {
-        cands.push(Path::new(base).join("extracted/sms"));
-    }
-    cands.into_iter().find(|p| p.join("params_mario").is_dir())
-}
-
 fn nozzle_color(n: NozzleKind) -> Color {
     match n {
         NozzleKind::Spray => Color::new(0.3, 0.55, 0.95, 1.0),
@@ -347,19 +336,42 @@ fn draw_world(w: &World) {
     }
 }
 
-fn draw_mario(sim: &Sim, alpha: f32) {
+/// The game's rig and clips, if the user's extracted data has them.
+struct Rig {
+    skeleton: libsms::Skeleton,
+    clips: libsms::ClipLibrary,
+}
+
+impl Rig {
+    fn from_assets(a: &libsms::Assets) -> Option<Rig> {
+        let skeleton = a.skeleton.clone()?;
+        (!a.clips.is_empty()).then(|| Rig {
+            skeleton,
+            clips: a.clips.clone(),
+        })
+    }
+}
+
+/// Draws a bone as a string of small spheres, so it reads as a limb from any angle.
+fn draw_bone(a: Vec3, b: Vec3, radius: f32, color: Color) {
+    let len = (b - a).length();
+    let n = ((len / (radius * 1.2)).ceil() as i32).max(1);
+    for i in 0..=n {
+        draw_sphere(a.lerp(b, i as f32 / n as f32), radius, None, color);
+    }
+}
+
+/// A neutral mannequin driven by the game's real animation: the skeleton from the disc, posed
+/// each frame from the clip the sim is playing. Without the disc rig it falls back to a plain
+/// capsule so the sample still runs.
+fn draw_mario(sim: &Sim, rig: Option<&Rig>, alpha: f32) {
     let m = &sim.mario;
     let pos = mq(m.prev_pos.lerp(m.pos, alpha));
     let floor = vec3(pos.x, m.floor_y() * S, pos.z);
-    let squat = if matches!(m.status, Status::Squat) {
-        0.65
-    } else {
-        1.0
-    };
     let ang = m.model_yaw as f32 * std::f32::consts::PI / 32768.0;
     let fwd = vec3(ang.sin(), 0.0, ang.cos());
 
-    // Shadow on the floor under him.
+    // Shadow on the floor under it.
     draw_cylinder(
         floor + vec3(0.0, 0.01, 0.0),
         0.3,
@@ -369,52 +381,98 @@ fn draw_mario(sim: &Sim, alpha: f32) {
         Color::new(0.0, 0.0, 0.0, 0.45),
     );
 
-    let red = Color::new(0.85, 0.12, 0.1, 1.0);
-    let blue = Color::new(0.15, 0.25, 0.8, 1.0);
-    let skin = Color::new(0.98, 0.78, 0.6, 1.0);
-    draw_cylinder(pos, 0.2, 0.22, 0.45 * squat, None, blue);
-    draw_cylinder(
-        pos + vec3(0.0, 0.45 * squat, 0.0),
-        0.27,
-        0.22,
-        0.5 * squat,
-        None,
-        red,
-    );
-    let head = pos + vec3(0.0, 1.15 * squat, 0.0);
-    draw_sphere(head, 0.22, None, skin);
-    draw_cylinder(head + vec3(0.0, 0.1, 0.0), 0.2, 0.24, 0.14, None, red);
-    draw_cube(
-        head + fwd * 0.2 + vec3(0.0, 0.1, 0.0),
-        vec3(0.28, 0.04, 0.2),
-        None,
-        red,
-    );
-    draw_sphere(head + fwd * 0.2, 0.06, None, skin);
+    let bone = Color::new(0.82, 0.84, 0.88, 1.0);
+    let joint = Color::new(0.95, 0.55, 0.2, 1.0);
+    let marker = Color::new(0.2, 0.85, 0.5, 1.0);
 
-    if let Some(f) = &m.fludd {
-        let c = nozzle_color(f.nozzle);
-        let back = pos - fwd * 0.28 + vec3(0.0, 0.45 * squat, 0.0);
-        draw_cylinder(
-            back,
-            0.17,
-            0.17,
-            0.55 * squat,
-            None,
-            Color::new(0.8, 0.8, 0.85, 1.0),
-        );
-        draw_cylinder(
-            back + vec3(0.0, 0.55 * squat, 0.0),
-            0.0,
-            0.17,
-            0.12,
-            None,
-            c,
-        );
+    // Model space (+Z forward, +Y up, centimetres) to the scene, turned by the model yaw.
+    let (sy, cy) = ang.sin_cos();
+    let to_world = |p: libsms::Vec3| -> Vec3 {
+        vec3(p.x * cy + p.z * sy, p.y, -p.x * sy + p.z * cy) * S + pos
+    };
+
+    let posed = rig.map(|r| {
+        let world = match r.clips.get(m.anim.clip) {
+            Some(clip) => r.skeleton.pose(clip, m.anim.frame),
+            None => r.skeleton.bind_world(),
+        };
+        (r, world)
+    });
+
+    if let Some((r, world)) = posed {
+        let pts: Vec<Vec3> = world
+            .iter()
+            .map(|w| to_world(w.w_axis.truncate()))
+            .collect();
+        for (j, parent) in r.skeleton.parents.iter().enumerate() {
+            let Some(p) = *parent else { continue };
+            // `M_*` joints are mesh attachment points, not limbs.
+            if r.skeleton.names[j].starts_with("M_") || r.skeleton.names[j].starts_with("eff_") {
+                continue;
+            }
+            if p == 0 {
+                continue;
+            }
+            draw_bone(pts[p], pts[j], 0.035, bone);
+        }
+        for (j, p) in pts.iter().enumerate() {
+            if r.skeleton.names[j].starts_with("M_") || j < 2 {
+                continue;
+            }
+            draw_sphere(*p, 0.05, None, joint);
+        }
+        if let Some(h) = r.skeleton.find("jnt_head") {
+            // The head joint sits at the neck; the head itself rises from it.
+            let up = vec3(0.0, 0.2, 0.0);
+            draw_sphere(pts[h] + up, 0.17, None, bone);
+            draw_sphere(pts[h] + up + fwd * 0.14, 0.05, None, marker);
+        }
+        if let (Some(f), Some(c)) = (&m.fludd, r.skeleton.find("jnt_chest")) {
+            let back = pts[c] - fwd * 0.2 - vec3(0.0, 0.1, 0.0);
+            draw_cylinder(back, 0.13, 0.13, 0.4, None, Color::new(0.8, 0.8, 0.85, 1.0));
+            draw_cylinder(
+                back + vec3(0.0, 0.4, 0.0),
+                0.0,
+                0.13,
+                0.1,
+                None,
+                nozzle_color(f.nozzle),
+            );
+        }
+    } else {
+        // Fallback: a capsule-ish mannequin.
+        let squat = if matches!(m.status, Status::Squat) {
+            0.65
+        } else {
+            1.0
+        };
+        draw_cylinder(pos, 0.2, 0.22, 0.9 * squat, None, bone);
+        let head = pos + vec3(0.0, 1.1 * squat, 0.0);
+        draw_sphere(head, 0.2, None, bone);
+        draw_sphere(head + fwd * 0.17, 0.05, None, marker);
+        if let Some(f) = &m.fludd {
+            let back = pos - fwd * 0.28 + vec3(0.0, 0.45 * squat, 0.0);
+            draw_cylinder(
+                back,
+                0.15,
+                0.15,
+                0.5 * squat,
+                None,
+                Color::new(0.8, 0.8, 0.85, 1.0),
+            );
+            draw_cylinder(
+                back + vec3(0.0, 0.5 * squat, 0.0),
+                0.0,
+                0.15,
+                0.1,
+                None,
+                nozzle_color(f.nozzle),
+            );
+        }
     }
 }
 
-fn hud(sim: &Sim, data: &str, show_help: bool) {
+fn hud(sim: &Sim, data: &str, rig: Option<&Rig>, show_help: bool) {
     let m = &sim.mario;
     let mut rows: Vec<String> = vec![
         format!(
@@ -443,6 +501,14 @@ fn hud(sim: &Sim, data: &str, show_help: bool) {
         ));
     }
     rows.push(format!("data: {data}"));
+    rows.push(match rig {
+        Some(r) => format!(
+            "rig: {} joints, {} clips from the disc",
+            r.skeleton.len(),
+            r.clips.len()
+        ),
+        None => "rig: none (run tools/extract_assets.py), showing a plain capsule".to_owned(),
+    });
     for (i, r) in rows.iter().enumerate() {
         draw_text(r, 14.0, 24.0 + 22.0 * i as f32, 22.0, WHITE);
     }
@@ -471,6 +537,45 @@ fn hud(sim: &Sim, data: &str, show_help: bool) {
     }
 }
 
+/// A looping script that shows off the clips: run, jump, dive, run, jump + pound, spray, crouch.
+fn demo_pad(t: f32) -> Pad {
+    let t = t % 16.0;
+    let run = SV2::new(0.0, 1.0);
+    let mut p = Pad::default();
+    match t {
+        t if t < 2.5 => p.stick = run,
+        t if t < 3.0 => {
+            p.stick = run;
+            p.a = true;
+        }
+        t if t < 3.4 => {
+            p.stick = run;
+            p.a = true;
+            p.b = t > 3.3;
+        }
+        t if t < 5.0 => p.stick = SV2::ZERO,
+        t if t < 6.5 => p.stick = SV2::new(1.0, 0.0),
+        t if t < 7.0 => {
+            p.stick = SV2::new(1.0, 0.0);
+            p.a = true;
+        }
+        t if t < 8.0 => {
+            p.a = t < 7.6;
+            p.l = t > 7.45 && t < 7.5;
+        }
+        t if t < 11.0 => {
+            p.stick = SV2::new(0.0, 0.3);
+            p.r_analog = 150;
+        }
+        t if t < 13.0 => {
+            p.r = true;
+            p.r_analog = 255;
+        }
+        _ => p.stick = SV2::new(-1.0, 0.0),
+    }
+    p
+}
+
 fn window_conf() -> Conf {
     Conf {
         window_title: "libsms viewer".to_owned(),
@@ -491,20 +596,21 @@ fn spawn() -> Sim {
 
 #[macroquad::main(window_conf)]
 async fn main() {
-    let data = find_data();
-    let (params, anims, data_label) = match &data {
-        Some(dir) => {
-            let (p, n) = Params::from_dir(&dir.join("params_mario"));
-            (
-                p,
-                AnimTable::from_dir(&dir.join("bck")),
-                format!("{} ({n} .prm files)", dir.display()),
-            )
-        }
+    let demo = std::env::args().any(|a| a == "--demo");
+    // The user's own disc files, extracted by `tools/extract_assets.py` into `assets/` (git-ignored).
+    let explicit = std::env::args().skip(1).find(|a| !a.starts_with("--"));
+    let assets = libsms::Assets::discover(explicit.as_deref().map(Path::new));
+    let rig = assets.as_ref().and_then(Rig::from_assets);
+    let (params, anims, data_label) = match &assets {
+        Some(a) => (
+            a.params.clone(),
+            a.anim_table.clone(),
+            format!("{} ({} .prm files)", a.dir.display(), a.prm_files),
+        ),
         None => (
             Params::default(),
             AnimTable::default(),
-            "not found: using decomp code defaults".to_owned(),
+            "no assets/ folder: run tools/extract_assets.py <iso>; using code defaults".to_owned(),
         ),
     };
     let mk = || {
@@ -570,6 +676,12 @@ async fn main() {
             x: k(KeyCode::X),
         };
 
+        // `--demo` replays a scripted loop (run, jump, dive, pound, spray) instead of the keys.
+        let pad = if demo {
+            demo_pad(get_time() as f32)
+        } else {
+            pad
+        };
         if is_key_pressed(KeyCode::R) || sim.mario.pos.y < -2500.0 {
             sim = mk();
             world.drops.clear();
@@ -622,9 +734,9 @@ async fn main() {
             ..Default::default()
         });
         draw_world(&world);
-        draw_mario(&sim, sim.alpha());
+        draw_mario(&sim, rig.as_ref(), sim.alpha());
         set_default_camera();
-        hud(&sim, &data_label, show_help);
+        hud(&sim, &data_label, rig.as_ref(), show_help);
         for (i, l) in world.log.iter().rev().enumerate() {
             draw_text(
                 l,
@@ -645,9 +757,9 @@ mod tests {
 
     fn sim_on_course() -> Sim {
         let mut s = spawn();
-        if let Some(dir) = find_data() {
-            s.mario.params = Params::from_dir(&dir.join("params_mario")).0;
-            s.mario.anims = AnimTable::from_dir(&dir.join("bck"));
+        if let Some(a) = libsms::Assets::discover(None) {
+            s.mario.params = a.params;
+            s.mario.anims = a.anim_table;
         }
         s
     }
@@ -681,6 +793,10 @@ mod tests {
 
     #[test]
     fn mario_jumps_onto_a_ledge_and_stands_on_it() {
+        if libsms::assets::find(None).is_none() {
+            eprintln!("skipped: needs assets/ from tools/extract_assets.py");
+            return;
+        }
         let mut w = World::course();
         let mut s = sim_on_course();
         s.mario.pos = V3::new(-1350.0, 0.0, 100.0);

@@ -280,7 +280,11 @@ impl NozzleKind {
 }
 
 /// All the sim's tuning in one place.
-#[derive(Debug, Clone, PartialEq, Default)]
+///
+/// `Default` is the decomp's code defaults with one concession: plain ground does not make every
+/// jump a "miss jump" (the generic `TSlipParams` default says it does; the shipped
+/// `SlipParamNormal.prm` turns it off). Real play needs the disc's values, see [`Params::from_files`].
+#[derive(Debug, Clone, PartialEq)]
 pub struct Params {
     pub run: Run,
     pub jump: Jump,
@@ -296,6 +300,31 @@ pub struct Params {
     pub slip_water_ground: Slip,
     pub slip_water_slope: Slip,
     pub nozzles: [Nozzle; 6],
+}
+
+impl Default for Params {
+    fn default() -> Self {
+        let slip = Slip {
+            miss_jump: 0,
+            ..Slip::default()
+        };
+        Params {
+            run: Run::default(),
+            jump: Jump::default(),
+            mario: Mario::default(),
+            controller: Controller::default(),
+            hover: Hover::default(),
+            diving: Diving::default(),
+            water_gun: WaterGun::default(),
+            slip_normal: slip.clone(),
+            slip_all: slip.clone(),
+            slip_all_slider: slip.clone(),
+            slip_45: slip.clone(),
+            slip_water_ground: slip.clone(),
+            slip_water_slope: slip,
+            nozzles: Default::default(),
+        }
+    }
 }
 
 /// `.prm` paths relative to the extracted `params.szs:mario/` folder, lower-case.
