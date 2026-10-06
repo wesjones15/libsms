@@ -23,6 +23,7 @@ pub mod water;
 
 mod air;
 mod ground;
+pub mod hang;
 mod physics;
 
 pub use anim::{AnimState, AnimTable, ClipInfo, LoopMode};

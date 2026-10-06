@@ -159,6 +159,11 @@ impl SceneAudio {
     /// One `startSoundActor(WithInfo)`. Held sounds keep their handle while re-requested
     /// (the game requests them once a frame; the sim reports every tick).
     fn cue(&mut self, sys: &mut SoundSystem, cue: &SoundCue) {
+        // Mario's voice goes through `startMarioVoice`'s variant selection.
+        if cue.name.starts_with("MSD_SE_MV") {
+            sys.mario_voice(cue.name);
+            return;
+        }
         let Some(id) = sys.id(cue.name) else {
             return;
         };

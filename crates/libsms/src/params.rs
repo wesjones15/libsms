@@ -141,6 +141,7 @@ params! {
         clash_speed: f32 = 50.0, "mClashSpeed";
         damage_fall_height: f32 = 1000.0, "mDamageFallHeight";
         feel_deep: f32 = 500.0, "mFeelDeep";
+        hang_wall_movable_angle: f32 = 0.3, "mHangWallMovableAngle";
     }
 }
 
@@ -185,6 +186,18 @@ params! {
         hover_head_angle: i16 = -0x2000, "mHoverHeadAngle";
         feel_deep_head_angle: i16 = 0x2000, "mFeelDeepHeadAngle";
         front_wall_head_angle: i16 = -0x2000, "mFrontWallHeadAngle";
+    }
+}
+
+params! {
+    /// `/Mario/Hanging.prm` (THangingParams): hanging from a ledge.
+    Hanging {
+        move_sp: f32 = 0.1, "mMoveSp";
+        anm_rate: f32 = 0.5, "mAnmRate";
+        rapid_time: i16 = 2000, "mRapidTime";
+        limit_time: i16 = 2400, "mLimitTime";
+        anm_rapid: f32 = 8.0, "mAnmRapid";
+        descent_sp: f32 = 10.0, "mDescentSp";
     }
 }
 
@@ -325,6 +338,7 @@ pub struct Params {
     pub mario: Mario,
     pub controller: Controller,
     pub upper_body: UpperBody,
+    pub hanging: Hanging,
     pub hover: Hover,
     pub diving: Diving,
     pub water_gun: WaterGun,
@@ -351,6 +365,7 @@ impl Default for Params {
             mario: Mario::default(),
             controller: Controller::default(),
             upper_body: UpperBody::default(),
+            hanging: Hanging::default(),
             hover: Hover::default(),
             diving: Diving::default(),
             water_gun: WaterGun::default(),
@@ -373,6 +388,7 @@ mod files {
     pub const MARIO: &str = "mario.prm";
     pub const CONTROLLER: &str = "controller.prm";
     pub const UPPER_BODY: &str = "upperbody.prm";
+    pub const HANGING: &str = "hanging.prm";
     pub const HOVER: &str = "hhover.prm";
     pub const DIVING: &str = "diving.prm";
     pub const WATER_GUN: &str = "watergun.prm";
@@ -438,6 +454,9 @@ impl Params {
         }
         if let Some(prm) = get(files::UPPER_BODY) {
             p.upper_body.apply(&prm);
+        }
+        if let Some(prm) = get(files::HANGING) {
+            p.hanging.apply(&prm);
         }
         if let Some(prm) = get(files::HOVER) {
             p.hover.apply(&prm);

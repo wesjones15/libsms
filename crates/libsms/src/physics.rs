@@ -8,7 +8,7 @@
 //! | 0    | left the ground (walked off)    | 0    | still in the air                      |
 //! | 1    | on the ground, moved            | 1    | landed                                |
 //! | 2    | blocked (wall, ceiling, void)   | 2    | hit a wall head-on (within clash angle)|
-//! |      |                                 | 3    | grabbed a ledge (option)              |
+//! |      |                                 | 3    | caught a ledge (`hangonCheck`)        |
 //! |      |                                 | 4    | grabbed a fence from below (unused)   |
 
 use glam::Vec3;
@@ -260,11 +260,13 @@ impl Mario {
         };
         let (w1p, w2p) = (passable(&wall1), passable(&wall2));
 
-        if arg & 1 != 0 && w1p && !w2p && self.options.ledge_grab {
-            // Ledge below head height: the hanging states are not implemented, so only taken
-            // when the option is on and the caller handles code 3.
+        if arg & 1 != 0 && w1p && !w2p {
+            // A ledge below head height: catch it if `hangonCheck` agrees.
             self.wall = wall2;
-            wall_code = 0;
+            wall_code = match wall2 {
+                Some(w) if self.hangon_check(host, &w, target, pos) => 3,
+                _ => 0,
+            };
         } else if !w1p || !w2p {
             self.wall = if wall1.is_some() { wall1 } else { wall2 };
             if let Some(w) = self.wall {

@@ -205,6 +205,10 @@ impl Host for World {
                     .iter()
                     .copied()
                     .fold(faces[0], |a, f| if f.0 < a.0 { f } else { a });
+                // Like the game's wall triangles: only a face within the radius touches.
+                if d >= radius {
+                    continue;
+                }
                 (n, d + radius)
             };
             c.x += normal.x * push;
@@ -644,6 +648,15 @@ async fn main() {
     };
 
     let mut sim = mk();
+    // `SMS_HANG=1` starts hanging from the 300-high step (for screenshots).
+    if std::env::var("SMS_HANG").is_ok() {
+        let m = &mut sim.mario;
+        m.pos = V3::new(-750.0, 300.0, 410.0);
+        m.prev_pos = m.pos;
+        m.face_yaw = 0;
+        m.model_yaw = 0;
+        m.change_status(Status::Hanging, 0, true);
+    }
     let mut world = World::course();
     let mut water = WaterManager::new(&params);
     let mut water_view = assets.as_ref().and_then(|a| water::WaterView::load(&a.dir));

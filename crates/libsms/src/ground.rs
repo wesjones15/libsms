@@ -549,6 +549,7 @@ impl Mario {
             }
             _ => {}
         }
+        self.check_descent(host);
 
         if self.fludd_emitting {
             let v = self.params.mario.dash_max;

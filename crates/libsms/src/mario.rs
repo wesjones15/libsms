@@ -94,6 +94,11 @@ pub enum Status {
     JumpBackDown,
     // Actions (type 0x180)
     CatchLost,
+    // Special (type 0x300): hanging from a ledge (MarioSpecial.cpp)
+    Hanging,
+    Ascend,
+    Descend,
+    HangJumping,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,6 +107,7 @@ pub enum Kind {
     Running,
     Jumping,
     Action,
+    Special,
 }
 
 impl Status {
@@ -115,6 +121,7 @@ impl Status {
             | UltraJumpSlip | BroadJumpSlip | BackDown | ForeDown | ShortBackDown
             | ShortForeDown | CatchDown => Kind::Running,
             CatchLost => Kind::Action,
+            Hanging | Ascend | Descend | HangJumping => Kind::Special,
             _ => Kind::Jumping,
         }
     }
@@ -149,9 +156,6 @@ pub enum UpperState {
 /// Build-time options for behaviours that need states this crate does not have yet.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Options {
-    /// Grab ledges while jumping (needs the hanging states, not implemented). When false,
-    /// Mario bumps into ledges instead.
-    pub ledge_grab: bool,
     /// Literal reading of `TNozzleBase::movement` (WaterGun.cpp): the continuous nozzles' output
     /// is `(pressed - gate)` where the gate ramps up to the pressed level at `mTriggerRate`
     /// per tick, so a held trigger fades to nothing after about 6 s. That function matches the
@@ -505,6 +509,7 @@ impl Mario {
                 Kind::Running => self.move_main(host),
                 Kind::Jumping => self.jump_main(host),
                 Kind::Action => self.action_main(host),
+                Kind::Special => self.special_main(host),
             };
             guard += 1;
             if !changed || guard > 16 {

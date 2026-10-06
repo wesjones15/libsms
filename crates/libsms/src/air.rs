@@ -188,6 +188,16 @@ impl Mario {
                     self.set_player_velocity(0.0);
                 }
             }
+            3 => {
+                // The catch grunt (`TMario::soundProcess`, from a jumping status).
+                self.events.push(Event::Sound(crate::event::SoundCue {
+                    name: "MSD_SE_MV15_EXERT_INST_02",
+                    pos: self.pos,
+                    info: None,
+                }));
+                self.set_anim(crate::hang::clip::HANG, 1.0);
+                self.change_status(Status::Hanging, 0, false);
+            }
             _ => {}
         }
         r

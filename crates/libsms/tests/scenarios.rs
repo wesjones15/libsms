@@ -728,3 +728,102 @@ fn run_clip_moves_the_legs() {
         .fold((f32::MAX, f32::MIN), |(l, h), &v| (l.min(v), h.max(v)));
     assert!(hi - lo > 8.0, "foot barely moves: {lo}..{hi}");
 }
+
+// ---- Ledges --------------------------------------------------------------------------------
+
+/// Floor at 0, and a block from z = 100 onwards whose top is `top` high (its face looks -Z).
+struct LedgeHost {
+    top: f32,
+}
+
+impl Host for LedgeHost {
+    fn ground(&self, p: Vec3) -> Option<libsms::GroundHit> {
+        let h = if p.z >= 100.0 && p.y >= self.top - 1.0 {
+            self.top
+        } else {
+            0.0
+        };
+        Some(libsms::GroundHit {
+            height: h,
+            normal: Vec3::Y,
+            flags: libsms::SurfaceFlags::NONE,
+        })
+    }
+    fn walls(&self, c: Vec3, r: f32, _m: usize, out: &mut Vec<libsms::WallHit>) -> Vec3 {
+        if c.y < 0.0 || c.y >= self.top || c.z <= 100.0 - r || c.z >= 100.0 + r {
+            return c;
+        }
+        out.push(libsms::WallHit {
+            normal: Vec3::new(0.0, 0.0, -1.0),
+            flags: libsms::SurfaceFlags::NONE,
+        });
+        Vec3::new(c.x, c.y, 100.0 - r)
+    }
+}
+
+fn ledge_scene(top: f32, z: f32, y: f32) -> Scene<LedgeHost> {
+    let mut s = Scene::new(LedgeHost { top });
+    s.sim.mario.pos = Vec3::new(0.0, y, z);
+    s.sim.mario.prev_pos = s.sim.mario.pos;
+    s
+}
+
+#[test]
+fn a_jump_against_a_ledge_catches_it_and_climbs_up() {
+    let mut s = ledge_scene(300.0, 40.0, 0.0);
+    s.step(2);
+    s.pad.stick = Vec2::new(0.0, 0.5);
+    s.pad.a = true;
+    let caught = s.until(240, |m| m.status == Status::Hanging);
+    s.pad.a = false;
+    assert!(
+        caught,
+        "never caught: {:?} at {:?}",
+        s.mario().status,
+        s.mario().pos
+    );
+    let m = s.mario();
+    assert_eq!(m.pos.y, 300.0);
+    assert!((m.pos.z - 110.0).abs() < 1.0, "{:?}", m.pos);
+    assert_eq!(m.anim.clip, "hang");
+    // Hold toward the wall: after 40 ticks he climbs onto the ledge.
+    s.pad.stick = Vec2::new(0.0, 1.0);
+    assert!(s.until(120, |m| m.status == Status::Ascend));
+    assert!(s.until(400, |m| m.status != Status::Ascend));
+    assert!(s.mario().pos.y >= 299.0, "{:?}", s.mario().pos);
+}
+
+#[test]
+fn b_lets_go_of_a_ledge() {
+    let mut s = ledge_scene(300.0, 40.0, 0.0);
+    s.step(2);
+    s.pad.stick = Vec2::new(0.0, 0.5);
+    s.pad.a = true;
+    assert!(s.until(240, |m| m.status == Status::Hanging));
+    s.pad.a = false;
+    s.pad.stick = Vec2::ZERO;
+    s.step(10);
+    s.pad.b = true;
+    s.step(1);
+    s.pad.b = false;
+    assert_ne!(s.mario().status, Status::Hanging);
+    assert!(s.until(240, |m| m.pos.y == 0.0));
+}
+
+#[test]
+fn walking_slowly_off_an_edge_lowers_mario_to_hang() {
+    // On the block, walking slowly toward its edge (-Z).
+    let mut s = ledge_scene(300.0, 200.0, 300.0);
+    s.step(2);
+    s.pad.stick = Vec2::new(0.0, -0.25);
+    assert!(
+        s.until(600, |m| m.status == Status::Descend),
+        "{:?} at {:?}",
+        s.mario().status,
+        s.mario().pos
+    );
+    // He turned to face the wall.
+    assert!(s.mario().face_yaw.abs() < 0x100, "{}", s.mario().face_yaw);
+    s.pad.stick = Vec2::ZERO;
+    assert!(s.until(300, |m| m.status == Status::Hanging));
+}
