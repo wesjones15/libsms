@@ -221,22 +221,82 @@ shrinks by `mMagnify` and either sticks (50%) or vanishes; stuck ones run downhi
 surfaces swallow them. Particles over 5000 from Mario vanish. Drawing: `calcDrawVtx` quads
 stretched along the screen velocity by `mExtension * 4`, summed into alpha and shaded as one body.
 
-Not yet: Spray secondary "bomb" trigger (A + R, `mBomb`), Yoshi juice, the diving helmet nozzle
+Not yet: Spray secondary "bomb" trigger (A + R, `mBomb`), the diving helmet nozzle
 (swimming is not implemented at all), the nozzle mist particle (`0x10D`), graffiti sinking,
 dirt/pollution, water hitting actors.
 
-## 7. Verified numbers (disc tuning, headless, `cargo run -p libsms --example report`)
+## 7. Yoshi (Yoshi.cpp, Tongue.cpp, Item.cpp `TEggYoshi`, the `onYoshi()` branches)
+
+Ported: `yoshi.rs`, `tongue.rs`, `egg.rs`. Assets: `yoshi.szs` (`assets/yoshi/`), the egg and
+its bubble from the stage archives (`scene/mapobj/eggyoshi*`), the tongue from `mario.szs`.
+
+**Egg** (`TEggYoshi`). It wants one fruit, shown in its bubble (`decideRandomLoveFruit`: banana,
+papaya, pine or coconut at random; `eggyoshi_fukidashi.btp` frames 1/3/5/7/9 for banana,
+durian, papaya, pine, coconut, 11 for right and 12 for wrong). Fruit Mario carries, or loose
+fruit, inside its hit cylinder (radius 300, height 100) is `touchFruit`: the wanted kind plays
+`eggyoshi_true` (`SY_COLLECT_PRETTY`) and turns the egg toward the fruit; any other kind, when
+the current clip is about to end, plays `eggyoshi_false` (`SY_NOT_COLLECT_YOSHI`). When `true`
+ends, `eggyoshi_broken` plays and Yoshi hatches (`appearFromEgg`): `born` clip, facing the
+egg's way, eating that fruit out of Mario's hands. The shell vanishes when its clip ends. When
+Yoshi is gone the egg comes back with a new wish (`startFruit`).
+
+**Yoshi alone** (`STATE_UNMOUNTED`). Falls under Mario's `mGravity` (applied to his own
+speed each tick, without Mario's quarter step) and stands on the floor; water, death or void
+floors make him disappear. Every 120 to 240 ticks he looks for fruit within 300 of his mouth,
+turns toward it by a tenth of the (unwrapped) angle each tick and tongues it (`doSearch`).
+
+**Mounting.** Mario falling onto him from above (within 100 above his feet, closer than 180,
+not carrying, not just thrown off or back-flipping) lands in the saddle (`checkCollision`):
+`ride` (`YV_DELICIOUS`), FLUDD's nozzle becomes the Yoshi nozzle (FLUDD is switched on if
+Mario had none). Otherwise Mario is pushed out of an 80 cylinder (`keepDistance`).
+
+**Riding.** Yoshi's position and facing are Mario's. `thinkAnimation` picks his clip from
+Mario's status (run with the walk blended in below 30, slide pose, jump, fall, flutter, hip
+drop, wait) and Mario's clip is the matching `yo_*` (`setAnimation`'s jump table; `yo_run`
+while spitting). `Yoshi.prm`: run target x `mRunYoshiMult` (1.2 disc), turn x `mRotYoshiMult`
+(2.0), jump speed x `mJumpYoshiMult` (1.2); `SlipParamYoshi` friction on plain ground; wall
+radius 80, and his head (`mHeadFront` 120 ahead, `mHeadRadius` 10) is pushed out of walls.
+No dive, pump, grab, ledge hang or descent; running or jumping into a wall just stops; no hard
+landings. B is the tongue, R spits juice, X hops off backwards (`BACK_JUMP`, `mGetOffYoshiY`
+60 disc, +100 up, speed -8; FLUDD back to Spray with the Hover second and a full tank).
+
+**Flutter** (`thinkHoldOut`). Each jump re-arms it; falling faster than 5 with A held pushes
+up 1.2 a tick (against gravity 1.0) for up to 120 ticks, until A is let go (`YV_FUNBARI`).
+Steering while fluttering uses `mHoldOutAccCtrlF/B` and `mHoldOutSldCtrl`.
+
+**Juice.** Eating sets his colour (`doEat`: papaya and pine orange, durian purple, banana and
+coconut pink; `YO_TONGUE_GOKKUN`) and refills `unk8` = 21300 ticks. It counts down always;
+in the last 600 ticks he blinks and the colour is gone already (`entry`), at 0 he throws Mario
+(`getOffYoshi(true)`: the 0x89C jump with `thrown`, `YV_DAMAGE`) and dies; the egg returns.
+Riding onto a water-surface floor drowns him (`water_die`). The Yoshi nozzle is
+`TNozzleDeform` with `NozzleYoshiMouth.prm` (particle type 12), from his `null_tongue` joint,
+needs a colour, never empties (`mCurrentWater = mAmountMax` each frame), and doesn't wait for
+FLUDD's handles. Water is drawn in the juice colour (`gModelWaterManagerWaterColor`).
+
+**Tongue** (`TYoshiTongue`). `emitTongue` throws the tip from the mouth along the joint's X
+axis at 10 a tick plus half Mario's velocity, running up to 10 steps at once until it is 160
+out. Flying, it homes on the nearest fruit ahead (within 60 degrees, reach 1000) at 5% of the
+gap a tick and takes it within 200 (`YV_PERON`); it gives up after 60 ticks, behind the
+mouth or in a wall. Reeling in keeps 70% of the length a tick and shrinks the fruit to 80%;
+within 80 the fruit is swallowed (`Event::Eaten`). Yoshi's head plays `eat` / `eat_end` over
+`jnt_18` while the tongue is out or juice flows (`thinkUpper`).
+
+Not yet: enemies on the tongue (`allowExtra`), sidewalk/pivot clips (no L/R strafing),
+`THROWN_DOWN` (the sim lands the throw in `BackDown`), swimming, shadow-Mario eggs, the
+stage-specific wishes and the egg being carried.
+
+## 8. Verified numbers (disc tuning, headless, `cargo run -p libsms --example report`)
 
 | What | Sim |
 |------|-----|
-| Full run | 891 units/s = 5.6 body heights/s (forward speed 28.9) |
+| Full run | 879 units/s = 5.5 body heights/s (forward speed about 26; `doRunning` subtracts `Yoshi.prm`'s `mDecBrake` too, riding or not) |
 | Standing jump | apex 226 (1.41 heights) at 0.35 s, airtime 0.71 s |
 | Triple jump | apex 810 (5.1 heights) |
 | Hover | holds ~3.0 s at ~400 units (target 230 + overshoot), costs 7% tank |
 | Rocket | 1.48 s charge, apex ~2780 (17 heights), costs 8% tank |
 | Turbo | reaches 80 after 0.76 s |
 
-## 8. Unverified (needs a play-test in the real game)
+## 9. Unverified (needs a play-test in the real game)
 
 The viewer now routes animation and game-event sounds through `libsms-audio`; see
 [audio integration](audio.md) for source references, timing and fidelity limits.
@@ -263,3 +323,12 @@ The viewer now routes animation and game-event sounds through `libsms-audio`; se
    which nothing in the decomp's `checkController` sets; the sim treats it as a B press.
 8. **Water timing.** `TModelWaterManager::move` runs on `CUE_MOVE`; the host steps it once per
    30 Hz frame, consistent with its per-frame velocities and Mario's `vel` convention.
+9. **The tongue while it flies out.** `TYoshiTongue::calcAnim` sets the shape-hide flag while
+   `EXTENDING` and only lays out the arc in the other states, so read literally the tongue is
+   invisible on the way out (up to 60 ticks without a target). The viewer draws it whenever it
+   is out.
+10. **Yoshi's clip rates.** His clips update every tick at 0.5 frames, the mounted run at
+   `0.1 + 0.045 * forward speed` frames a tick (`unkA0/A4`, about 1.8 at full speed), and the
+   eating head at 1 frame a tick, all as the decomp sets them.
+11. **Drowning while riding.** The sim has no swimming; riding onto a floor flagged
+   `WATER_SURFACE` stands in for `thinkWaterSurface`'s deep-water check.

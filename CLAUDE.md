@@ -17,7 +17,8 @@ This folder is the repo root. Sibling folders are read-only references:
   textures, `watergun2/` FLUDD); `AudioRes/` is the disc's sound folder plus `msound.aaf`
   (`nintendo.szs:audi/`); `npc/monte*/` are the Pianta models, clips and accessories gathered
   from every stage archive, `params_npc/` the NPC tuning (`params.szs:npc/`), `scene/mapobj/fruit*`
-  the fruit models (stage archives). Never commit it. Hosts call `Assets::discover_or_extract`, which finds a
+  the fruit models and `scene/mapobj/eggyoshi*` Yoshi's egg (stage archives), `yoshi/` Yoshi
+  (`yoshi.szs`). Never commit it. Hosts call `Assets::discover_or_extract`, which finds a
   complete folder or extracts from the disc (`SMS_DISC`, or an image in the given folders) on first
   run, and redoes an older partial one. The older copy at `../extracted/sms` is not used.
 - `../libpikmin/`: the pattern to follow (Host trait, fixed step, events, disc-parsed params).
@@ -30,9 +31,12 @@ Workspace:
   GLSL TEV interpreter on raw miniquad pipelines (`j3d.rs`). `SMS_SHOT=<png>` (+`SMS_SHOT_FRAME`,
   `SMS_CAM=yaw,pitch,dist`, `SMS_HIDE=body,cap,hands,fludd,nozzle`) takes a screenshot and quits;
   `SMS_R=<0-255>` holds the trigger, `SMS_HANG=1` starts hanging from a ledge, `SMS_HOLD=1`
-  starts carrying fruit. FLUDD and the nozzle pose from `Mario::fludd_look`, and the drawn
+  starts carrying fruit, `SMS_YOSHI=1` rides Yoshi (`=2`: he stands by), `SMS_B=<frame>` presses
+  B once. FLUDD and the nozzle pose from `Mario::fludd_look`, and the drawn
   muzzles go back through `Mario::set_emitters`. Water is `libsms::water` drawn like the game: coverage into the
-  window's alpha against the scene's depth, then a refracting screen pass (`water.rs`); fruit is `props.rs`.
+  window's alpha against the scene's depth, then a refracting screen pass (`water.rs`); fruit is `props.rs`;
+  Yoshi, his tongue and the egg are `yoshi_model.rs` (`Mario::yoshi_look`, `Egg::look`; the posed
+  mouth goes back via `Mario::set_yoshi_mouth`).
   miniquad disables the depth *test* for pipelines without depth writes; `j3d.rs` masks writes
   with raw GL instead.
 - `crates/libsms-ffi/`: C ABI stub (cbindgen header later).
@@ -76,5 +80,6 @@ Workspace:
 Ported and tested: disc-file loading (`prm`, `bck`, rig `JNT1`/`INF1`), input, collision contract, ground movement, slipping, the jump family and the
 double/triple chain, dive/belly slide, ground pound, wall slide/kick, bump knock-downs, FLUDD tank,
 Spray/Hover/Rocket/Turbo, crouch, nozzle swap, FLUDD/nozzle/pumping-arm animation and sound cues,
-water particles, ledge grab/hanging/shimmy/climb, grabbing/carrying/putting/throwing. Not yet:
-swimming, bars, wires, poles, fences, Yoshi, the Spray "bomb". See the spec.
+water particles, ledge grab/hanging/shimmy/climb, grabbing/carrying/putting/throwing,
+Yoshi's egg, riding, flutter, tongue and juice. Not yet: swimming, bars, wires, poles, fences,
+the Spray "bomb". See the spec.

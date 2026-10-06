@@ -6,8 +6,8 @@
 //! host spawns particles and applies damage. (Sunshine's `TModelWaterManager` is a particle
 //! system with its own collision; that belongs to the host or a later module.)
 //!
-//! Known gaps (see docs/behavior-spec.md): the Spray nozzle's secondary "bomb" trigger,
-//! Yoshi juice, the diving helmet, and the nozzle-swap animation timing.
+//! Known gaps (see docs/behavior-spec.md): the Spray nozzle's secondary "bomb" trigger and
+//! the diving helmet. Yoshi's juice is the Yoshi nozzle here (`yoshi.rs` has the rest).
 
 use glam::Vec3;
 

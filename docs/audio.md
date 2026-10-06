@@ -46,6 +46,10 @@ once-a-frame request (`MSSeGate_Continuous`). `startSoundActorWithInfo` values g
 `SoundSystem::play_with_info`, which applies `modse`'s gate and pitch/volume curves
 (`JALSeModPitFunk`/`VolFunk`, registered in `MSoundSE`). Names starting `MSD_SE_MV` go to
 `mario_voice`. Water particle events add `WT_GND` splashes, `WT_INTO_WATER` and `PO_WT_DRY_UP`.
+Yoshi's body clip and his eating head each have their own `.bas` player
+(`yoshi/bas/yoshi_<clip>.bas`, `TYoshi::mBodyAnmSound` / `mTongueAnmSound`); his voice
+(`YV_*`), the tongue (`YO_TONGUE_GOKKUN`) and the egg (`SY_COLLECT_PRETTY`,
+`SY_NOT_COLLECT_YOSHI`) arrive as `Event::Sound`.
 
 Takeoff effects, running and animation-driven landings use the `.bas` keys.
 Jump voices are separate: `TMario::setStatusToJumping` in `MarioMove.cpp` selects small,
