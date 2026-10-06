@@ -31,8 +31,8 @@ Workspace:
   `SMS_CAM=yaw,pitch,dist`, `SMS_HIDE=body,cap,hands,fludd,nozzle`) takes a screenshot and quits;
   `SMS_R=<0-255>` holds the trigger, `SMS_HANG=1` starts hanging from a ledge, `SMS_HOLD=1`
   starts carrying fruit. FLUDD and the nozzle pose from `Mario::fludd_look`, and the drawn
-  muzzles go back through `Mario::set_emitters`. Water is `libsms::water` drawn in two passes
-  (`water.rs`); fruit is `props.rs`.
+  muzzles go back through `Mario::set_emitters`. Water is `libsms::water` drawn like the game: coverage into the
+  window's alpha against the scene's depth, then a refracting screen pass (`water.rs`); fruit is `props.rs`.
   miniquad disables the depth *test* for pipelines without depth writes; `j3d.rs` masks writes
   with raw GL instead.
 - `crates/libsms-ffi/`: C ABI stub (cbindgen header later).
