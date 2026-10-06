@@ -73,11 +73,24 @@ impl From<std::io::Error> for ExtractError {
 /// texture swaps, `watergun2/` FLUDD's models and the water effect models and textures.
 /// `msound.aaf` is the sound system's init data (banks, wave systems, sound tables), which
 /// `TApplication::initialize_bootAfter` reads from `nintendo.arc:audi/`.
-pub const EXTRACTS: [(&str, &str, &str); 3] = [
+///
+/// `params.szs:npc/` is the NPCs' tuning (`npcMonteM*.prm` / `npcMonteW*.prm` for the
+/// Piantas; `TNpcParams::TNpcParams`, NpcSave.cpp).
+pub const EXTRACTS: [(&str, &str, &str); 4] = [
     ("params.szs", "mario/", "params_mario"),
+    ("params.szs", "npc/", "params_npc"),
     ("mario.szs", "", ""),
     ("nintendo.szs", "audi/msound.aaf", "AudioRes/msound.aaf"),
 ];
+
+/// Folders gathered from every stage archive (`data/scene/*.szs`) into one folder under `out`:
+/// `(path prefix inside the archives, destination)`. Each stage carries only the NPC kinds it
+/// uses, so the union over all stages is the full set. `monte*` are the Piantas: each
+/// `TMonteM*Manager::createModelData` / `TMonteW*Manager` (NpcManager.cpp) loads its body from
+/// `/scene/montem<x>/` or `/scene/montew<x>/` (some share `montem/`), and `montemcommon/` /
+/// `montewcommon/` hold the shared clips (`mom_*` / `mow_*` .bck, .btp, .bas) and accessory
+/// models (hats, glasses, ...).
+pub const SCENE_FOLDERS: [(&str, &str); 1] = [("monte", "npc")];
 
 /// Disc folders copied as they are: `AudioRes/` holds the wave archives (`Banks/*.aw`), the
 /// sequence archive (`Seqs/sequence.arc`), streams and `mSound.asn` (MSound.cpp,
@@ -86,7 +99,7 @@ pub const DISC_FOLDERS: [&str; 1] = ["AudioRes/"];
 
 /// Files that must exist for the library and viewer to work. Adding one here makes an older
 /// `assets/` incomplete, so hosts re-extract it on the next run.
-pub const REQUIRED: [&str; 16] = [
+pub const REQUIRED: [&str; 21] = [
     "params_mario/run.prm",
     "params_mario/jump.prm",
     "params_mario/mario.prm",
@@ -103,6 +116,11 @@ pub const REQUIRED: [&str; 16] = [
     "AudioRes/msound.aaf",
     "AudioRes/mSound.asn",
     "AudioRes/Seqs/sequence.arc",
+    "params_npc/npcmontem.prm",
+    "npc/montemcommon/mom_wait.bck",
+    "npc/montewcommon/mow_wait.bck",
+    "npc/montema/moma_model.bmd",
+    "npc/montew/mow_model.bmd",
 ];
 
 pub const GAME_IDS: [(&str, &str); 3] = [
@@ -235,6 +253,52 @@ pub fn extract_assets(
             return Err(ExtractError::Missing(folder.to_owned()));
         }
         log(&format!("{folder} ({n} files)"));
+    }
+
+    for (prefix, dest) in SCENE_FOLDERS {
+        // Same path in two stages: keep the first copy (they are identical on the discs
+        // checked; a difference is logged).
+        let mut seen: std::collections::HashMap<String, usize> = Default::default();
+        let mut scenes = disc.paths_under("data/scene/");
+        scenes.retain(|p| p.ends_with(".szs"));
+        log(&format!(
+            "reading {} stage archives for {prefix}*",
+            scenes.len()
+        ));
+        for scene in &scenes {
+            let raw = disc.read_file(scene)?;
+            let bytes = if yaz0::is_yaz0(&raw) {
+                yaz0::decompress(&raw)?
+            } else {
+                raw
+            };
+            let Ok(arc) = rarc::Archive::parse(bytes) else {
+                continue;
+            };
+            for (rel, data) in arc.under("") {
+                if !rel.starts_with(prefix) {
+                    continue;
+                }
+                if let Some(&len) = seen.get(rel) {
+                    if len != data.len() {
+                        log(&format!(
+                            "{scene}:{rel} differs from an earlier copy; kept the first"
+                        ));
+                    }
+                    continue;
+                }
+                let path = safe_join(&out.join(dest), rel)?;
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::write(path, data)?;
+                seen.insert(rel.to_owned(), data.len());
+            }
+        }
+        if seen.is_empty() {
+            return Err(ExtractError::Missing(format!("data/scene/*.szs:{prefix}*")));
+        }
+        log(&format!("{prefix}* -> {dest}/ ({} files)", seen.len()));
     }
 
     if !is_complete(out) {

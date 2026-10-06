@@ -33,6 +33,7 @@ ROOT = HERE.parent
 # An empty inner path is the whole archive. Matches libsms::extract::EXTRACTS.
 EXTRACTS = [
     ("params.szs", "mario/", "params_mario"),
+    ("params.szs", "npc/", "params_npc"),
     ("mario.szs", "", ""),
     ("nintendo.szs", "audi/msound.aaf", "AudioRes/msound.aaf"),
 ]
@@ -58,7 +59,16 @@ REQUIRED = [
     "AudioRes/msound.aaf",
     "AudioRes/mSound.asn",
     "AudioRes/Seqs/sequence.arc",
+    "params_npc/npcmontem.prm",
+    "npc/montemcommon/mom_wait.bck",
+    "npc/montewcommon/mow_wait.bck",
+    "npc/montema/moma_model.bmd",
+    "npc/montew/mow_model.bmd",
 ]
+
+# Folders gathered from every stage archive into one: (prefix, destination). Matches
+# libsms::extract::SCENE_FOLDERS. monte* are the Piantas.
+SCENE_FOLDERS = [("monte", "npc")]
 
 GAME_IDS = {
     b"GMSJ01": "Japan (NTSC-J)",
@@ -183,6 +193,28 @@ def main():
         run([dtk, "vfs", "cp", src, target])
         if folder:
             normalise(dst)
+
+    scenes = [
+        line.split("|")[1].strip()
+        for line in run([dtk, "vfs", "ls", f"{iso}:files/data/scene/"]).splitlines()
+        if "|" in line and line.split("|")[1].strip().endswith(".szs")
+    ]
+    for prefix, dest in SCENE_FOLDERS:
+        print(f"extracting {prefix}* from {len(scenes)} stage archives")
+        for scene in scenes:
+            listing = run([dtk, "vfs", "ls", f"{iso}:files/data/scene/{scene}:"])
+            folders = {
+                line.split("|")[1].strip().rstrip("/")
+                for line in listing.splitlines()
+                if "|" in line and line.split("|")[1].strip().startswith(prefix)
+            }
+            for folder in sorted(folders):
+                dst = out / dest / folder
+                if dst.exists():
+                    continue
+                dst.mkdir(parents=True, exist_ok=True)
+                run([dtk, "vfs", "cp", f"{iso}:files/data/scene/{scene}:{folder}/", str(dst) + os.sep])
+                normalise(dst)
 
     for folder in DISC_FOLDERS:
         dst = out / folder

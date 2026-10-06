@@ -15,7 +15,8 @@ This folder is the repo root. Sibling folders are read-only references:
   `params.szs:mario/*.prm` (tuning); the rest of `assets/` is all of `mario.szs` at its own paths
   (`bck/` clips, `bmd/` models incl. the `ma_mdl1.bmd` rig, `bas/` clip sound keys, `btp/` face
   textures, `watergun2/` FLUDD); `AudioRes/` is the disc's sound folder plus `msound.aaf`
-  (`nintendo.szs:audi/`). Never commit it. Hosts call `Assets::discover_or_extract`, which finds a
+  (`nintendo.szs:audi/`); `npc/monte*/` are the Pianta models, clips and accessories gathered
+  from every stage archive, `params_npc/` the NPC tuning (`params.szs:npc/`). Never commit it. Hosts call `Assets::discover_or_extract`, which finds a
   complete folder or extracts from the disc (`SMS_DISC`, or an image in the given folders) on first
   run, and redoes an older partial one. The older copy at `../extracted/sms` is not used.
 - `../libpikmin/`: the pattern to follow (Host trait, fixed step, events, disc-parsed params).
