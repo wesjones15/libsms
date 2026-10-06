@@ -76,4 +76,41 @@ impl Assets {
     pub fn discover(explicit: Option<&Path>) -> Option<Assets> {
         find(explicit).map(|d| Assets::load(&d))
     }
+
+    /// The first-run path for hosts: use a complete `assets/` if there is one; otherwise find
+    /// the user's disc (`$SMS_DISC`, or an image in `disc_dirs`) and extract into the folder
+    /// `find` picked, or `assets/` at the workspace root. An older, partial extraction is
+    /// completed the same way. Without a disc, a partial folder still loads.
+    pub fn discover_or_extract(
+        explicit: Option<&Path>,
+        disc_dirs: &[PathBuf],
+        log: &mut dyn FnMut(&str),
+    ) -> Option<Assets> {
+        let dir = find(explicit);
+        if let Some(d) = &dir
+            && crate::extract::is_complete(d)
+        {
+            return Some(Assets::load(d));
+        }
+        let out = dir.clone().unwrap_or_else(|| {
+            explicit
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets"))
+        });
+        match crate::extract::find_disc(disc_dirs) {
+            Some(iso) => {
+                log(&format!(
+                    "extracting {} into {}",
+                    iso.display(),
+                    out.display()
+                ));
+                match Assets::ensure(&iso, &out, log) {
+                    Ok(a) => return Some(a),
+                    Err(e) => log(&format!("extraction failed: {e}")),
+                }
+            }
+            None => log("no Super Mario Sunshine disc found (set SMS_DISC or pass --iso)"),
+        }
+        dir.map(|d| Assets::load(&d))
+    }
 }

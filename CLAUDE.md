@@ -12,8 +12,12 @@ This folder is the repo root. Sibling folders are read-only references:
 - `assets/` (inside this repo, git-ignored): the user's disc files, built by
   `cargo run -p libsms --bin sms-extract -- <iso>` (pure Rust: ISO/CISO, Yaz0, RARC; `libsms::extract`),
   or `python tools/extract_assets.py <iso>` for RVZ/WIA/WBFS (needs dtk). `params_mario/` =
-  `params.szs:mario/*.prm` (tuning), `bck/` = `mario.szs:bck/*.bck` (clips), `bmd/ma_mdl1.bmd` (rig).
-  Never commit it. `libsms::assets::find` locates it. The older copy at `../extracted/sms` is not used.
+  `params.szs:mario/*.prm` (tuning); the rest of `assets/` is all of `mario.szs` at its own paths
+  (`bck/` clips, `bmd/` models incl. the `ma_mdl1.bmd` rig, `bas/` clip sound keys, `btp/` face
+  textures, `watergun2/` FLUDD); `AudioRes/` is the disc's sound folder plus `msound.aaf`
+  (`nintendo.szs:audi/`). Never commit it. Hosts call `Assets::discover_or_extract`, which finds a
+  complete folder or extracts from the disc (`SMS_DISC`, or an image in the given folders) on first
+  run, and redoes an older partial one. The older copy at `../extracted/sms` is not used.
 - `../libpikmin/`: the pattern to follow (Host trait, fixed step, events, disc-parsed params).
 
 Workspace:

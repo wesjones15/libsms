@@ -65,15 +65,28 @@ impl From<std::io::Error> for ExtractError {
 }
 
 /// Where each piece comes from: `(archive under data/, path inside it, destination under out)`.
-/// A path ending in `/` is a whole folder. Matches `tools/extract_assets.py`.
+/// A path ending in `/` is a whole folder, and an empty path the whole archive. Matches
+/// `tools/extract_assets.py`.
+///
+/// `mario.szs` is Mario's whole archive (`TMarioPlayer` loads it, MarioInit.cpp): `bmd/` models
+/// (body, caps, hands, sunglasses), `bck/` clips, `bas/` per-clip sound keys, `btp/` face
+/// texture swaps, `watergun2/` FLUDD's models and the water effect models and textures.
+/// `msound.aaf` is the sound system's init data (banks, wave systems, sound tables), which
+/// `TApplication::initialize_bootAfter` reads from `nintendo.arc:audi/`.
 pub const EXTRACTS: [(&str, &str, &str); 3] = [
     ("params.szs", "mario/", "params_mario"),
-    ("mario.szs", "bck/", "bck"),
-    ("mario.szs", "bmd/ma_mdl1.bmd", "bmd/ma_mdl1.bmd"),
+    ("mario.szs", "", ""),
+    ("nintendo.szs", "audi/msound.aaf", "AudioRes/msound.aaf"),
 ];
 
-/// Files that must exist for the library and viewer to work.
-pub const REQUIRED: [&str; 7] = [
+/// Disc folders copied as they are: `AudioRes/` holds the wave archives (`Banks/*.aw`), the
+/// sequence archive (`Seqs/sequence.arc`), streams and `mSound.asn` (MSound.cpp,
+/// `MSound::MSound` sets these paths).
+pub const DISC_FOLDERS: [&str; 1] = ["AudioRes/"];
+
+/// Files that must exist for the library and viewer to work. Adding one here makes an older
+/// `assets/` incomplete, so hosts re-extract it on the next run.
+pub const REQUIRED: [&str; 16] = [
     "params_mario/run.prm",
     "params_mario/jump.prm",
     "params_mario/mario.prm",
@@ -81,6 +94,15 @@ pub const REQUIRED: [&str; 7] = [
     "bck/ma_wait.bck",
     "bck/ma_run2.bck",
     "bmd/ma_mdl1.bmd",
+    "bmd/ma_cap1.bmd",
+    "bmd/ma_hnd2r.bmd",
+    "bas/ma_jump.bas",
+    "btp/ma_wink_tx.btp",
+    "watergun2/body/wg_mdl1.bmd",
+    "watergun2/normal_wg/normal_wg.bmd",
+    "AudioRes/msound.aaf",
+    "AudioRes/mSound.asn",
+    "AudioRes/Seqs/sequence.arc",
 ];
 
 pub const GAME_IDS: [(&str, &str); 3] = [
@@ -171,10 +193,9 @@ pub fn extract_assets(
         }
         let arc = &cache.as_ref().unwrap().1;
 
-        if let Some(folder) = inner.strip_suffix('/') {
-            let prefix = format!("{folder}/");
+        if inner.is_empty() || inner.ends_with('/') {
             let mut n = 0;
-            for (rel, data) in arc.under(&prefix) {
+            for (rel, data) in arc.under(inner) {
                 let path = safe_join(&out.join(dest), rel)?;
                 if let Some(parent) = path.parent() {
                     std::fs::create_dir_all(parent)?;
@@ -199,6 +220,23 @@ pub fn extract_assets(
         }
     }
 
+    for folder in DISC_FOLDERS {
+        let mut n = 0;
+        for path in disc.paths_under(folder) {
+            let data = disc.read_file(&path)?;
+            let dest = safe_join(out, &path)?;
+            if let Some(parent) = dest.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(dest, data)?;
+            n += 1;
+        }
+        if n == 0 {
+            return Err(ExtractError::Missing(folder.to_owned()));
+        }
+        log(&format!("{folder} ({n} files)"));
+    }
+
     if !is_complete(out) {
         return Err(ExtractError::Missing(
             "expected files after extraction".into(),
@@ -213,7 +251,7 @@ pub fn extract_assets(
     std::fs::write(
         out.join("SOURCE.txt"),
         format!(
-            "extracted from: {}\ngame id: {}\nfiles: {} prm, {} bck, ma_mdl1.bmd\nby: libsms::extract\n",
+            "extracted from: {}\ngame id: {}\nfiles: {} prm, {} bck, mario.szs, AudioRes/\nby: libsms::extract\n",
             iso.file_name().and_then(|s| s.to_str()).unwrap_or("?"),
             report.game_id,
             report.prm_files,
@@ -225,6 +263,49 @@ pub fn extract_assets(
         report.prm_files, report.clips
     ));
     Ok(report)
+}
+
+/// The Game ID of a plain or CISO image, without reading its file system.
+fn game_id_of(path: &Path) -> Option<String> {
+    gcm::open_image(path).ok().and_then(|mut r| {
+        let mut id = [0u8; 6];
+        r.read_at(0, &mut id).ok()?;
+        Some(String::from_utf8_lossy(&id).into_owned())
+    })
+}
+
+/// Looks for the user's Super Mario Sunshine disc: `$SMS_DISC`, then `.iso`/`.gcm`/`.ciso`
+/// files in `dirs` (names containing "sunshine" first), keeping the first whose Game ID is
+/// Sunshine's.
+pub fn find_disc(dirs: &[PathBuf]) -> Option<PathBuf> {
+    let is_sms = |p: &Path| game_id_of(p).is_some_and(|id| GAME_IDS.iter().any(|g| g.0 == id));
+    if let Some(p) = std::env::var_os("SMS_DISC").map(PathBuf::from)
+        && is_sms(&p)
+    {
+        return Some(p);
+    }
+    let mut cands: Vec<PathBuf> = Vec::new();
+    for d in dirs {
+        let Ok(rd) = std::fs::read_dir(d) else {
+            continue;
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            let ext = p
+                .extension()
+                .and_then(|s| s.to_str())
+                .map(str::to_ascii_lowercase);
+            if matches!(ext.as_deref(), Some("iso" | "gcm" | "ciso")) {
+                cands.push(p);
+            }
+        }
+    }
+    let named = |p: &PathBuf| {
+        let n = p.to_string_lossy().to_ascii_lowercase();
+        !(n.contains("sunshine") || n.contains("gms"))
+    };
+    cands.sort_by_key(named);
+    cands.into_iter().find(|p| is_sms(p))
 }
 
 /// All files under `dir`, as `/`-separated paths relative to it.

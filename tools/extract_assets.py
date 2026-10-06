@@ -6,8 +6,10 @@
 Writes (git-ignored, never commit it) to ./assets:
 
     assets/params_mario/   tuning .prm files        (params.szs:mario/)
-    assets/bck/            animation clips          (mario.szs:bck/)
-    assets/bmd/ma_mdl1.bmd the skeleton source      (mario.szs:bmd/ma_mdl1.bmd)
+    assets/bck/ bmd/ bas/ btp/ watergun2/ ...        (all of mario.szs: clips, models,
+                           clip sound keys, face textures, FLUDD)
+    assets/AudioRes/       wave banks, sequences, streams (disc AudioRes/), plus
+                           msound.aaf (nintendo.szs:audi/msound.aaf)
 
 Nothing here is distributed with the project; the disc is the only source. Needs
 decomp-toolkit (dtk) to read the disc image and the Yaz0 archives inside it. It is found via
@@ -28,11 +30,15 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 
 # (archive inside files/data, path inside the archive, destination under --out)
+# An empty inner path is the whole archive. Matches libsms::extract::EXTRACTS.
 EXTRACTS = [
     ("params.szs", "mario/", "params_mario"),
-    ("mario.szs", "bck/", "bck"),
-    ("mario.szs", "bmd/ma_mdl1.bmd", "bmd/ma_mdl1.bmd"),
+    ("mario.szs", "", ""),
+    ("nintendo.szs", "audi/msound.aaf", "AudioRes/msound.aaf"),
 ]
+
+# Disc folders copied as they are.
+DISC_FOLDERS = ["AudioRes/"]
 
 # Files that must exist afterwards for the sim and viewer to work.
 REQUIRED = [
@@ -43,6 +49,15 @@ REQUIRED = [
     "bck/ma_wait.bck",
     "bck/ma_run2.bck",
     "bmd/ma_mdl1.bmd",
+    "bmd/ma_cap1.bmd",
+    "bmd/ma_hnd2r.bmd",
+    "bas/ma_jump.bas",
+    "btp/ma_wink_tx.btp",
+    "watergun2/body/wg_mdl1.bmd",
+    "watergun2/normal_wg/normal_wg.bmd",
+    "AudioRes/msound.aaf",
+    "AudioRes/mSound.asn",
+    "AudioRes/Seqs/sequence.arc",
 ]
 
 GAME_IDS = {
@@ -157,7 +172,8 @@ def main():
     for archive, inner, dest in EXTRACTS:
         src = f"{iso}:files/data/{archive}:{inner}"
         dst = out / dest
-        if inner.endswith("/"):
+        folder = inner == "" or inner.endswith("/")
+        if folder:
             dst.mkdir(parents=True, exist_ok=True)
             target = str(dst) + os.sep
         else:
@@ -165,8 +181,15 @@ def main():
             target = str(dst)
         print(f"extracting {archive}:{inner}")
         run([dtk, "vfs", "cp", src, target])
-        if inner.endswith("/"):
+        if folder:
             normalise(dst)
+
+    for folder in DISC_FOLDERS:
+        dst = out / folder
+        dst.mkdir(parents=True, exist_ok=True)
+        print(f"extracting {folder}")
+        run([dtk, "vfs", "cp", f"{iso}:files/{folder}", str(dst) + os.sep])
+        normalise(dst)
 
     missing = [r for r in REQUIRED if not (out / r).is_file()]
     if missing:
@@ -180,7 +203,7 @@ def main():
         f"image sha1: {sha1(iso)}\n"
         f"files: {n_prm} prm, {n_bck} bck, ma_mdl1.bmd\n"
     )
-    print(f"done: {n_prm} .prm files, {n_bck} animation clips, 1 model into {out}")
+    print(f"done: {n_prm} .prm files, {n_bck} animation clips, Mario's models and sound into {out}")
     print("This folder is git-ignored. Do not commit or share it.")
 
 

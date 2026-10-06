@@ -610,18 +610,26 @@ async fn main() {
         .enumerate()
         .find(|(i, a)| !a.starts_with("--") && (*i == 0 || args[i - 1] != "--iso"))
         .map(|(_, a)| a.clone());
-    let mut assets = libsms::Assets::discover(explicit.as_deref().map(Path::new));
-    if assets.is_none() {
-        if let Some(iso) = iso {
-            println!("no assets/ yet: extracting from {iso}");
-            match libsms::Assets::ensure(Path::new(iso), Path::new("assets"), &mut |m| {
-                println!("{m}")
-            }) {
-                Ok(a) => assets = Some(a),
-                Err(e) => eprintln!("extraction failed: {e}"),
-            }
-        }
+    // First run: a complete `assets/`, else extract from `--iso`, `SMS_DISC` or a Sunshine
+    // image found next to the workspace.
+    let ws = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut disc_dirs: Vec<std::path::PathBuf> = vec![
+        ws.clone(),
+        ws.join("../iso backups"),
+        ws.join("../sms-main/orig/GMSP01"),
+        ws.join("../sms-main/orig/GMSE01"),
+        std::path::PathBuf::from("."),
+    ];
+    if let Some(iso) = iso {
+        // SAFETY: single-threaded, before anything reads the environment.
+        unsafe { std::env::set_var("SMS_DISC", iso) };
+        disc_dirs.clear();
     }
+    let assets = libsms::Assets::discover_or_extract(
+        explicit.as_deref().map(Path::new),
+        &disc_dirs,
+        &mut |m| println!("{m}"),
+    );
     let rig = assets.as_ref().and_then(Rig::from_assets);
     let (params, anims, data_label) = match &assets {
         Some(a) => (

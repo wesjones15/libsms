@@ -70,7 +70,7 @@ impl ReadAt for CisoImage {
     }
 }
 
-fn open_image(path: &Path) -> Result<Box<dyn ReadAt>, ExtractError> {
+pub(crate) fn open_image(path: &Path) -> Result<Box<dyn ReadAt>, ExtractError> {
     let mut file = File::open(path)?;
     let len = file.metadata()?.len();
     let mut head = [0u8; 8];
@@ -184,6 +184,18 @@ impl Disc {
 
     pub fn contains(&self, path: &str) -> bool {
         self.files.contains_key(path)
+    }
+
+    /// Every file path under `prefix` (which ends in `/`), sorted.
+    pub fn paths_under(&self, prefix: &str) -> Vec<String> {
+        let mut v: Vec<String> = self
+            .files
+            .keys()
+            .filter(|p| p.starts_with(prefix))
+            .cloned()
+            .collect();
+        v.sort();
+        v
     }
 
     pub fn len(&self) -> usize {

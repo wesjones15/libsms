@@ -30,6 +30,15 @@ fn extracts_a_real_disc_and_the_result_loads() {
     assert_eq!(a.params.jump.gravity, 1.0);
     assert!(a.skeleton.is_some_and(|s| s.len() == 29));
     assert!(a.clips.get("wait").is_some());
+    // Models, clip sound keys and the sound data came along.
+    for f in [
+        "bmd/ma_cap1.bmd",
+        "bas/ma_jump.bas",
+        "AudioRes/msound.aaf",
+        "AudioRes/Banks/w1stLoad_0.aw",
+    ] {
+        assert!(out.join(f).is_file(), "{f}");
+    }
 
     // A second run is a no-op.
     let mut again = Vec::new();
