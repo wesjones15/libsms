@@ -2,6 +2,8 @@
 //! the instrument and wave banks and the sound table, AFC-compressed waves, the BMS sequence
 //! archive, the title stream and the sound names. Playing them is `libsms-audio`'s job; this
 //! module only parses and decodes.
+//! Animation cues (`bas/ma_<clip>.bas`) are exposed as [`AnimSoundTable`]; the
+//! matching `bck/ma_<clip>.bck` stem is confirmed by `TMario::initModel` in MarioDraw.cpp.
 //!
 //! ```text
 //! assets/AudioRes/msound.aaf          init data (nintendo.szs:audi/msound.aaf)

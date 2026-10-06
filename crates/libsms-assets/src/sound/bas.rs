@@ -22,7 +22,7 @@ pub struct AnimSound {
     pub volume: u8,
     /// How strongly the playback speed scales the pitch.
     pub pitch_scale: i8,
-    /// Times a looping animation retriggers it (0 = every loop).
+    /// Exact loop on which to trigger when flags bit 3 is set (0 = the first pass).
     pub loop_count: u8,
     /// Pan, 0..127.
     pub pan: u8,

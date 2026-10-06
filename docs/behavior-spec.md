@@ -187,6 +187,9 @@ Not yet: Spray secondary "bomb" trigger (A + R, `mBomb`), Yoshi juice, the divin
 
 ## 8. Unverified (needs a play-test in the real game)
 
+The viewer now routes animation and game-event sounds through `libsms-audio`; see
+[audio integration](audio.md) for source references, timing and fidelity limits.
+
 1. **Spray fades to nothing.** `TNozzleBase::movement` (99.8% match) computes output as
    `(pressedLevel - gate) / 65536` where `gate` ramps up at `mTriggerRate` (50/tick), so a held
    full press decays to zero after ~6 s. We default to a steady output

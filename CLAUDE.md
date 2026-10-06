@@ -31,6 +31,14 @@ Workspace:
   miniquad disables the depth *test* for pipelines without depth writes; `j3d.rs` masks writes
   with raw GL instead.
 - `crates/libsms-ffi/`: C ABI stub (cbindgen header later).
+- `crates/libsms-audio/`: device-independent PCM engine (`Engine`), JAI game layer
+  (`SoundSystem`) and `.bas` cue playback (`animation::AnimationPlayer`).
+  `libsms-assets::sound` loads banks, waves, sequences, streams, names and animation tables.
+  See `docs/audio.md` for the host contract, tests and remaining fidelity gaps.
+- Viewer audio (`crates/viewer/src/sound.rs`) uses CPAL, samples animation/events after each
+  120 Hz tick with `Sim::advance_observed`, and runs JAI frames at 30 Hz.
+  It starts Delfino Plaza music; **M** cycles extracted BGM tracks, including off.
+  Missing sound data or an unavailable output device leaves a silent, usable viewer.
 - `docs/behavior-spec.md`: the spec, written from the decomp. Update it with the code.
 
 ## Rules

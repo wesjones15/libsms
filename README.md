@@ -23,6 +23,10 @@ sim.advance(&mut World, &pad, /* camera_yaw */ 0, 1.0 / 60.0);
 Read `docs/behavior-spec.md` for what is implemented, the tuning numbers, and what still needs
 verifying against the real game.
 
+The sample viewer plays Mario's animation sounds, FLUDD and impact effects, and background
+music from your extracted disc. Press **M** to cycle music (including off).
+See [audio integration](docs/audio.md) for the sound crates, host API and verification commands.
+
 ## Your own game files
 
 The repository contains no game data. Build the git-ignored `assets/` folder once from your own

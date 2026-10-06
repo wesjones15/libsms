@@ -9,6 +9,8 @@
 //! - [`osc`]: envelopes and LFOs (JASOscillator.cpp).
 //! - [`jai`]: the game layer (JAInterface + MSound): sound effects through the SE sequence,
 //!   music, the title stream, Mario's voice. Hosts use [`SoundSystem`].
+//! - [`animation`]: `.bas` cue timing, held sound windows, loop/direction flags and
+//!   animation-change cleanup. Hosts sample [`animation::AnimationPlayer`] each sim tick.
 //!
 //! Nothing here contains Nintendo data: banks, sequences and the sound table are read from the
 //! user's extracted `assets/` (`libsms_assets::sound`).
