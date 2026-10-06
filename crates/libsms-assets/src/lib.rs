@@ -5,6 +5,7 @@
 //! - [`texture`]: GX texture decoding and `.bti` images.
 //! - [`pose`]: skinning a model with joint matrices from `libsms::Skeleton`.
 //! - [`btp`]: texture pattern animations (Mario's blinking and face swaps).
+//! - [`sound`]: JAudio's banks, waves, sequences, streams and the sound table.
 //!
 //! The sim (`libsms`) only needs tuning and clip timing; hosts that draw Mario use this crate.
 
@@ -13,6 +14,7 @@ pub mod btp;
 pub mod mario;
 pub mod pose;
 mod reader;
+pub mod sound;
 pub mod texture;
 
 use std::fmt;
