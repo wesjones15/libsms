@@ -745,6 +745,11 @@ impl SoundSystem {
         self.live(h).is_some()
     }
 
+    /// The current sound for a live handle (stale handles return `None`).
+    pub fn sound_id(&self, h: SoundHandle) -> Option<u32> {
+        self.live(h).map(|slot| self.ses[slot].id)
+    }
+
     /// Renews a held SE without restarting its sequence, even when the host samples more
     /// often than JAI's 30 Hz frame (`JAISeEntry::storeBuffer` keep-alive).
     pub fn refresh(&mut self, h: SoundHandle, pos: Vec3) -> bool {
@@ -1094,11 +1099,15 @@ impl SoundSystem {
                 };
                 self.ses[s].frames += 1;
                 let route = self.se_track_route(k);
-                let status0 = self
-                    .engine
-                    .read_port_app(root, route + 0x20000)
-                    .unwrap_or(0);
-                let status1 = self.engine.read_port_app(root, route).unwrap_or(0);
+                // The audio thread may not have run se.scom's startup yet. Keep a
+                // prepared sound queued until its child track exists; writes to an
+                // absent track are lost (not a completed sound with zero ports).
+                let Some(status0) = self.engine.read_port_app(root, route + 0x20000) else {
+                    continue;
+                };
+                let Some(status1) = self.engine.read_port_app(root, route) else {
+                    continue;
+                };
                 self.ses[s].dist = self.ses[s].dist.sqrt();
                 let st = self.ses[s].state;
                 if st == state::PREPARED {

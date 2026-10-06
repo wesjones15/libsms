@@ -10,7 +10,7 @@
 //!   Left Shift      spray (R, half press)                X        swap nozzle (Spray <-> second)
 //!   1 2 3 4         fit Spray / Hover / Rocket / Turbo   G        refill tank
 //!   R               respawn                              H        toggle help
-//!   T               Shine Shirt on/off
+//!   T               Shine Shirt on/off                  M        cycle music (includes off)
 //!
 //! Tuning, animation clips and the skeleton come from your own disc: run
 //! `sms-viewer --iso <your disc image>` once (or `cargo run -p libsms --bin sms-extract -- <iso>`,
@@ -20,6 +20,7 @@
 
 mod j3d;
 mod mario_model;
+mod sound;
 
 use std::path::Path;
 
@@ -65,6 +66,7 @@ struct World {
     ramps: Vec<Ramp>,
     drops: Vec<Drop>,
     emits: Vec<WaterEmit>,
+    sounds: Vec<Event>,
     log: Vec<String>,
     seed: u32,
 }
@@ -121,6 +123,7 @@ impl World {
             ramps,
             drops: Vec::new(),
             emits: Vec::new(),
+            sounds: Vec::new(),
             log: Vec::new(),
             seed: 0x1234_5678,
         }
@@ -267,6 +270,7 @@ impl Host for World {
     }
 
     fn event(&mut self, e: Event) {
+        self.sounds.push(e);
         match e {
             Event::Jump(k) => self.note(format!("jump: {k:?}")),
             Event::Land { strong: true } => self.note("hard landing".into()),
@@ -649,6 +653,7 @@ async fn main() {
         &mut |m| println!("{m}"),
     );
     let rig = assets.as_ref().and_then(Rig::from_assets);
+    let mut audio = assets.as_ref().and_then(|a| sound::Audio::start(&a.dir));
     // The disc's Mario: body, hands, cap, FLUDD and nozzles with their materials.
     let mut mario_model = assets.as_ref().and_then(|a| {
         mario_model::MarioModel::load(&a.dir)
@@ -750,9 +755,17 @@ async fn main() {
         if is_key_pressed(KeyCode::R) || sim.mario.pos.y < -2500.0 {
             sim = mk();
             world.drops.clear();
+            if let Some(audio) = &mut audio {
+                audio.reset();
+            }
         }
         if is_key_pressed(KeyCode::H) {
             show_help = !show_help;
+        }
+        if is_key_pressed(KeyCode::M)
+            && let Some(audio) = &mut audio
+        {
+            audio.cycle();
         }
         if let Some(model) = mario_model.as_mut()
             && (is_key_pressed(KeyCode::T) || (frame_no == 0 && std::env::var("SMS_SHIRT").is_ok()))
@@ -768,6 +781,9 @@ async fn main() {
                 (KeyCode::Key4, NozzleKind::Turbo),
             ] {
                 if is_key_pressed(key) {
+                    if f.nozzle != n {
+                        world.sounds.push(Event::NozzleChanged(n));
+                    }
                     f.change_nozzle(n, false, &p);
                     f.refill(&p);
                 }
@@ -778,7 +794,13 @@ async fn main() {
         }
 
         // Simulate. Water events are drained into droplets right after each frame's ticks.
-        let ticks = sim.advance(&mut world, &pad, camera_yaw, dt);
+        let ticks = sim.advance_observed(&mut world, &pad, camera_yaw, dt, |mario, world| {
+            if let Some(audio) = &mut audio {
+                audio.events(&world.sounds, mario);
+                audio.tick(mario);
+            }
+            world.sounds.clear();
+        });
         let emits = std::mem::take(&mut world.emits);
         let vel = V3::new(sim.mario.vel.x, sim.mario.vel.y, sim.mario.vel.z);
         for e in &emits {
@@ -796,6 +818,10 @@ async fn main() {
                 cam_p.sin(),
                 cam_a.cos() * cam_p.cos(),
             ) * cam_dist;
+        if let Some(audio) = &audio {
+            let to_units = |v: Vec3| V3::new(v.x, v.y, v.z) / S;
+            audio.listener(to_units(eye), to_units(cam_target));
+        }
         set_camera(&Camera3D {
             position: eye,
             target: cam_target,
@@ -829,6 +855,18 @@ async fn main() {
         }
         set_default_camera();
         hud(&sim, &data_label, rig.as_ref(), show_help);
+        if show_help {
+            let music = audio
+                .as_ref()
+                .map_or("audio unavailable", |a| a.music_name());
+            draw_text(
+                format!("M cycle music: {music}"),
+                16.0,
+                screen_height() - 12.0,
+                18.0,
+                WHITE,
+            );
+        }
         for (i, l) in world.log.iter().rev().enumerate() {
             draw_text(
                 l,

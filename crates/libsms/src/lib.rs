@@ -69,6 +69,24 @@ impl Sim {
         n
     }
 
+    /// Like [`Self::advance`], with an observer after each tick. Hosts use this to sample
+    /// animation cues without missing short clips between display frames.
+    pub fn advance_observed<H: Host>(
+        &mut self,
+        host: &mut H,
+        pad: &Pad,
+        camera_yaw: math::Angle,
+        dt: f32,
+        mut after_tick: impl FnMut(&Mario, &mut H),
+    ) -> u32 {
+        let n = self.clock.accumulate(dt);
+        for _ in 0..n {
+            self.mario.tick(host, pad, camera_yaw);
+            after_tick(&self.mario, host);
+        }
+        n
+    }
+
     /// Fraction of the way to the next tick, for render interpolation.
     pub fn alpha(&self) -> f32 {
         self.clock.alpha()
