@@ -714,7 +714,7 @@ async fn main() {
         // Input.
         let k = is_key_down;
         let mut stick = SV2::new(
-            (k(KeyCode::A) as i32 - k(KeyCode::D) as i32) as f32,
+            (k(KeyCode::D) as i32 - k(KeyCode::A) as i32) as f32,
             (k(KeyCode::W) as i32 - k(KeyCode::S) as i32) as f32,
         );
         if stick.length() > 1.0 {
