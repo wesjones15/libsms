@@ -542,21 +542,34 @@ impl Mario {
             && !matches!(self.status, Status::YoshiThrown | Status::BackJump)
             && d < 180.0
         {
-            self.pos = yt;
-            self.face_yaw = self.yoshi.yaw;
-            self.model_yaw = self.face_yaw;
-            self.yoshi_ride();
-            if self.fludd.is_none() {
-                self.give_fludd();
-            }
-            let p = self.params.clone();
-            if let Some(f) = self.fludd.as_mut() {
-                f.change_nozzle(NozzleKind::Yoshi, true, &p);
-            }
-            self.change_status(Status::Wait, 0, false);
+            self.mount_yoshi();
             return;
         }
         self.keep_distance(host, yt, 80.0);
+    }
+
+    /// Climbs onto a hatched Yoshi where he stands (what landing on him does).
+    pub fn mount_yoshi(&mut self) {
+        if !matches!(
+            self.yoshi.state,
+            YoshiState::Unmounted | YoshiState::Hatching
+        ) {
+            return;
+        }
+        self.pos = self.yoshi.pos;
+        self.prev_pos = self.pos;
+        self.face_yaw = self.yoshi.yaw;
+        self.model_yaw = self.face_yaw;
+        self.yoshi_ride();
+        // `onFlag(MARIO_FLAG_HAS_FLUDD)`: his spit goes through FLUDD's nozzle code.
+        if self.fludd.is_none() {
+            self.give_fludd();
+        }
+        let p = self.params.clone();
+        if let Some(f) = self.fludd.as_mut() {
+            f.change_nozzle(NozzleKind::Yoshi, true, &p);
+        }
+        self.change_status(Status::Wait, 0, false);
     }
 
     /// `keepDistance(target, radius, 0)`: push Mario out of a cylinder.

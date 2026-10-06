@@ -23,6 +23,7 @@ mod mario_model;
 mod props;
 mod sound;
 mod water;
+mod yoshi_model;
 
 use std::path::Path;
 
@@ -564,6 +565,17 @@ fn hud(sim: &Sim, data: &str, rig: Option<&Rig>, show_help: bool) {
             m.upper
         ));
     }
+    if m.yoshi.is_hatched() {
+        rows.push(format!(
+            "Yoshi {:?}  juice {:.0} s  colour {}  clip {}",
+            m.yoshi.state,
+            m.yoshi.juice as f32 / TICK_HZ as f32,
+            m.yoshi.color,
+            libsms::yoshi::CLIPS[m.yoshi.clip as usize],
+        ));
+    } else if let Some(e) = m.eggs.first() {
+        rows.push(format!("egg {:?}, wants {:?}", e.state, e.wants));
+    }
     rows.push(format!("data: {data}"));
     rows.push(match rig {
         Some(r) => format!(
@@ -592,7 +604,7 @@ fn hud(sim: &Sim, data: &str, rig: Option<&Rig>, show_help: bool) {
             LIGHTGRAY,
         );
         draw_text(
-            "Arrows camera  G refill  R respawn  T shirt  H hide help",
+            "Arrows camera  G refill  R respawn  T shirt  H hide help   On Yoshi: F tongue  X off",
             14.0,
             h - 12.0,
             20.0,
@@ -701,6 +713,12 @@ async fn main() {
             .map_err(|e| eprintln!("Mario's model: {e}"))
             .ok()
     });
+    // Yoshi, his tongue and his egg.
+    let mut yoshi_model = assets.as_ref().and_then(|a| {
+        yoshi_model::YoshiModel::load(&a.dir)
+            .map_err(|e| eprintln!("Yoshi's model: {e}"))
+            .ok()
+    });
     let (params, anims, data_label) = match &assets {
         Some(a) => (
             a.params.clone(),
@@ -719,6 +737,23 @@ async fn main() {
         s.mario.anims = anims.clone();
         s.mario.give_fludd();
         s.mario.anim = libsms::AnimState::new(libsms::anim::clip::WAIT, &s.mario.anims);
+        // Yoshi's egg on the far side of the start, facing it (`eggYoshi`).
+        s.mario.add_egg(V3::new(0.0, 0.0, -700.0), 0);
+        // `SMS_YOSHI=1` starts riding an orange Yoshi, `SMS_YOSHI=2` with him standing by
+        // (for screenshots).
+        match std::env::var("SMS_YOSHI").as_deref() {
+            Ok("1") => {
+                s.mario
+                    .spawn_yoshi(s.mario.pos, s.mario.face_yaw, Some(libsms::Fruit::Papaya));
+                s.mario.mount_yoshi();
+            }
+            Ok(_) => s.mario.spawn_yoshi(
+                V3::new(-250.0, 0.0, 0.0),
+                0x4000,
+                Some(libsms::Fruit::Papaya),
+            ),
+            Err(_) => {}
+        }
         s
     };
 
@@ -815,6 +850,10 @@ async fn main() {
         // `SMS_R=<0-255>` holds the trigger (for screenshots of spraying).
         if let Some(r) = std::env::var("SMS_R").ok().and_then(|v| v.parse().ok()) {
             pad.r_analog = r;
+        }
+        // `SMS_B=<frame>` presses B on that frame (for screenshots of the tongue).
+        if std::env::var("SMS_B").ok().and_then(|v| v.parse::<u32>().ok()) == Some(frame_no) {
+            pad.b = true;
         }
         if is_key_pressed(KeyCode::R) || sim.mario.pos.y < -2500.0 {
             sim = mk();
@@ -937,11 +976,36 @@ async fn main() {
                     let kind = f.nozzle;
                     sim.mario.set_emitters(kind, &muzzles);
                 }
-                // Fruit; a held one rides the right hand (`getTakingMtx`).
+                // Yoshi under Mario (his root is Mario's while ridden) and the eggs. The
+                // posed mouth goes back to the sim for the tongue and the juice.
+                if let Some(ym) = yoshi_model.as_mut() {
+                    if let Some(look) = sim.mario.yoshi_look() {
+                        let at = look.mounted.then_some(root);
+                        if let Some((p, x)) = ym.draw(&look, at, view, proj) {
+                            let g = |v: ::glam::Vec3| V3::new(v.x, v.y, v.z);
+                            sim.mario.set_yoshi_mouth(g(p), g(x));
+                        }
+                    }
+                    for e in &sim.mario.eggs {
+                        if let Some(l) = e.look() {
+                            ym.draw_egg(&l, view, proj, get_time() as f32);
+                        }
+                    }
+                }
+                // Fruit; Mario's rides his right hand (`getTakingMtx`), Yoshi's the tongue
+                // tip, shrinking as it comes in.
                 if let Some(pr) = props.as_mut().filter(|p| p.loaded()) {
                     let hand = r.skeleton.find("jnt_hand_R").and_then(|h| joints.get(h));
-                    for f in world.fruits.iter().filter(|f| f.gone == 0) {
+                    let tongue = sim.mario.yoshi.tongue.held.map(|(id, _)| id);
+                    for (i, f) in world.fruits.iter().enumerate().filter(|f| f.1.gone == 0) {
                         let at = match (f.held, hand) {
+                            _ if f.held && tongue == Some(i as u64) => {
+                                let t = &sim.mario.yoshi.tongue;
+                                let k = t.held_scale;
+                                ::glam::Mat4::from_translation(
+                                    ::glam::Vec3::new(t.tip.x, t.tip.y, t.tip.z) * S,
+                                ) * ::glam::Mat4::from_scale(::glam::Vec3::splat(S * k))
+                            }
                             (true, Some(h)) => {
                                 let lift = f.kind.held_offset() * S;
                                 ::glam::Mat4::from_translation(::glam::Vec3::Y * lift) * root * *h
@@ -955,7 +1019,7 @@ async fn main() {
             _ => draw_mario(&sim, rig.as_ref(), sim.alpha()),
         }
         match water_view.as_mut() {
-            Some(v) => v.draw(&water, &camera),
+            Some(v) => v.draw(&water, &camera, sim.mario.juice_color()),
             None => draw_water_plain(&water),
         }
         set_default_camera();

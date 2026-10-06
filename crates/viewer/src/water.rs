@@ -93,6 +93,7 @@ precision mediump float;
 varying vec2 uv;
 uniform sampler2D Frame;
 uniform vec2 texel;
+uniform vec4 tint;
 void main() {
     float c = texture2D(Frame, uv).a;
     float m = smoothstep(0.30, 0.48, c);
@@ -105,7 +106,7 @@ void main() {
     float rim = 1.0 - n.z;
     float spec = pow(max(dot(n, normalize(vec3(-0.45, 0.55, 0.7))), 0.0), 28.0);
     vec3 behind = texture2D(Frame, uv - n.xy * texel * 24.0).rgb;
-    vec3 water = mix(behind, vec3(0.60, 0.76, 0.94), 0.35);
+    vec3 water = mix(behind, tint.rgb, tint.a);
     vec3 col = mix(water, vec3(1.0), clamp(spec * 1.4 + rim * 0.25, 0.0, 1.0));
     gl_FragColor = vec4(col, m * clamp(0.75 + rim * 0.25 + spec, 0.0, 1.0));
 }";
@@ -179,7 +180,10 @@ impl WaterView {
             COMPOSITE_VERTEX,
             COMPOSITE_FRAGMENT,
             &["Frame"],
-            vec![UniformDesc::new("texel", UniformType::Float2)],
+            vec![
+                UniformDesc::new("texel", UniformType::Float2),
+                UniformDesc::new("tint", UniformType::Float4),
+            ],
         )?;
         let add = BlendState::new(Equation::Add, BlendFactor::One, BlendFactor::One);
         let accum = ctx.new_pipeline(
@@ -306,8 +310,9 @@ impl WaterView {
         (c.texture, c.pass)
     }
 
-    /// Draws the water through `camera` (scene units) over the scene already in the window.
-    pub fn draw(&mut self, water: &WaterManager, camera: &Camera3D) {
+    /// Draws the water through `camera` (scene units) over the scene already in the window,
+    /// tinted by `juice` (`unk5D5F`: 0 water, else Yoshi's juice colour).
+    pub fn draw(&mut self, water: &WaterManager, camera: &Camera3D, juice: u8) {
         let (eye, target) = (camera.position, camera.target);
         let fwd = (target - eye).normalize_or_zero();
         let right = fwd.cross(Vec3::Y).normalize_or_zero();
@@ -374,12 +379,12 @@ impl WaterView {
         }
         let quads = self.scratch.len() / (4 * FLOATS);
         if quads > 0 {
-            self.draw_drops(quads, camera);
+            self.draw_drops(quads, camera, juice);
         }
         self.draw_splashes(right, up);
     }
 
-    fn draw_drops(&mut self, quads: usize, camera: &Camera3D) {
+    fn draw_drops(&mut self, quads: usize, camera: &Camera3D, juice: u8) {
         use miniquad::gl;
         // macroquad batches; put the scene in the window first.
         // SAFETY: main thread, between draws.
@@ -442,7 +447,24 @@ impl WaterView {
             index_buffer: self.screen_indices,
             images: vec![copy],
         });
-        ctx.apply_uniforms(UniformsSource::table(&[1.0 / w, 1.0 / h]));
+        // `gModelWaterManagerWaterColor`: water barely tints what's behind it; juice is
+        // coloured through.
+        let tint = match juice {
+            1..=3 => {
+                let c = libsms::yoshi::JUICE_COLORS[juice as usize];
+                [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0, 0.75]
+            }
+            _ => [0.60, 0.76, 0.94, 0.35],
+        };
+        // miniquad packs uniforms back to back: `texel` then `tint`.
+        ctx.apply_uniforms(UniformsSource::table(&[
+            1.0 / w,
+            1.0 / h,
+            tint[0],
+            tint[1],
+            tint[2],
+            tint[3],
+        ]));
         ctx.draw(0, 6, 1);
         // The window's alpha back to opaque (screenshots keep it). The composite pipeline
         // writes every channel, which is what miniquad's cached mask says afterwards.

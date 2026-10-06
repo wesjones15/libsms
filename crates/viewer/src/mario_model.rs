@@ -16,13 +16,13 @@ use libsms_assets::{Bmd, Pose, paths};
 
 use crate::j3d::{GpuModel, Lights, Look, Pass, Renderer};
 
-struct Part {
-    model: GpuModel,
-    bind: Vec<Mat4>,
+pub(crate) struct Part {
+    pub(crate) model: GpuModel,
+    pub(crate) bind: Vec<Mat4>,
 }
 
 impl Part {
-    fn load(r: &mut Renderer, dir: &Path, rel: &str) -> Result<Part, String> {
+    pub(crate) fn load(r: &mut Renderer, dir: &Path, rel: &str) -> Result<Part, String> {
         let data = std::fs::read(dir.join(rel)).map_err(|e| format!("{rel}: {e}"))?;
         let bmd = Bmd::parse(&data).map_err(|e| format!("{rel}: {e}"))?;
         let bind = bmd.bind_world();
@@ -33,7 +33,7 @@ impl Part {
     /// Model-space joint matrices with `clip` at `frame`; joints it doesn't animate keep
     /// their bind transform. `extra` adds a joint callback's rotation after the local
     /// transform (`MTXConcat(J3DSys::mCurrentMtx, rot)`).
-    fn posed(
+    pub(crate) fn posed(
         &self,
         clip: Option<&Clip>,
         frame: f32,

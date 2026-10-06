@@ -453,6 +453,9 @@ pub struct Look {
     pub texture0: Option<TextureId>,
     /// Konst colour 0 alpha: Mario's dirt level (`TMario::addDirty`).
     pub k0_alpha: Option<u8>,
+    /// A TEV colour register set on every material (`J3DTevBlock::setTevColor`), 0..255:
+    /// Yoshi's body colour is register 2 (`TYoshi::entry`).
+    pub tev_color: Option<(usize, [f32; 4])>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -714,7 +717,15 @@ impl Renderer {
                 stage_misc: [[0.0; 4]; MAX_STAGES],
                 gen_a: [[0.0; 4]; 4],
                 gen_b: [[0.0; 4]; 4],
-                regs: mat.tev_colors.map(|c| c.map(|v| v as f32 / 255.0)),
+                regs: {
+                    let mut regs = mat.tev_colors.map(|c| c.map(|v| v as f32 / 255.0));
+                    if let Some((i, c)) = look.tev_color
+                        && let Some(r) = regs.get_mut(i)
+                    {
+                        *r = c.map(|v| v / 255.0);
+                    }
+                    regs
+                },
                 konst: mat.konst.map(unit),
                 swap: mat.swap_tables.map(|s| s.map(|v| v as f32)),
                 info: [

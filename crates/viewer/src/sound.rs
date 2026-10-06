@@ -15,6 +15,7 @@ use std::{
 const MARIO: u64 = 0x4D41_5249;
 const FLUDD: u64 = 0x464C_5544;
 const WATER: u64 = 0x5741_5452;
+const YOSHI: u64 = 0x594F_5348;
 
 pub struct Audio {
     scene: SceneAudio,
@@ -27,6 +28,10 @@ struct SceneAudio {
     tables: HashMap<String, AnimSoundTable>,
     animation: AnimationPlayer,
     clip: Option<&'static str>,
+    /// Yoshi's body and eating-head clips' sound keys (`mBodyAnmSound`, `mTongueAnmSound`;
+    /// `yoshi/bas/yoshi_<clip>.bas`).
+    yoshi_tables: HashMap<String, AnimSoundTable>,
+    yoshi: [(AnimationPlayer, Option<&'static str>); 2],
     /// Held sounds (ids without `0x800`) the sim re-requests each tick, by name.
     held: HashMap<&'static str, SoundHandle>,
     tracks: Vec<(String, u32)>,
@@ -62,6 +67,19 @@ impl SceneAudio {
                 }
             }
         }
+        let mut yoshi_tables = HashMap::new();
+        for entry in std::fs::read_dir(dir.join("yoshi/bas")).into_iter().flatten().flatten() {
+            let path = entry.path();
+            let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            if let Some(t) = std::fs::read(&path)
+                .ok()
+                .and_then(|b| AnimSoundTable::parse(&b).ok())
+            {
+                yoshi_tables.insert(stem.to_owned(), t);
+            }
+        }
         let mut tracks: Vec<_> = sys
             .data()
             .names
@@ -74,6 +92,8 @@ impl SceneAudio {
             tables,
             animation: AnimationPlayer::default(),
             clip: None,
+            yoshi_tables,
+            yoshi: Default::default(),
             held: HashMap::new(),
             tracks,
             track: None,
@@ -83,6 +103,10 @@ impl SceneAudio {
 
     fn reset(&mut self, sys: &mut SoundSystem) {
         self.animation.stop(sys);
+        for (p, c) in &mut self.yoshi {
+            p.stop(sys);
+            *c = None;
+        }
         for (_, h) in self.held.drain() {
             sys.stop(h, 0);
         }
@@ -105,10 +129,36 @@ impl SceneAudio {
                 MARIO,
             );
         }
+        self.yoshi_tick(sys, mario);
         self.ticks += 1;
         // JAI runs at 30 Hz, independently of the display refresh rate.
         if self.ticks.is_multiple_of(4) {
             sys.frame();
+        }
+    }
+
+    /// `TYoshi::calcAnim`'s `animeLoop`s: his body clip, and the eating head.
+    fn yoshi_tick(&mut self, sys: &mut SoundSystem, mario: &Mario) {
+        let y = &mario.yoshi;
+        let shown = mario.yoshi_look().is_some();
+        let pos = if mario.on_yoshi() { mario.pos } else { y.pos };
+        let clips = [
+            shown.then(|| (libsms::yoshi::CLIPS[y.clip as usize], y.ctrl.frame, y.ctrl.rate)),
+            y.eat
+                .filter(|_| shown)
+                .map(|(c, f)| (libsms::yoshi::CLIPS[c as usize], f.frame, f.rate)),
+        ];
+        for ((player, cur), clip) in self.yoshi.iter_mut().zip(clips) {
+            let name = clip.map(|c| c.0);
+            if *cur != name {
+                player.reset(sys);
+                *cur = name;
+            }
+            if let Some((name, frame, rate)) = clip
+                && let Some(table) = self.yoshi_tables.get(name)
+            {
+                player.update(sys, table, frame, rate, pos, YOSHI);
+            }
         }
     }
 
