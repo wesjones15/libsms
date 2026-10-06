@@ -92,6 +92,19 @@ impl MarioModel {
             paths::NOZZLE_TURBO,
         ]
         .map(|p| Part::load(&mut r, dir, p).ok());
+        // The nozzles ship an 8x8 stand-in for FLUDD's env-map texture; the game points it at
+        // FLUDD's own (`SMS_ChangeTextureAll(.., "H_watergun_main_dummy", wg_mdl1 texture 1)`,
+        // `TWaterGun::init`).
+        let mut nozzles = nozzles;
+        if let Some(&real) = fludd.model.textures.get(1) {
+            for part in nozzles.iter_mut().flatten() {
+                for (i, t) in part.model.bmd.textures.iter().enumerate() {
+                    if t.name == "H_watergun_main_dummy" {
+                        part.model.textures[i] = real;
+                    }
+                }
+            }
+        }
         let clip = |name: &str| {
             std::fs::read(dir.join(format!("watergun2/body/{name}.bck")))
                 .ok()
