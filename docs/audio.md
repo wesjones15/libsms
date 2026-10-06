@@ -39,6 +39,14 @@ downmixes stereo for mono devices and leaves extra surround channels silent.
 The listener's view matrix and all emitter positions use the original centimeter-like units,
 not the renderer's meters. The camera is posted each display frame.
 
+The sim reports the decomp's own `startSoundActor` call sites as `Event::Sound` (FLUDD's
+water, triggers, pumping, nozzle selection; ledge and carry voices). Held ids (no `0x800` bit)
+arrive every tick; the viewer keeps one handle per name and refreshes it, like the game's
+once-a-frame request (`MSSeGate_Continuous`). `startSoundActorWithInfo` values go through
+`SoundSystem::play_with_info`, which applies `modse`'s gate and pitch/volume curves
+(`JALSeModPitFunk`/`VolFunk`, registered in `MSoundSE`). Names starting `MSD_SE_MV` go to
+`mario_voice`. Water particle events add `WT_GND` splashes, `WT_INTO_WATER` and `PO_WT_DRY_UP`.
+
 Takeoff effects, running and animation-driven landings use the `.bas` keys.
 Jump voices are separate: `TMario::setStatusToJumping` in `MarioMove.cpp` selects small,
 medium or large calls for each jump kind, and an action call for dives.

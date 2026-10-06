@@ -135,8 +135,31 @@ A head-on wall hit at speed > `mClashSpeed` bumps; > 16 reflects and starts a wa
 
 Dive (`JumpCatch`) lands into `Catch` (belly slide), which jumps out (`CatchStop`) or gets up
 (`CatchLost`). Ground pound (`HipDrop`): 60 ticks of hover, then falls at `mHipAttackSpeedY` (-80);
-becomes "super" after `mSuperHipAttackCt` (80) ticks. Ledge grab and the hanging/climbing states
-are **not yet** implemented (option `ledge_grab`, off).
+becomes "super" after `mSuperHipAttackCt` (80) ticks.
+
+**Ledges** (MarioSpecial.cpp `hanging`/`ascend`/`descend`/`hangJumping`, MarioPhysics.cpp
+`hangonCheck`/`checkDescent`; ported: `hang.rs`). A jump step that touches a wall at waist height
+(+30) but not at head height (+150) calls `hangonCheck`: Mario must be falling and not moving away,
+and the floor 60 past the wall must be more than 100 above his feet, with 160 of headroom, and not
+force-slip or `NoLedgeGrab`. His position moves onto that ledge top (10 in from the face) facing
+the wall; the `hang` clip lowers the body. While `Hanging`: B or losing the floor lets go
+(`startHangLanding`: back 60 and down 100, `WallSlide`); A, or a floor within 100 below the hands,
+hops up (`hgjmp`); after 40 ticks the stick toward the wall (within 0x400) climbs (`hgup`),
+away (beyond 0x71C7) drops off, and sideways shimmies `mMoveSp * mag` along the face, turning
+round corners whose normals differ by less than `mHangWallMovableAngle` (0.3), with
+`hmov_l/r` at `distance * mAnmRate`. After `mRapidTime` (2000, disc) ticks the shimmy stops and
+the hang clip runs at `mAnmRapid` (8); at `mLimitTime` (2400) he falls. Walking slower than
+`mDescentSp` (10) off an edge with a drop over 160 turns him round and lowers him to hang
+(`hgdwn`).
+
+**Carrying** (MarioAction.cpp, MarioCollision.cpp `isTakeSituation`; ported: `carry.rs`).
+B at a standstill or a slow walk reaches out (`TakePose`, `get_fail`). While B is held, touching
+a takeable object within `mHoldRadius` (80, disc) plus its radius and 60 degrees of facing starts
+`Take`: `raise`, the hand closes at frame 11 (`HIT_MESSAGE_TAKE`, `Host::take`), then the upper
+layer switches to `carry_p` (`UPPER_STATE_HOLDING_OBJECT`, no pumping). B again puts it down
+(`put`, released at frame 20) or, faster than 16, throws it (`throw`, frame 4, `mThrowPower` 2.8
+disc). Objects position themselves from the `Put`/`Throw` events (`TMapObjGeneral::put/thrown`).
+Not yet: throwing from the air (`JUMP_THROW`), barrels and other holders' special cases.
 
 ## 6. FLUDD (WaterGun.cpp, NozzleBase/Trigger/Deform, MarioUpper.cpp)
 
@@ -166,13 +189,41 @@ Slots: 0 Spray (`NozzleDeform.prm`), 1 Rocket, 2 Underwater, 3 Yoshi, 4 Hover, 5
   (`+= stickY * mRButtonMult`), clamped to [-13000, 8000] at chase 0.018.
 - **Crouch/aim**: hold R or L (not Rocket/Turbo nozzles) -> `Squat`; R-click + A while holding
   Spray -> back flip.
-- Emission is reported as events; water particles, cleaning, enemy damage, and sounds are the
-  host's. Emitter position/direction come from the FLUDD skeleton in the game; the sim uses
-  analytic stand-ins unless a host overrides them.
+- Emission is reported as `WaterEmit` events. The game takes each emitter's position and
+  direction (its X axis) from the posed nozzle's `null_G_muzzle` joints (`getEmitPosDirSpeed`);
+  hosts report them with `Mario::set_emitters` (model space), else analytic stand-ins are used.
+  Particles inherit Mario's `vel.xz / 8`.
+- **Drawing state** (ported: `fludd_anim.rs`): the pumping arm is a second clip over `jnt_chest`
+  and below (`M3UModelMario` slot 1): `gMarioAnimeData`'s pump clip for the body clip (`pump`,
+  `hgpmp` hanging, `fepmp` fences, `swpmp` swimming), restarted at rate 1 on a change and
+  ping-ponged while pumping; with an empty tank it runs at `raw R * mPumpAnmSpeed` (0.015, disc)
+  with `PO_POMPING1/2` at frames 8/13. FLUDD's handles (`unk1CEC`): out by 0.1 a tick when pumping
+  starts; **no water leaves until they are fully out**; folded back by 0.005 a tick after 360
+  idle ticks (`wg_house`). The body clip follows the pump frame (`wg_pump`...). Each nozzle runs
+  `TNozzleBase/Trigger/Deform::animation` over its clips, numbered in the disc archive's
+  directory order: shoot start/shooting/shoot end while firing, swap clips driven by the swap
+  progress, and the Spray nozzle's own housed pose. Joint callbacks aim it: `NozzleCtrl` (gun
+  angle on the neck when negative), `WaterGunDivingCtrlL/R` (hover tilts), `RotateCtrl`
+  (Turbo propeller). The nozzle models' `H_watergun_main_dummy` texture is FLUDD's texture 1.
+- **Sounds** are `Event::Sound` at the decomp's call sites: Spray `PO_NORMAL_NOZZLE_IMI` (pitch
+  by trigger pressure) and `PO_WATER_HI` (pitch by output; JALModSe curves), Turbo
+  `PO_WATER_HI`, Hover/Underwater `PO_HOVER`, trigger charge `SY_NEWP_AIR_TAME`, Rocket/Turbo
+  firing `PO_ROCKET_TRIGGER`/`PO_SNIPER_TRIGGER`, refilling `PO_SUCK_WATER_B`, X
+  `SY_SELECT_POMP(_BACK)`.
+
+**Water particles** (`TModelWaterManager`, ModelWaterManager.cpp; ported: `water.rs`, stepped by
+the host once per 30 Hz frame). 256 slots. `makeEmit` adds the trembles to direction, power and
+size. Each frame: horizontal speed capped at the particle's size; flying ones fall by their
+`WTPnn_*.prm` type's `mGravity`; on the ground a particle splashes (sound, 50% splash sprite),
+shrinks by `mMagnify` and either sticks (50%) or vanishes; stuck ones run downhill with friction
+0.93 wet / 0.7 dry, dry by 2 / 1 a frame from at most 256, and merge with neighbours closer than
+2.5 x their sizes; walls likewise (80% splash, stick 50%, slide down 3 / 1 a frame). Water
+surfaces swallow them. Particles over 5000 from Mario vanish. Drawing: `calcDrawVtx` quads
+stretched along the screen velocity by `mExtension * 4`, summed into alpha and shaded as one body.
 
 Not yet: Spray secondary "bomb" trigger (A + R, `mBomb`), Yoshi juice, the diving helmet nozzle
-(swimming is not implemented at all), the nozzle-swap animation timing/deploy delay
-(`unk1CEC`), graffiti sinking, dirt/pollution.
+(swimming is not implemented at all), the nozzle mist particle (`0x10D`), graffiti sinking,
+dirt/pollution, water hitting actors.
 
 ## 7. Verified numbers (disc tuning, headless, `cargo run -p libsms --example report`)
 
@@ -201,3 +252,14 @@ The viewer now routes animation and game-event sounds through `libsms-audio`; se
    than `count` when its particle budget is full, which would cut thrust; we assume it never does.
 4. Clip names for slip/belly-slide/back-flip are approximations (decomp anim ids map through
    `gMarioAnimeData`, not ported); they only affect timing and the host's skeleton mapping.
+5. **Nozzle clip speed.** `MActor` clips are set to `SMSGetAnmFrameRate()` = 2 frames per
+   update and update in `calcAnm`, which Mario runs every 120 Hz tick; read literally that is
+   four times Mario's own clip speed. The sim plays them at Mario's 60 fps instead
+   (`fludd_anim::NOZZLE_RATE`).
+6. **Spray particle size.** `TNozzleDeform::emit` (NonMatching) computes the size ramp as
+   `(min - a) / (max - a)`, negative inside the range; the sim uses the plain
+   `(a - min) / (max - min)`.
+7. **Grab from a standstill.** `waitingCommonEvents` starts `TAKE_POSE` on `mInput & 0x10000`,
+   which nothing in the decomp's `checkController` sets; the sim treats it as a B press.
+8. **Water timing.** `TModelWaterManager::move` runs on `CUE_MOVE`; the host steps it once per
+   30 Hz frame, consistent with its per-frame velocities and Mario's `vel` convention.
