@@ -191,9 +191,19 @@ impl MarioModel {
         if time > self.blink_at + 2.0 {
             self.blink_at = time + 2.0 + (time * 7.13).fract() * 2.5;
         }
+        // `addDamageFog` / `SMS_AddDamageFogEffect` (DrawUtil.cpp): while invincible, pink fog
+        // from 700 units in front of Mario to 500 behind, both swinging 300 with
+        // `sin(moveTicks * 0x888)`, on the body, cap and hands.
+        let fog = (m.invincible > 0).then(|| {
+            let d = -(view * root.w_axis).z;
+            let s = (m.ticks as f32 * 0x888 as f32 * std::f32::consts::PI / 32768.0).sin();
+            let at = |base: f32, swing: f32| d + (base + (swing - base) * s) * 0.01;
+            ([1.0, 0.0, 128.0 / 255.0], at(-700.0, -400.0), at(500.0, 800.0))
+        });
         let mut body_look = Look {
             hidden: vec![HIDDEN_SHAPE],
             k0_alpha: Some(0),
+            fog,
             ..Default::default()
         };
         if let Some(w) = &self.wink {
@@ -218,6 +228,7 @@ impl MarioModel {
         let part_look = Look {
             texture0: body_tex0,
             k0_alpha: Some(0),
+            fog,
             ..Default::default()
         };
 
@@ -239,13 +250,13 @@ impl MarioModel {
             look.map_or(0.0, |l| l.body_frame),
             |_| None,
         );
-        let slot = look.and_then(|l| match l.nozzle {
-            NozzleKind::Spray => Some(0),
-            NozzleKind::Hover | NozzleKind::Underwater => Some(1),
-            NozzleKind::Rocket => Some(2),
-            NozzleKind::Turbo => Some(3),
+        let slot = look.map(|l| match l.nozzle {
+            NozzleKind::Spray => 0,
+            NozzleKind::Hover | NozzleKind::Underwater => 1,
+            NozzleKind::Rocket => 2,
+            NozzleKind::Turbo => 3,
             // The water leaves Yoshi's mouth (`getEmitMtx`); FLUDD shows `dummy_wg`.
-            NozzleKind::Yoshi => Some(4),
+            NozzleKind::Yoshi => 4,
         });
         let nozzle_at = fludd_base
             .zip(self.fludd.model.bmd.joint("nozzle_center"))

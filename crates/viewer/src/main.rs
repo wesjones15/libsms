@@ -21,6 +21,7 @@
 mod j3d;
 mod mario_model;
 mod props;
+mod coin;
 mod sound;
 mod stu;
 mod water;
@@ -68,6 +69,8 @@ struct World {
     fruits: Vec<props::Fruit>,
     /// Strollin' Stus for Yoshi to eat (indices are their enemy ids).
     stus: Vec<stu::Stu>,
+    /// Coins to heal with.
+    coins: Vec<coin::Coin>,
     sounds: Vec<Event>,
     log: Vec<String>,
 }
@@ -131,6 +134,20 @@ impl World {
                 props::Fruit::new(props::Kind::Durian, V3::new(-300.0, 0.0, -250.0)),
             ],
             stus: vec![stu::Stu::new(V3::new(450.0, 0.0, 450.0), 150.0)],
+            coins: {
+                // A row of gold coins, a red one on the top step, a blue one on the platform.
+                let mut c: Vec<coin::Coin> = (0..6)
+                    .map(|i| {
+                        coin::Coin::new(
+                            libsms::Coin::Gold,
+                            V3::new(-600.0 - 160.0 * i as f32, 40.0, -450.0),
+                        )
+                    })
+                    .collect();
+                c.push(coin::Coin::new(libsms::Coin::Red, V3::new(-450.0, 490.0, 550.0)));
+                c.push(coin::Coin::new(libsms::Coin::Blue, V3::new(0.0, 940.0, 1800.0)));
+                c
+            },
             sounds: Vec::new(),
             log: Vec::new(),
         }
@@ -140,6 +157,29 @@ impl World {
     fn tick_stus(&mut self) {
         for s in &mut self.stus {
             s.tick();
+        }
+        for c in &mut self.coins {
+            c.tick();
+        }
+    }
+
+    /// The hit check between Mario and the world's things, after the frame's ticks: coins he
+    /// touches are his (`TCoin::taken`), a Stu that walks into him hurts him
+    /// (`HIT_MESSAGE_ATTACK` with `DmgHamukuri.prm`), unless he lands on top of it.
+    fn touch(&mut self, m: &mut libsms::Mario) {
+        let (r, h) = if m.on_yoshi() { (80.0, 200.0) } else { (50.0, 160.0) };
+        for c in &mut self.coins {
+            if c.touches(m.pos, r, h) {
+                c.take();
+                m.get_coin(c.kind);
+            }
+        }
+        for s in self.stus.iter().filter(|s| s.loose()) {
+            let d = V3::new(s.pos.x - m.pos.x, 0.0, s.pos.z - m.pos.z).length();
+            let above = m.pos.y > s.pos.y + stu::HEIGHT * 0.5;
+            if d < stu::RADIUS + r && m.pos.y < s.pos.y + stu::HEIGHT && !above {
+                m.damage(s.pos, libsms::DamageKind::Hamukuri);
+            }
         }
     }
 
@@ -326,6 +366,16 @@ impl Host for World {
                     }));
                 }
             }
+            Event::Damaged {
+                damage,
+                health,
+                yoshi,
+            } => self.note(if yoshi {
+                "Yoshi took the hit".into()
+            } else {
+                format!("hit: -{damage}, health {health}")
+            }),
+            Event::Down => self.note("Mario is down: R to start again".into()),
             Event::EnemyEaten { id } => {
                 if let Some(s) = self.stus.get_mut(id as usize) {
                     s.eaten();
@@ -622,6 +672,7 @@ fn hud(sim: &Sim, data: &str, rig: Option<&Rig>, show_help: bool) {
     for (i, r) in rows.iter().enumerate() {
         draw_text(r, 14.0, 24.0 + 22.0 * i as f32, 22.0, WHITE);
     }
+    health_meter(m);
     if let Some(f) = &m.fludd {
         let y = 24.0 + 22.0 * rows.len() as f32;
         let lvl = f.level(&m.params).clamp(0.0, 1.0);
@@ -638,13 +689,49 @@ fn hud(sim: &Sim, data: &str, rig: Option<&Rig>, show_help: bool) {
             LIGHTGRAY,
         );
         draw_text(
-            "Arrows camera  G refill  R respawn  T shirt  H hide help   On Yoshi: F tongue  X off",
+            "Arrows camera  G refill  R respawn  T shirt  K get hurt  H hide help   On Yoshi: F tongue  X off",
             14.0,
             h - 12.0,
             20.0,
             LIGHTGRAY,
         );
     }
+}
+
+/// The life meter: `mHPMax` wedges, lit up to `mHealth`, and the coin count. Flashes while
+/// Mario is invincible.
+fn health_meter(m: &libsms::Mario) {
+    let (cx, cy, r) = (screen_width() - 70.0, 70.0, 46.0);
+    let max = m.params.mario.hp_max.max(1) as usize;
+    let lit = if m.health >= 6 {
+        Color::new(0.25, 0.55, 1.0, 1.0)
+    } else if m.health >= 3 {
+        Color::new(1.0, 0.8, 0.1, 1.0)
+    } else {
+        Color::new(1.0, 0.25, 0.25, 1.0)
+    };
+    let flash = m.invincible > 0 && (m.ticks / 8).is_multiple_of(2);
+    draw_circle(cx, cy, r + 4.0, Color::new(0.0, 0.0, 0.0, 0.5));
+    for i in 0..max {
+        let a0 = std::f32::consts::TAU * i as f32 / max as f32 - std::f32::consts::FRAC_PI_2;
+        let a1 = a0 + std::f32::consts::TAU / max as f32 * 0.9;
+        let c = if (i as i16) < m.health && !flash {
+            lit
+        } else {
+            Color::new(0.25, 0.25, 0.3, 1.0)
+        };
+        let p = |a: f32| Vec2::new(cx + r * a.cos(), cy + r * a.sin());
+        draw_triangle(Vec2::new(cx, cy), p(a0), p(a1), c);
+    }
+    draw_circle(cx, cy, r * 0.35, Color::new(0.1, 0.1, 0.15, 1.0));
+    draw_text(format!("{}", m.health), cx - 7.0, cy + 8.0, 26.0, WHITE);
+    draw_text(
+        format!("coins {}", m.coins),
+        cx - 40.0,
+        cy + r + 26.0,
+        22.0,
+        Color::new(1.0, 0.85, 0.2, 1.0),
+    );
 }
 
 /// A looping script that shows off the clips: run, jump, dive, run, jump + pound, spray, crouch.
@@ -812,6 +899,11 @@ async fn main() {
     let mut water_view = assets.as_ref().and_then(|a| water::WaterView::load(&a.dir));
     let mut water_ticks = 0u32;
     let mut props = assets.as_ref().map(|a| props::Props::load(&a.dir));
+    let mut coin_model = assets.as_ref().and_then(|a| {
+        coin::CoinModel::load(&a.dir)
+            .map_err(|e| eprintln!("coins: {e}"))
+            .ok()
+    });
     let mut stu_model = assets.as_ref().and_then(|a| {
         stu::StuModel::load(&a.dir)
             .map_err(|e| eprintln!("Strollin' Stu: {e}"))
@@ -957,6 +1049,22 @@ async fn main() {
             }
             world.sounds.clear();
         });
+        world.touch(&mut sim.mario);
+        // `K` hurts Mario from in front (for trying the knock-backs without a Stu);
+        // `SMS_HIT=<frame>` does it on that frame (for screenshots).
+        let hit_frame = std::env::var("SMS_HIT")
+            .ok()
+            .and_then(|v| v.parse::<u32>().ok());
+        if is_key_pressed(KeyCode::K) || hit_frame == Some(frame_no) {
+            let m = &mut sim.mario;
+            let ahead = m.pos
+                + V3::new(
+                    (m.face_yaw as f32 * std::f32::consts::PI / 32768.0).sin(),
+                    0.0,
+                    (m.face_yaw as f32 * std::f32::consts::PI / 32768.0).cos(),
+                ) * 100.0;
+            m.damage(ahead, libsms::DamageKind::EnemyCommon);
+        }
         // FLUDD's water (`TModelWaterManager`): emitted every tick, moved once a frame.
         for e in std::mem::take(&mut world.emits) {
             water.emit(&e);
@@ -1073,6 +1181,9 @@ async fn main() {
                         pr.draw(f.kind, at, view, proj);
                     }
                 }
+                if let Some(cm) = coin_model.as_mut() {
+                    cm.draw(&world.coins, sim.mario.ticks, S, view, proj);
+                }
                 // Stus walk their circle; one on the tongue rides the tip, shrinking in.
                 if let Some(sm) = stu_model.as_mut() {
                     let t = &sim.mario.yoshi.tongue;
@@ -1118,7 +1229,7 @@ async fn main() {
             draw_text(
                 l,
                 screen_width() - 300.0,
-                24.0 + 22.0 * i as f32,
+                170.0 + 22.0 * i as f32,
                 22.0,
                 Color::new(1.0, 1.0, 1.0, 1.0 - i as f32 * 0.14),
             );

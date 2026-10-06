@@ -80,6 +80,8 @@ uniform vec4 Swap2;
 uniform vec4 Swap3;
 uniform vec4 Info;
 uniform vec4 AlphaTest;
+uniform vec4 Fog;
+uniform vec4 FogColor;
 
 vec4 konst(float sel) {
     if (sel < 7.5) { return vec4(1.0 - sel / 8.0); }
@@ -263,6 +265,11 @@ void main() {
     bool p1 = alpha_cmp(AlphaTest.w, a8, Info.w);
     bool pass = AlphaTest.z < 0.5 ? (p0 && p1) : (AlphaTest.z < 1.5 ? (p0 || p1) : (AlphaTest.z < 2.5 ? (p0 != p1) : (p0 == p1)));
     if (!pass) { discard; }
+    // Linear fog on the eye distance (GX_FOG_LIN): start, end, on.
+    if (Fog.z > 0.5) {
+        float f = clamp((1.0 / gl_FragCoord.w - Fog.x) / (Fog.y - Fog.x), 0.0, 1.0);
+        outc.rgb = mix(outc.rgb, FogColor.rgb, f);
+    }
     gl_FragColor = vec4(outc.rgb * Info.y, outc.a * Info.z);
 }"#;
 
@@ -284,6 +291,9 @@ struct Uniforms {
     info: [f32; 4],
     /// comp0, ref0, op, comp1
     alpha_test: [f32; 4],
+    /// start, end, on
+    fog: [f32; 4],
+    fog_color: [f32; 4],
 }
 
 fn uniform_layout() -> UniformBlockLayout {
@@ -314,6 +324,8 @@ fn uniform_layout() -> UniformBlockLayout {
         "Swap3",
         "Info",
         "AlphaTest",
+        "Fog",
+        "FogColor",
     ] {
         u.push(UniformDesc::new(name, UniformType::Float4));
     }
@@ -456,6 +468,9 @@ pub struct Look {
     /// A TEV colour register set on every material (`J3DTevBlock::setTevColor`), 0..255:
     /// Yoshi's body colour is register 2 (`TYoshi::entry`).
     pub tev_color: Option<(usize, [f32; 4])>,
+    /// Linear fog over the whole model (`J3DFog`): colour 0..1, start and end eye distances in
+    /// scene units. Mario's damage flash (`addDamageFog`).
+    pub fog: Option<([f32; 3], f32, f32)>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -740,6 +755,14 @@ impl Renderer {
                     mat.alpha_compare.op as f32,
                     mat.alpha_compare.comp1 as f32,
                 ],
+                fog: match look.fog {
+                    Some((_, start, end)) => [start, end, 1.0, 0.0],
+                    None => [0.0; 4],
+                },
+                fog_color: match look.fog {
+                    Some((c, ..)) => [c[0], c[1], c[2], 1.0],
+                    None => [0.0; 4],
+                },
             };
             if let Some(a) = look.k0_alpha {
                 u.konst[0][3] = a as f32 / 255.0;

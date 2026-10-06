@@ -18,8 +18,8 @@ This folder is the repo root. Sibling folders are read-only references:
   (`nintendo.szs:audi/`); `npc/monte*/` are the Pianta models, clips and accessories gathered
   from every stage archive, `params_npc/` the NPC tuning (`params.szs:npc/`), `scene/mapobj/fruit*`
   the fruit models and `scene/mapobj/eggyoshi*` Yoshi's egg (stage archives), `yoshi/` Yoshi
-  (`yoshi.szs`), `enemy/hamukuri*` the Strollin' Stu (stage archives) and `params_enemy/` the
-  enemies' tuning (`params.szs:enemy/`). Never commit it. Hosts call `Assets::discover_or_extract`, which finds a
+  (`yoshi.szs`), `enemy/hamukuri*` the Strollin' Stu and `scene/mapobj/coin*` the coins (stage
+  archives) and `params_enemy/` the enemies' tuning (`params.szs:enemy/`). Never commit it. Hosts call `Assets::discover_or_extract`, which finds a
   complete folder or extracts from the disc (`SMS_DISC`, or an image in the given folders) on first
   run, and redoes an older partial one. The older copy at `../extracted/sms` is not used.
 - `../libpikmin/`: the pattern to follow (Host trait, fixed step, events, disc-parsed params).
@@ -33,12 +33,13 @@ Workspace:
   `SMS_CAM=yaw,pitch,dist`, `SMS_HIDE=body,cap,hands,fludd,nozzle`) takes a screenshot and quits;
   `SMS_R=<0-255>` holds the trigger, `SMS_HANG=1` starts hanging from a ledge, `SMS_HOLD=1`
   starts carrying fruit, `SMS_YOSHI=1` rides Yoshi (`=2`: he stands by), `SMS_B=<frame>` presses
-  B once, `SMS_FOCUS=yoshi` points the camera at Yoshi, `SMS_PROF=1` prints where each second's
+  B once, `SMS_HIT=<frame>` hurts Mario then (K in play), `SMS_FOCUS=yoshi` points the camera at Yoshi, `SMS_PROF=1` prints where each second's
   frame time went (sim, scene, water). No GL state queries per frame: `glGetIntegerv` waits for
   the GPU (it cost 5 ms a frame while spraying). FLUDD and the nozzle pose from `Mario::fludd_look`, and the drawn
   muzzles go back through `Mario::set_emitters`. Water is `libsms::water` drawn like the game: coverage into the
   window's alpha against the scene's depth, then a refracting screen pass (`water.rs`); fruit is `props.rs`; a
-  walking Strollin' Stu for Yoshi to eat is `stu.rs` (a stand-in, no enemy AI);
+  walking Strollin' Stu for Yoshi to eat is `stu.rs` (a stand-in, no enemy AI; walking into
+  it hurts Mario); coins are `coin.rs`; the damage flash is `Look::fog`;
   Yoshi, his tongue and the egg are `yoshi_model.rs` (`Mario::yoshi_look`, `Egg::look`; the posed
   mouth goes back via `Mario::set_yoshi_mouth`).
   miniquad disables the depth *test* for pipelines without depth writes; `j3d.rs` masks writes
@@ -85,5 +86,5 @@ Ported and tested: disc-file loading (`prm`, `bck`, rig `JNT1`/`INF1`), input, c
 double/triple chain, dive/belly slide, ground pound, wall slide/kick, bump knock-downs, FLUDD tank,
 Spray/Hover/Rocket/Turbo, crouch, nozzle swap, FLUDD/nozzle/pumping-arm animation and sound cues,
 water particles, ledge grab/hanging/shimmy/climb, grabbing/carrying/putting/throwing,
-Yoshi's egg, riding, flutter, tongue and juice. Not yet: swimming, bars, wires, poles, fences,
+Yoshi's egg, riding, flutter, tongue and juice, damage, health and coins. Not yet: swimming, bars, wires, poles, fences,
 the Spray "bomb". See the spec.
