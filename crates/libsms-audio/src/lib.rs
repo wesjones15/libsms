@@ -7,6 +7,8 @@
 //! - `channel`: notes, envelopes and voice allocation (JASChannel.cpp, JASBankMgr.cpp).
 //! - `dsp`: DSP voices and the mixer (JASDSPChannel.cpp; the microcode isn't in the decomp).
 //! - [`osc`]: envelopes and LFOs (JASOscillator.cpp).
+//! - [`jai`]: the game layer (JAInterface + MSound): sound effects through the SE sequence,
+//!   music, the title stream, Mario's voice. Hosts use [`SoundSystem`].
 //!
 //! Nothing here contains Nintendo data: banks, sequences and the sound table are read from the
 //! user's extracted `assets/` (`libsms_assets::sound`).
@@ -18,7 +20,9 @@ pub mod calc;
 mod channel;
 mod dsp;
 pub mod engine;
+pub mod jai;
 pub mod osc;
 mod track;
 
 pub use engine::{Engine, NoSync, SyncHandler};
+pub use jai::{SoundHandle, SoundSystem};

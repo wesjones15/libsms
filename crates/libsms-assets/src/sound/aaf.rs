@@ -127,6 +127,22 @@ pub struct CategoryInfo {
     pub max_same: u8,
 }
 
+/// `DSPInterface::FxlineConfig_`: one echo line of an effect scene.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FxLine {
+    pub enabled: bool,
+    /// Two destinations: DSP buffer id (`SEND_TABLE`, JASDSPInterface.cpp) and volume.
+    pub out: [(u16, i16); 2],
+    /// Delay length in 80-sample DSP frames.
+    pub frames: u32,
+    pub fir: [i16; 8],
+}
+
+/// `DSPInterface::SEND_TABLE`
+const SEND_TABLE: [u16; 12] = [
+    0x0D00, 0x0D60, 0x0DC0, 0x0E20, 0x0E80, 0x0EE0, 0x0CA0, 0x0F40, 0x0FA0, 0x0B00, 0x09A0, 0x0000,
+];
+
 #[derive(Debug, Clone)]
 pub struct BankEntry {
     pub bank: Ibnk,
@@ -152,6 +168,9 @@ pub struct InitData {
     pub streams: Vec<String>,
     /// Per sound scene, per SE category.
     pub scenes: Vec<Vec<CategoryInfo>>,
+    /// Effect scenes (`FabricatedFxSceneTable`): four echo lines each. A line whose buffer
+    /// size (`mBufferMax`) is 0 is off.
+    pub fx_scenes: Vec<[FxLine; 4]>,
 }
 
 impl InitData {
@@ -165,6 +184,7 @@ impl InitData {
         let mut seq_header = Vec::new();
         let mut streams = Vec::new();
         let mut scenes = Vec::new();
+        let mut fx_scenes = Vec::new();
         let mut i = 0usize;
         let word = |i: usize| r.u32(i * 4);
         loop {
@@ -235,7 +255,37 @@ impl InitData {
                     }
                     i += 3;
                 }
-                7 | 8 => i += 3,
+                7 => {
+                    // `FabricatedFxSceneTable`: count, four buffer sizes, then table-relative
+                    // offsets to four `FxlineConfig_`s per scene.
+                    let t = Be(chunk(word(i)?, word(i + 1)?)?);
+                    let n = t.u32(0)? as usize;
+                    let sizes: Vec<u32> = (0..4).map(|k| t.u32(4 + k * 4)).collect::<Result<_, _>>()?;
+                    for sc in 0..n {
+                        let o = t.u32(0x14 + sc * 4)? as usize;
+                        let mut lines = [FxLine {
+                            enabled: false,
+                            out: [(0, 0); 2],
+                            frames: 0,
+                            fir: [0; 8],
+                        }; 4];
+                        for (k, l) in lines.iter_mut().enumerate() {
+                            let c = o + k * 0x20;
+                            let send = |at: usize| -> Result<u16, Error> {
+                                Ok(SEND_TABLE.get(t.u16(at)? as usize).copied().unwrap_or(0))
+                            };
+                            *l = FxLine {
+                                enabled: t.u8(c)? != 0 && sizes[k] != 0,
+                                out: [(send(c + 2)?, t.i16(c + 4)?), (send(c + 6)?, t.i16(c + 8)?)],
+                                frames: t.u32(c + 0xC)?,
+                                fir: std::array::from_fn(|j| t.i16(c + 0x10 + j * 2).unwrap_or(0)),
+                            };
+                        }
+                        fx_scenes.push(lines);
+                    }
+                    i += 3;
+                }
+                8 => i += 3,
                 _ => {
                     // Unknown: skip to the next zero word.
                     while word(i)? != 0 {
@@ -252,6 +302,7 @@ impl InitData {
             seq_header,
             streams,
             scenes,
+            fx_scenes,
         })
     }
 
