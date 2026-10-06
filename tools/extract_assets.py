@@ -34,6 +34,7 @@ ROOT = HERE.parent
 EXTRACTS = [
     ("params.szs", "mario/", "params_mario"),
     ("params.szs", "npc/", "params_npc"),
+    ("params.szs", "enemy/", "params_enemy"),
     ("mario.szs", "", ""),
     ("nintendo.szs", "audi/msound.aaf", "AudioRes/msound.aaf"),
     ("yoshi.szs", "", "yoshi"),
@@ -68,11 +69,12 @@ REQUIRED = [
     "scene/mapobj/fruitpapaya.bmd",
     "scene/mapobj/eggyoshi_normal.bmd",
     "yoshi/yoshi_model.bmd",
+    "enemy/hamukuri/default.bmd",
 ]
 
 # Folders gathered from every stage archive into one: (prefix, destination). Matches
 # libsms::extract::SCENE_FOLDERS. monte* are the Piantas.
-SCENE_FOLDERS = [("monte", "npc")]
+SCENE_FOLDERS = [("monte", "npc"), ("hamukuri", "enemy")]
 # Single files gathered from the stage archives: (folder/name prefix, destination). The fruit
 # Mario picks up (TResetFruit, MapObjBall.cpp) and Yoshi's egg (TEggYoshi, Item.cpp).
 SCENE_FILES = [("mapobj/fruit", "scene"), ("mapobj/eggyoshi", "scene")]

@@ -75,13 +75,15 @@ impl From<std::io::Error> for ExtractError {
 /// `TApplication::initialize_bootAfter` reads from `nintendo.arc:audi/`.
 ///
 /// `params.szs:npc/` is the NPCs' tuning (`npcMonteM*.prm` / `npcMonteW*.prm` for the
-/// Piantas; `TNpcParams::TNpcParams`, NpcSave.cpp).
+/// Piantas; `TNpcParams::TNpcParams`, NpcSave.cpp), `params.szs:enemy/` the enemies'
+/// (`TSmallEnemyParams` and kin: `hamukuri.prm` for the Strollin' Stu).
 ///
 /// `yoshi.szs` is Yoshi's archive, mounted at `/yoshi/` (`TYoshi::init`, Yoshi.cpp): his
 /// model and hands, clips, eye textures (`*_tx.btp`) and per-clip sound keys (`bas/`).
-pub const EXTRACTS: [(&str, &str, &str); 5] = [
+pub const EXTRACTS: [(&str, &str, &str); 6] = [
     ("params.szs", "mario/", "params_mario"),
     ("params.szs", "npc/", "params_npc"),
+    ("params.szs", "enemy/", "params_enemy"),
     ("mario.szs", "", ""),
     ("nintendo.szs", "audi/msound.aaf", "AudioRes/msound.aaf"),
     ("yoshi.szs", "", "yoshi"),
@@ -96,11 +98,14 @@ pub const EXTRACTS: [(&str, &str, &str); 5] = [
 /// models (hats, glasses, ...). `mapobj/fruit*` are the fruit Mario picks up and throws
 /// (`TResetFruit`, MapObjBall.cpp; `FruitPapaya` and friends in MapObjInit.cpp).
 /// `mapobj/eggyoshi*` is Yoshi's egg and the bubble showing the fruit it wants (`TEggYoshi`,
-/// Item.cpp; `eggYoshi` in MapObjInit.cpp).
-pub const SCENE_FOLDERS: [(&str, &str); 3] = [
+/// Item.cpp; `eggYoshi` in MapObjInit.cpp). `hamukuri*` is the Strollin' Stu (`THamuKuri`,
+/// hamukuri.cpp): `hamukuri/default.bmd` and its clips in `hamukurianm/`, a small enemy Yoshi
+/// can eat.
+pub const SCENE_FOLDERS: [(&str, &str); 4] = [
     ("monte", "npc"),
     ("mapobj/fruit", "scene"),
     ("mapobj/eggyoshi", "scene"),
+    ("hamukuri", "enemy"),
 ];
 
 /// Disc folders copied as they are: `AudioRes/` holds the wave archives (`Banks/*.aw`), the
@@ -110,7 +115,7 @@ pub const DISC_FOLDERS: [&str; 1] = ["AudioRes/"];
 
 /// Files that must exist for the library and viewer to work. Adding one here makes an older
 /// `assets/` incomplete, so hosts re-extract it on the next run.
-pub const REQUIRED: [&str; 24] = [
+pub const REQUIRED: [&str; 25] = [
     "params_mario/run.prm",
     "params_mario/jump.prm",
     "params_mario/mario.prm",
@@ -135,6 +140,7 @@ pub const REQUIRED: [&str; 24] = [
     "scene/mapobj/fruitpapaya.bmd",
     "scene/mapobj/eggyoshi_normal.bmd",
     "yoshi/yoshi_model.bmd",
+    "enemy/hamukuri/default.bmd",
 ];
 
 pub const GAME_IDS: [(&str, &str); 3] = [
