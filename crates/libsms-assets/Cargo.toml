@@ -1,0 +1,9 @@
+[package]
+name = "libsms-assets"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+libsms.workspace = true
+glam.workspace = true

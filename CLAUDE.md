@@ -22,6 +22,13 @@ This folder is the repo root. Sibling folders are read-only references:
 
 Workspace:
 - `crates/libsms/`: the sim. No Elden Ring or libsm64 types.
+- `crates/libsms-assets/`: readers for drawing (J3D `.bmd` models incl. MAT3/TEV materials, GX
+  textures, `.btp` patterns, skinning, which hand models each clip uses). Like libpikmin-assets.
+- `crates/viewer/`: sample host. Draws the disc's Mario (body, hands, cap, FLUDD + nozzle) with a
+  GLSL TEV interpreter on raw miniquad pipelines (`j3d.rs`). `SMS_SHOT=<png>` (+`SMS_SHOT_FRAME`,
+  `SMS_CAM=yaw,pitch,dist`, `SMS_HIDE=body,cap,hands,fludd,nozzle`) takes a screenshot and quits.
+  miniquad disables the depth *test* for pipelines without depth writes; `j3d.rs` masks writes
+  with raw GL instead.
 - `crates/libsms-ffi/`: C ABI stub (cbindgen header later).
 - `docs/behavior-spec.md`: the spec, written from the decomp. Update it with the code.
 

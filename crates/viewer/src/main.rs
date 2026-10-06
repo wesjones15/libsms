@@ -17,6 +17,9 @@
 //! argument or `SMS_ASSETS` overrides where it is looked for. Without it the decomp's
 //! code defaults and a plain capsule are used, and the HUD says so. `--demo` replays a script.
 
+mod j3d;
+mod mario_model;
+
 use std::path::Path;
 
 use libsms::math::to_angle;
@@ -337,6 +340,20 @@ fn draw_world(w: &World) {
     }
 }
 
+/// The round shadow under Mario.
+fn draw_shadow(sim: &Sim, alpha: f32) {
+    let m = &sim.mario;
+    let pos = mq(m.prev_pos.lerp(m.pos, alpha));
+    draw_cylinder(
+        vec3(pos.x, m.floor_y() * S + 0.01, pos.z),
+        0.3,
+        0.3,
+        0.005,
+        None,
+        Color::new(0.0, 0.0, 0.0, 0.45),
+    );
+}
+
 /// The game's rig and clips, if the user's extracted data has them.
 struct Rig {
     skeleton: libsms::Skeleton,
@@ -631,6 +648,12 @@ async fn main() {
         &mut |m| println!("{m}"),
     );
     let rig = assets.as_ref().and_then(Rig::from_assets);
+    // The disc's Mario: body, hands, cap, FLUDD and nozzles with their materials.
+    let mut mario_model = assets.as_ref().and_then(|a| {
+        mario_model::MarioModel::load(&a.dir)
+            .map_err(|e| eprintln!("Mario's model: {e}"))
+            .ok()
+    });
     let (params, anims, data_label) = match &assets {
         Some(a) => (
             a.params.clone(),
@@ -657,6 +680,17 @@ async fn main() {
     let (mut cam_a, mut cam_p) = (std::f32::consts::PI, 0.35f32);
     let mut show_help = true;
     let mut cam_target = mq(sim.mario.pos) + vec3(0.0, 1.0, 0.0);
+    let mut frame_no = 0u32;
+    // `SMS_CAM=yaw,pitch,dist` overrides the starting camera.
+    let mut cam_dist = 6.0f32;
+    if let Some(v) = std::env::var("SMS_CAM").ok().map(|s| {
+        s.split(',')
+            .filter_map(|x| x.parse::<f32>().ok())
+            .collect::<Vec<_>>()
+    }) && v.len() == 3
+    {
+        (cam_a, cam_p, cam_dist) = (v[0], v[1], v[2]);
+    }
 
     loop {
         let dt = get_frame_time().min(0.1);
@@ -755,7 +789,7 @@ async fn main() {
                 cam_a.sin() * cam_p.cos(),
                 cam_p.sin(),
                 cam_a.cos() * cam_p.cos(),
-            ) * 6.0;
+            ) * cam_dist;
         set_camera(&Camera3D {
             position: eye,
             target: cam_target,
@@ -764,7 +798,29 @@ async fn main() {
             ..Default::default()
         });
         draw_world(&world);
-        draw_mario(&sim, rig.as_ref(), sim.alpha());
+        match (&mut mario_model, &rig) {
+            (Some(model), Some(r)) => {
+                let m = &sim.mario;
+                let joints = match r.clips.get(m.anim.clip) {
+                    Some(clip) => r.skeleton.pose(clip, m.anim.frame),
+                    None => r.skeleton.bind_world(),
+                };
+                let p = mq(m.prev_pos.lerp(m.pos, sim.alpha()));
+                let yaw = m.model_yaw as f32 * std::f32::consts::PI / 32768.0;
+                let root = mario_model::root_matrix(::glam::Vec3::new(p.x, p.y, p.z), yaw, S);
+                let g = |v: Vec3| ::glam::Vec3::new(v.x, v.y, v.z);
+                let view = ::glam::Mat4::look_at_rh(g(eye), g(cam_target), ::glam::Vec3::Y);
+                let proj = ::glam::Mat4::perspective_rh_gl(
+                    0.9,
+                    screen_width() / screen_height(),
+                    0.01,
+                    10000.0,
+                );
+                draw_shadow(&sim, sim.alpha());
+                model.draw(&sim, &joints, root, view, proj, get_time() as f32);
+            }
+            _ => draw_mario(&sim, rig.as_ref(), sim.alpha()),
+        }
         set_default_camera();
         hud(&sim, &data_label, rig.as_ref(), show_help);
         for (i, l) in world.log.iter().rev().enumerate() {
@@ -775,6 +831,20 @@ async fn main() {
                 22.0,
                 Color::new(1.0, 1.0, 1.0, 1.0 - i as f32 * 0.14),
             );
+        }
+
+        // `SMS_SHOT=<png>` saves a screenshot after `SMS_SHOT_FRAME` frames (default 90) and
+        // quits; for checking the renderer without a person at the window.
+        frame_no += 1;
+        if let Ok(path) = std::env::var("SMS_SHOT") {
+            let at = std::env::var("SMS_SHOT_FRAME")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(90u32);
+            if frame_no == at {
+                get_screen_data().export_png(&path);
+                break;
+            }
         }
 
         next_frame().await;
