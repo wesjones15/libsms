@@ -76,11 +76,15 @@ impl From<std::io::Error> for ExtractError {
 ///
 /// `params.szs:npc/` is the NPCs' tuning (`npcMonteM*.prm` / `npcMonteW*.prm` for the
 /// Piantas; `TNpcParams::TNpcParams`, NpcSave.cpp).
-pub const EXTRACTS: [(&str, &str, &str); 4] = [
+///
+/// `yoshi.szs` is Yoshi's archive, mounted at `/yoshi/` (`TYoshi::init`, Yoshi.cpp): his
+/// model and hands, clips, eye textures (`*_tx.btp`) and per-clip sound keys (`bas/`).
+pub const EXTRACTS: [(&str, &str, &str); 5] = [
     ("params.szs", "mario/", "params_mario"),
     ("params.szs", "npc/", "params_npc"),
     ("mario.szs", "", ""),
     ("nintendo.szs", "audi/msound.aaf", "AudioRes/msound.aaf"),
+    ("yoshi.szs", "", "yoshi"),
 ];
 
 /// Folders gathered from every stage archive (`data/scene/*.szs`) into one folder under `out`:
@@ -91,7 +95,13 @@ pub const EXTRACTS: [(&str, &str, &str); 4] = [
 /// `montewcommon/` hold the shared clips (`mom_*` / `mow_*` .bck, .btp, .bas) and accessory
 /// models (hats, glasses, ...). `mapobj/fruit*` are the fruit Mario picks up and throws
 /// (`TResetFruit`, MapObjBall.cpp; `FruitPapaya` and friends in MapObjInit.cpp).
-pub const SCENE_FOLDERS: [(&str, &str); 2] = [("monte", "npc"), ("mapobj/fruit", "scene")];
+/// `mapobj/eggyoshi*` is Yoshi's egg and the bubble showing the fruit it wants (`TEggYoshi`,
+/// Item.cpp; `eggYoshi` in MapObjInit.cpp).
+pub const SCENE_FOLDERS: [(&str, &str); 3] = [
+    ("monte", "npc"),
+    ("mapobj/fruit", "scene"),
+    ("mapobj/eggyoshi", "scene"),
+];
 
 /// Disc folders copied as they are: `AudioRes/` holds the wave archives (`Banks/*.aw`), the
 /// sequence archive (`Seqs/sequence.arc`), streams and `mSound.asn` (MSound.cpp,
@@ -100,7 +110,7 @@ pub const DISC_FOLDERS: [&str; 1] = ["AudioRes/"];
 
 /// Files that must exist for the library and viewer to work. Adding one here makes an older
 /// `assets/` incomplete, so hosts re-extract it on the next run.
-pub const REQUIRED: [&str; 22] = [
+pub const REQUIRED: [&str; 24] = [
     "params_mario/run.prm",
     "params_mario/jump.prm",
     "params_mario/mario.prm",
@@ -123,6 +133,8 @@ pub const REQUIRED: [&str; 22] = [
     "npc/montema/moma_model.bmd",
     "npc/montew/mow_model.bmd",
     "scene/mapobj/fruitpapaya.bmd",
+    "scene/mapobj/eggyoshi_normal.bmd",
+    "yoshi/yoshi_model.bmd",
 ];
 
 pub const GAME_IDS: [(&str, &str); 3] = [
@@ -257,46 +269,44 @@ pub fn extract_assets(
         log(&format!("{folder} ({n} files)"));
     }
 
-    for (prefix, dest) in SCENE_FOLDERS {
-        // Same path in two stages: keep the first copy (they are identical on the discs
-        // checked; a difference is logged).
-        let mut seen: std::collections::HashMap<String, usize> = Default::default();
-        let mut scenes = disc.paths_under("data/scene/");
-        scenes.retain(|p| p.ends_with(".szs"));
-        log(&format!(
-            "reading {} stage archives for {prefix}*",
-            scenes.len()
-        ));
-        for scene in &scenes {
-            let raw = disc.read_file(scene)?;
-            let bytes = if yaz0::is_yaz0(&raw) {
-                yaz0::decompress(&raw)?
-            } else {
-                raw
-            };
-            let Ok(arc) = rarc::Archive::parse(bytes) else {
+    // Same path in two stages: keep the first copy (they are identical on the discs checked;
+    // a difference is logged). Each stage archive is read once for every prefix.
+    let mut seen: Vec<std::collections::HashMap<String, usize>> =
+        vec![Default::default(); SCENE_FOLDERS.len()];
+    let mut scenes = disc.paths_under("data/scene/");
+    scenes.retain(|p| p.ends_with(".szs"));
+    log(&format!("reading {} stage archives", scenes.len()));
+    for scene in &scenes {
+        let raw = disc.read_file(scene)?;
+        let bytes = if yaz0::is_yaz0(&raw) {
+            yaz0::decompress(&raw)?
+        } else {
+            raw
+        };
+        let Ok(arc) = rarc::Archive::parse(bytes) else {
+            continue;
+        };
+        for (rel, data) in arc.under("") {
+            let Some(i) = SCENE_FOLDERS.iter().position(|(p, _)| rel.starts_with(p)) else {
                 continue;
             };
-            for (rel, data) in arc.under("") {
-                if !rel.starts_with(prefix) {
-                    continue;
+            if let Some(&len) = seen[i].get(rel) {
+                if len != data.len() {
+                    log(&format!(
+                        "{scene}:{rel} differs from an earlier copy; kept the first"
+                    ));
                 }
-                if let Some(&len) = seen.get(rel) {
-                    if len != data.len() {
-                        log(&format!(
-                            "{scene}:{rel} differs from an earlier copy; kept the first"
-                        ));
-                    }
-                    continue;
-                }
-                let path = safe_join(&out.join(dest), rel)?;
-                if let Some(parent) = path.parent() {
-                    std::fs::create_dir_all(parent)?;
-                }
-                std::fs::write(path, data)?;
-                seen.insert(rel.to_owned(), data.len());
+                continue;
             }
+            let path = safe_join(&out.join(SCENE_FOLDERS[i].1), rel)?;
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(path, data)?;
+            seen[i].insert(rel.to_owned(), data.len());
         }
+    }
+    for ((prefix, dest), seen) in SCENE_FOLDERS.iter().zip(&seen) {
         if seen.is_empty() {
             return Err(ExtractError::Missing(format!("data/scene/*.szs:{prefix}*")));
         }
