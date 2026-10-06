@@ -10,6 +10,7 @@
 //!   Left Shift      spray (R, half press)                X        swap nozzle (Spray <-> second)
 //!   1 2 3 4         fit Spray / Hover / Rocket / Turbo   G        refill tank
 //!   R               respawn                              H        toggle help
+//!   T               Shine Shirt on/off
 //!
 //! Tuning, animation clips and the skeleton come from your own disc: run
 //! `sms-viewer --iso <your disc image>` once (or `cargo run -p libsms --bin sms-extract -- <iso>`,
@@ -546,7 +547,7 @@ fn hud(sim: &Sim, data: &str, rig: Option<&Rig>, show_help: bool) {
             LIGHTGRAY,
         );
         draw_text(
-            "Arrows camera  G refill  R respawn  H hide help",
+            "Arrows camera  G refill  R respawn  T shirt  H hide help",
             14.0,
             h - 12.0,
             20.0,
@@ -752,6 +753,11 @@ async fn main() {
         }
         if is_key_pressed(KeyCode::H) {
             show_help = !show_help;
+        }
+        if let Some(model) = mario_model.as_mut()
+            && (is_key_pressed(KeyCode::T) || (frame_no == 0 && std::env::var("SMS_SHIRT").is_ok()))
+        {
+            model.shirt = !model.shirt;
         }
         if let Some(f) = sim.mario.fludd.as_mut() {
             let p = sim.mario.params.clone();

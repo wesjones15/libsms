@@ -229,7 +229,11 @@ pub fn decode(
                         let (x, y) = (x0 + i % tw, y0 + i / tw);
                         let nibble = |i: usize| {
                             let byte = data[base + i / 2];
-                            if i.is_multiple_of(2) { byte >> 4 } else { byte & 0xF }
+                            if i.is_multiple_of(2) {
+                                byte >> 4
+                            } else {
+                                byte & 0xF
+                            }
                         };
                         let px = match format {
                             0 => {

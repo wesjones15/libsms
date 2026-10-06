@@ -9,7 +9,7 @@ use glam::{Mat4, Vec3};
 use libsms::mario::UpperState;
 use libsms::{Clip, NozzleKind, Sim};
 use libsms_assets::btp::TexPattern;
-use libsms_assets::mario::{BODY_HAND_SHAPES, HIDDEN_SHAPE, Hands, hands_for_clip};
+use libsms_assets::mario::{BODY_HAND_SHAPES, HIDDEN_SHAPE, Hands, SHIRT_SHAPE, hands_for_clip};
 use libsms_assets::{Bmd, Pose, paths};
 
 use crate::j3d::{GpuModel, Lights, Look, Pass, Renderer};
@@ -48,6 +48,8 @@ impl Part {
 }
 
 pub struct MarioModel {
+    /// Wearing the Shine Shirt (off at the start of the game).
+    pub shirt: bool,
     renderer: Renderer,
     body: Part,
     /// [open, fists] x [right, left]
@@ -109,6 +111,7 @@ impl MarioModel {
             })
             .unwrap_or_default();
         Ok(MarioModel {
+            shirt: false,
             hand_joints: [b.joint("jnt_hand_R"), b.joint("jnt_hand_L")],
             head: b.joint("M_head"),
             chest: b.joint("jnt_chest"),
@@ -167,6 +170,9 @@ impl MarioModel {
                     }
                 }
             }
+        }
+        if !self.shirt {
+            body_look.hidden.push(SHIRT_SHAPE);
         }
         let hands = hands_for_clip(m.anim.clip);
         if hands != Hands::Body {

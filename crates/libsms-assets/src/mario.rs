@@ -102,3 +102,6 @@ pub fn hands_for_clip(clip: &str) -> Hands {
 /// hands (`changeHand`).
 pub const HIDDEN_SHAPE: usize = 4;
 pub const BODY_HAND_SHAPES: [usize; 2] = [5, 6];
+/// The Shine Shirt over the usual shirt and overalls: `TMario::thinkAloha` (MarioMain.cpp)
+/// hides it unless Mario has `MARIO_FLAG_HAS_SHIRT`.
+pub const SHIRT_SHAPE: usize = 10;
