@@ -37,6 +37,9 @@ pub enum Event {
         power: f32,
         vel: Vec3,
     },
+    /// Yoshi swallowed `id` (`HIT_MESSAGE_UNK8` then `UNKB`), off his tongue or out of
+    /// Mario's hands as he hatched: the object is gone (fruit grows back on its own).
+    Eaten { id: u64 },
     /// A sound the game starts at this point (`startSoundActor` and friends), by its
     /// `MSD_SE_*` name. Ids without the `0x800` bit are held sounds the game re-requests every
     /// frame while they last; hosts keep them alive rather than restarting them.

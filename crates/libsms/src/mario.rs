@@ -10,7 +10,7 @@ use glam::Vec3;
 use crate::anim::{AnimState, AnimTable, clip};
 use crate::event::{Event, JumpKind};
 use crate::fludd::Fludd;
-use crate::host::{GroundHit, Host, RoofHit, SurfaceFlags, WallHit};
+use crate::host::{Fruit, GroundHit, Host, RoofHit, SurfaceFlags, WallHit};
 use crate::input::{Input, Pad, lr_level, stick_intent};
 use crate::math::{self, Angle, cos, sin};
 use crate::params::Params;
@@ -103,6 +103,8 @@ pub enum Status {
     Ascend,
     Descend,
     HangJumping,
+    /// Thrown off Yoshi (status 0x89C, `getOffYoshi(true)`): a jump that lands lying down.
+    YoshiThrown,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -231,6 +233,15 @@ pub struct Mario {
     pub held: Option<u64>,
     /// What his hand is closing on (`unk384`).
     pub(crate) take_target: Option<u64>,
+    /// Which fruit `held` / `take_target` are, if they are fruit.
+    pub held_fruit: Option<Fruit>,
+    pub(crate) take_fruit: Option<Fruit>,
+    /// Yoshi (`mYoshi`), in his egg until one hatches.
+    pub yoshi: crate::yoshi::Yoshi,
+    /// The stage's Yoshi eggs (`TEggYoshi`).
+    pub eggs: Vec<crate::egg::Egg>,
+    /// `MsRandF`'s state.
+    pub(crate) seed: u32,
     pub(crate) dash_speed: f32,
     pub(crate) dash_timer: i32,
     pub(crate) fludd_emitting: bool,
@@ -295,6 +306,11 @@ impl Mario {
             pump_cooldown: 0,
             held: None,
             take_target: None,
+            held_fruit: None,
+            take_fruit: None,
+            yoshi: crate::yoshi::Yoshi::default(),
+            eggs: Vec::new(),
+            seed: 0x1234_5679,
             dash_speed: 0.0,
             dash_timer: 0,
             fludd_emitting: false,
@@ -302,6 +318,14 @@ impl Mario {
             in_water: false,
             ticks: 0,
         }
+    }
+
+    /// `MsRandF`: 0..1.
+    pub(crate) fn rand(&mut self) -> f32 {
+        self.seed ^= self.seed << 13;
+        self.seed ^= self.seed >> 17;
+        self.seed ^= self.seed << 5;
+        (self.seed >> 8) as f32 / (1u32 << 24) as f32
     }
 
     /// Gives Mario FLUDD with a full Spray tank.
@@ -336,19 +360,25 @@ impl Mario {
         self.prev_pos = self.pos;
 
         self.check_player_action(host, pad);
+        self.check_yoshi_collision(host);
+        self.check_yoshi_get_off();
+        self.think_yoshi_head_collision(host);
         self.state_machine(host);
         self.check_take(host);
         self.state_machine_upper(pad);
         self.think_height(host);
         self.gun_exec(host, pad);
+        self.yoshi_movement(host);
+        self.eggs_tick(host);
 
         self.anim.advance();
-        // `calcAnim`: the pumping arm, FLUDD's handles and nozzle clip.
+        // `calcAnim`: the pumping arm, FLUDD's handles and nozzle clip, then Yoshi's.
         self.add_upper();
         self.fludd_calc_animation();
         if let Some(f) = self.fludd.as_mut() {
             f.nozzle_frame_update();
         }
+        self.yoshi_calc_anim();
         self.pad_prev = *pad;
         for e in self.events.drain(..) {
             host.event(e);
@@ -391,10 +421,12 @@ impl Mario {
         i.stick = self.intended_mag > 0.0;
         i.jump = a_edge;
         i.jump_held = pad.a;
-        i.b_held = pad.b;
-        i.b_pressed = b_edge;
+        // Riding Yoshi, B is his tongue (`checkController`: `!onYoshi()`).
+        let on_yoshi = self.yoshi.state == crate::yoshi::YoshiState::Mounted;
+        i.b_held = pad.b && !on_yoshi;
+        i.b_pressed = b_edge && !on_yoshi;
         i.l_pressed = l_edge;
-        if b_edge {
+        if b_edge && !on_yoshi {
             i.dive = true;
         }
         if l_edge && self.status.is_jumping() {
@@ -462,7 +494,8 @@ impl Mario {
 
     /// `checkCurrentPlane`: probes the world and sets the ground/slip/air input bits.
     fn check_current_plane(&mut self, host: &mut dyn Host) {
-        self.radius = WALL_RADIUS;
+        // `unk15C`: Yoshi is wider.
+        self.radius = if self.on_yoshi() { 80.0 } else { WALL_RADIUS };
         let p = self.pos;
         let (fy, g) = self.check_ground_plane(host, Vec3::new(p.x, p.y + 25.0, p.z));
         self.floor_y = fy;
@@ -593,7 +626,7 @@ impl Mario {
         let j = self.params.jump.clone();
         let mut event = None;
         match st {
-            Status::Jump => {
+            Status::Jump | Status::YoshiThrown => {
                 self.set_player_jump_speed(0.25, 42.0);
                 self.forward_vel *= 0.8;
                 event = Some(JumpKind::Normal);
@@ -662,6 +695,11 @@ impl Mario {
                 event = Some(JumpKind::Forced);
             }
             _ => {}
+        }
+        if self.on_yoshi() {
+            self.vel.y *= self.params.yoshi.jump_yoshi_mult;
+            self.yoshi.flutter = 0;
+            self.yoshi.flutter_timer_reset();
         }
         self.jump_peak_y = self.pos.y;
         self.short_hop = st.allows_short_hop();

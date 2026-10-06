@@ -251,7 +251,7 @@ impl Host for World {
     fn takeables(&self, pos: V3, radius: f32, out: &mut Vec<libsms::host::Takeable>) {
         for (i, f) in self.fruits.iter().enumerate() {
             let t = f.takeable(i);
-            if !f.held && (t.pos - pos).length() < radius + t.radius {
+            if f.loose() && (t.pos - pos).length() < radius + t.radius {
                 out.push(t);
             }
         }
@@ -259,7 +259,7 @@ impl Host for World {
 
     fn take(&mut self, id: u64) -> bool {
         match self.fruits.get_mut(id as usize) {
-            Some(f) if !f.held => {
+            Some(f) if f.loose() => {
                 f.held = true;
                 f.vel = V3::ZERO;
                 // `TMario::soundProcess`: fruit kinds take with MA_TAKE_DRIAN.
@@ -294,6 +294,11 @@ impl Host for World {
                         pos,
                         info: None,
                     }));
+                }
+            }
+            Event::Eaten { id } => {
+                if let Some(f) = self.fruits.get_mut(id as usize) {
+                    f.eaten();
                 }
             }
             Event::Throw {
@@ -935,7 +940,7 @@ async fn main() {
                 // Fruit; a held one rides the right hand (`getTakingMtx`).
                 if let Some(pr) = props.as_mut().filter(|p| p.loaded()) {
                     let hand = r.skeleton.find("jnt_hand_R").and_then(|h| joints.get(h));
-                    for f in &world.fruits {
+                    for f in world.fruits.iter().filter(|f| f.gone == 0) {
                         let at = match (f.held, hand) {
                             (true, Some(h)) => {
                                 let lift = f.kind.held_offset() * S;

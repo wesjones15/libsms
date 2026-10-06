@@ -25,6 +25,17 @@ pub enum Kind {
 }
 
 impl Kind {
+    /// The sim's name for it (Yoshi's egg and tongue care which fruit it is).
+    pub fn fruit(self) -> libsms::Fruit {
+        match self {
+            Kind::Papaya => libsms::Fruit::Papaya,
+            Kind::Coconut => libsms::Fruit::Coconut,
+            Kind::Pine => libsms::Fruit::Pine,
+            Kind::Banana => libsms::Fruit::Banana,
+            Kind::Durian => libsms::Fruit::Durian,
+        }
+    }
+
     fn file(self) -> &'static str {
         match self {
             Kind::Papaya => "scene/mapobj/fruitpapaya.bmd",
@@ -75,7 +86,14 @@ pub struct Fruit {
     pub vel: V3,
     pub yaw: f32,
     pub held: bool,
+    /// Where it grows back after Yoshi eats it (`TResetFruit`).
+    pub home: V3,
+    /// Ticks until it is back.
+    pub gone: u32,
 }
+
+/// Ticks an eaten fruit stays away (a viewer choice; `TResetFruit`'s wait is stage data).
+const REGROW: u32 = 600;
 
 impl Fruit {
     pub fn new(kind: Kind, pos: V3) -> Fruit {
@@ -85,7 +103,22 @@ impl Fruit {
             vel: V3::ZERO,
             yaw: 0.0,
             held: false,
+            home: pos,
+            gone: 0,
         }
+    }
+
+    /// Yoshi ate it: it grows back at home.
+    pub fn eaten(&mut self) {
+        self.held = false;
+        self.pos = self.home;
+        self.vel = V3::ZERO;
+        self.gone = REGROW;
+    }
+
+    /// Lying about and takeable.
+    pub fn loose(&self) -> bool {
+        !self.held && self.gone == 0
     }
 
     pub fn takeable(&self, id: usize) -> Takeable {
@@ -93,6 +126,7 @@ impl Fruit {
             id: id as u64,
             pos: self.pos,
             radius: self.kind.physics().5,
+            fruit: Some(self.kind.fruit()),
         }
     }
 
@@ -121,6 +155,10 @@ impl Fruit {
 
     /// One 120 Hz tick of flight, bounce and roll over `floor(pos)`.
     pub fn tick(&mut self, floor: impl Fn(V3) -> f32) {
+        if self.gone > 0 {
+            self.gone -= 1;
+            return;
+        }
         if self.held {
             return;
         }

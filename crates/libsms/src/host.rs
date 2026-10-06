@@ -73,14 +73,28 @@ pub struct WallHit {
     pub flags: SurfaceFlags,
 }
 
+/// The fruit kinds (`TResetFruit` actor types 0x40000390..0x40000394, MapObjInit.cpp), which
+/// Yoshi's egg asks for and Yoshi eats.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Fruit {
+    Coconut,
+    Papaya,
+    Pine,
+    Durian,
+    Banana,
+}
+
 /// Something Mario can pick up (a `TTakeActor`: fruit, barrels, ...).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Takeable {
     /// The host's handle for it.
     pub id: u64,
+    /// Where it rests (its bottom, for fruit).
     pub pos: Vec3,
     /// Its hit radius (`getDamageRadius`).
     pub radius: f32,
+    /// Which fruit it is, if it is one (Yoshi's tongue and egg only want fruit).
+    pub fruit: Option<Fruit>,
 }
 
 pub trait Host {
@@ -106,9 +120,10 @@ pub trait Host {
     /// hit check calls `TMario::hitWantToTake` for these each tick.
     fn takeables(&self, _pos: Vec3, _radius: f32, _out: &mut Vec<Takeable>) {}
 
-    /// `receiveMessage(HIT_MESSAGE_TAKE)`: Mario's hand closes on `id`. Return whether it is
-    /// now held; the host then keeps it at Mario's right hand (`getTakingMtx`) until an
-    /// [`Event::Put`] or [`Event::Throw`].
+    /// `receiveMessage(HIT_MESSAGE_TAKE)`: Mario's hand (or Yoshi's tongue) closes on `id`.
+    /// Return whether it is now held; the host then keeps it at Mario's right hand
+    /// (`getTakingMtx`) until an [`Event::Put`] or [`Event::Throw`], or on the tongue tip
+    /// (`Yoshi::tongue`) until an [`Event::Eaten`].
     fn take(&mut self, _id: u64) -> bool {
         false
     }

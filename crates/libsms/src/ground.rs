@@ -22,6 +22,20 @@ struct JumpSlipRec {
 impl Mario {
     /// `setAnimation`: returns the current frame.
     pub(crate) fn set_anim(&mut self, c: ClipName, rate: f32) -> f32 {
+        // Riding, Mario's clip is Yoshi's (and the leaning one while spitting).
+        let c = if self.on_yoshi() {
+            let spitting = self
+                .fludd
+                .as_ref()
+                .is_some_and(|f| f.can_spray(&self.params));
+            if spitting {
+                "yo_run"
+            } else {
+                crate::yoshi::mario_clip(self.yoshi.clip)
+            }
+        } else {
+            c
+        };
         self.anim.set(c, rate, &self.anims);
         self.anim.frame
     }
@@ -120,7 +134,13 @@ impl Mario {
     pub(crate) fn stop_common(&mut self, host: &mut dyn Host, c: ClipName, next: Status) {
         self.wait_process(host);
         self.set_anim(c, 1.0);
-        if self.anim.at_last_frame() {
+        let ends = if self.on_yoshi() {
+            let y = &self.yoshi.ctrl;
+            y.frame + y.rate + 0.1 >= y.end
+        } else {
+            self.anim.at_last_frame()
+        };
+        if ends {
             self.change_status(next, 0, false);
         }
     }
@@ -472,7 +492,7 @@ impl Mario {
 
     /// `isRunningTurnning`: stick is more than ~100 degrees off the facing.
     fn is_running_turning(&self) -> bool {
-        if self.is_upper_pumping_style() {
+        if self.is_upper_pumping_style() || self.on_yoshi() {
             return false;
         }
         let d = diff(self.intended_yaw, self.face_yaw);
@@ -535,6 +555,7 @@ impl Mario {
                 self.set_anim(clip::LAND, 1.0);
             }
             1 => self.do_running_animation(),
+            2 if self.on_yoshi() => self.set_player_velocity(0.0),
             2 => {
                 if self.forward_vel > self.params.mario.clash_speed {
                     host.event(Event::WallBump);
@@ -765,6 +786,7 @@ impl Mario {
             1 => {
                 self.set_anim(anim, 1.0);
             }
+            2 if self.on_yoshi() => self.set_player_velocity(0.0),
             2 => {
                 if self.forward_vel.abs() > self.params.mario.clash_speed {
                     host.event(Event::WallBump);

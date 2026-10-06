@@ -54,7 +54,8 @@ impl Mario {
         prev: Vec3,
         curr: Vec3,
     ) -> bool {
-        if self.vel.y > 0.0 {
+        // `canHang`: hands free and not riding.
+        if self.vel.y > 0.0 || self.held.is_some() || self.on_yoshi() {
             return false;
         }
         if (curr.x - prev.x) * self.vel.x + (curr.z - prev.z) * self.vel.z > 0.0 {
@@ -266,7 +267,7 @@ impl Mario {
     /// `checkDescent`: walking slowly off an edge turns round and lowers Mario to hang.
     pub(crate) fn check_descent(&mut self, host: &mut dyn Host) {
         let sp = self.params.hanging.descent_sp;
-        if self.forward_vel >= sp {
+        if self.forward_vel >= sp || self.held.is_some() || self.on_yoshi() {
             return;
         }
         let mut walls = Vec::new();

@@ -227,6 +227,11 @@ impl Fludd {
             self.prop_speed = 0.0;
             self.prop_angle = 0.0;
         }
+        // Yoshi's juice never runs out (his own timer does), and FLUDD's handles stay put.
+        if self.nozzle == NozzleKind::Yoshi {
+            self.water = self.max_water(p);
+            self.housed = 0.0;
+        }
 
         if self.switch_speed != 0.0 {
             let before = self.switch_progress;
@@ -335,7 +340,8 @@ impl Mario {
             return false;
         };
         let np = f.nozzle_params(&self.params);
-        crate::anim::pump_clip(self.anim.clip).is_some()
+        !self.on_yoshi()
+            && crate::anim::pump_clip(self.anim.clip).is_some()
             && !(self.status == Status::RocketLanding && np.rocket_type == 1)
             && !(f.nozzle.is_trigger() && f.trigger_state() == TriggerState::Dead)
             && !f.is_switching()
@@ -478,12 +484,13 @@ impl Mario {
                 self.sound("MSD_SE_PO_SUCK_WATER_B", None);
             }
         }
-        if self.upper == UpperState::Pumping {
+        // Riding, R spits juice without pumping (`onYoshi() && mAnalogR > 0`).
+        if self.upper == UpperState::Pumping || (self.on_yoshi() && pad.r_analog > 0) {
             self.emit(host);
         }
 
         let x_edge = pad.x && !self.pad_prev.x;
-        if x_edge && self.status != Status::BackJump {
+        if x_edge && self.status != Status::BackJump && !self.on_yoshi() {
             let sound = self.fludd.as_mut().and_then(|f| f.swap_nozzle(&params_ptr));
             if let Some(name) = sound {
                 self.sound(name, None);
@@ -588,7 +595,7 @@ impl Mario {
                     s.amount = 0.0;
                     s.gate = var1 as u16;
                 }
-                if kind == NozzleKind::Spray {
+                if matches!(kind, NozzleKind::Spray | NozzleKind::Yoshi) {
                     // TNozzleDeform::movement
                     s.amount = (s.amount * np.emit_pow_scale).min(1.0);
                 }
@@ -616,8 +623,12 @@ impl Mario {
         let p = self.params.clone();
         let Some(f) = self.fludd.as_ref() else { return };
         let kind = f.nozzle;
-        // The handles have to be out first (`unk1CEC > 0` returns).
-        if kind == NozzleKind::Yoshi || f.housed > 0.0 {
+        // The handles have to be out first (`unk1CEC > 0` returns), unless riding.
+        if !self.on_yoshi() && f.housed > 0.0 {
+            return;
+        }
+        // `TNozzleDeform::emit`: no juice before Yoshi has eaten.
+        if kind == NozzleKind::Yoshi && self.yoshi.color == 0 {
             return;
         }
         for i in 0..Self::emitter_count(kind) {
@@ -636,7 +647,9 @@ impl Mario {
                 self.sound("MSD_SE_PO_NORMAL_NOZZLE_IMI", Some(pressure));
                 self.sound("MSD_SE_PO_WATER_HI", Some(amount));
             }
-            NozzleKind::Turbo => self.sound("MSD_SE_PO_WATER_HI", Some(amount)),
+            NozzleKind::Turbo | NozzleKind::Yoshi => {
+                self.sound("MSD_SE_PO_WATER_HI", Some(amount))
+            }
             NozzleKind::Underwater => self.sound("MSD_SE_PO_HOVER", None),
             NozzleKind::Hover if emitted > 0 => self.sound("MSD_SE_PO_HOVER", None),
             _ => {}
@@ -645,8 +658,10 @@ impl Mario {
 
     fn emit_one(&mut self, host: &mut dyn Host, kind: NozzleKind, index: usize, p: &Params) {
         let np = p.nozzle(kind).clone();
-        // `getEmitPosDirSpeed`: the drawn muzzle when the host reported it.
+        // `getEmitPosDirSpeed`: the drawn muzzle when the host reported it; riding, Yoshi's
+        // tongue joint (`getEmitMtx`).
         let (pos, dir) = match self.fludd.as_ref().and_then(|f| f.emitter(index)) {
+            _ if self.on_yoshi() => self.yoshi.mouth_world(),
             Some((p, d)) => (
                 self.model_to_world(p),
                 self.rotate_model(d).try_normalize().unwrap_or(Vec3::Z),
@@ -684,7 +699,7 @@ impl Mario {
                     (pressure * (np.attack - np.attack_min) as f32 + np.attack_min as f32) as i16;
                 power = pressure * (np.emit_pow - np.emit_pow_min) + np.emit_pow_min;
                 reaction = pressure * (np.reaction_pow - np.reaction_pow_min) + np.reaction_pow_min;
-            } else if kind == NozzleKind::Spray {
+            } else if matches!(kind, NozzleKind::Spray | NozzleKind::Yoshi) {
                 // TNozzleDeform::emit (without the secondary bomb trigger)
                 let a = s.amount;
                 if !(a > 0.0) {

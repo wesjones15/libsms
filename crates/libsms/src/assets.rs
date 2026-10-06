@@ -51,6 +51,11 @@ impl Assets {
             .and_then(|b| Skeleton::from_bmd(&b));
         let mut anim_table = AnimTable::from_dir(&dir.join("bck"));
         crate::fludd_anim::insert_fludd_clips(&mut anim_table, &dir.join("watergun2"));
+        crate::yoshi::insert_yoshi_clips(
+            &mut anim_table,
+            &dir.join("yoshi"),
+            &dir.join("scene/mapobj"),
+        );
         Assets {
             dir: dir.to_path_buf(),
             params,

@@ -312,6 +312,9 @@ impl Mario {
         } else {
             self.vel.y -= j.gravity;
         }
+        if self.on_yoshi() {
+            self.think_hold_out();
+        }
         if self.vel.y < -75.0 {
             self.vel.y = -75.0;
         }
@@ -435,13 +438,11 @@ impl Mario {
             cs *= 0.01 * (0.5 * self.forward_vel) + 0.5;
         }
 
-        let slip_friction = {
-            let mut f = self.slip_params().slip_friction;
-            if self.status == Status::Catch {
-                // wet-ground slipping while belly-sliding is not modelled (needs water state)
-                f = self.slip_params().slip_friction;
-            }
-            f
+        let slip_friction = if self.on_yoshi() && self.slip_set() == SlipSet::Normal {
+            self.params.slip_yoshi.slip_friction
+        } else {
+            // wet-ground slipping while belly-sliding is not modelled (needs water state)
+            self.slip_params().slip_friction
         };
         let stick = self.intended_mag * 0.03125;
         let mult = 0.02 * (stick * cs) + slip_friction;
@@ -474,14 +475,20 @@ impl Mario {
     /// `doRunning`: accelerate toward the stick, turn toward it, apply slope.
     pub(crate) fn do_running(&mut self) {
         let r = self.params.run.clone();
-        let sp = self.intended_mag.min(r.max_speed);
+        let y = self.params.yoshi.clone();
+        let mut sp = self.intended_mag.min(r.max_speed);
+        if self.on_yoshi() {
+            sp *= y.run_yoshi_mult;
+        }
 
         if self.forward_vel <= 0.0 {
             self.forward_vel += r.vel_minus_brake;
         } else if self.forward_vel <= sp {
             self.forward_vel += r.add_base - self.forward_vel * r.add_vel_div;
         } else if self.ground.normal.y >= r.dec_start_nrm_y {
+            // Both brakes apply, riding or not (`doRunning`, MarioRun.cpp, matching).
             self.forward_vel -= r.dec_brake;
+            self.forward_vel -= y.dec_brake;
         }
         if self.forward_vel < 0.0 {
             self.forward_vel = 0.0;
@@ -494,6 +501,9 @@ impl Mario {
             (m.running_rot_sp_min, m.running_rot_sp_max)
         };
         let mut rot_sp = (0.03125 * (self.forward_vel * (hi - lo) as f32) + lo as f32) as i16;
+        if self.on_yoshi() {
+            rot_sp = (rot_sp as f32 * y.rot_yoshi_mult) as i16;
+        }
         if self.fludd_emitting {
             rot_sp = r.dash_rot_sp;
         }
@@ -528,9 +538,20 @@ impl Mario {
                 mag = 0.0;
             }
 
-            let accel = mag * cos(ang) * j.jump_accel_control;
-            self.forward_vel += accel;
-            side_vel = mag * sin(ang) * j.jump_slide_control;
+            // Fluttering steers less (`mHoldOutAccCtrlF/B`, `mHoldOutSldCtrl`).
+            let (acc, slide) = if self.fluttering() {
+                let y = &self.params.yoshi;
+                let acc = if ang > -0x4000 && ang < 0x4000 {
+                    y.hold_out_acc_ctrl_f
+                } else {
+                    y.hold_out_acc_ctrl_b
+                };
+                (acc, y.hold_out_sld_ctrl)
+            } else {
+                (j.jump_accel_control, j.jump_slide_control)
+            };
+            self.forward_vel += mag * cos(ang) * acc;
+            side_vel = mag * sin(ang) * slide;
         }
 
         if self.forward_vel > 32.0 {
@@ -574,7 +595,8 @@ impl Mario {
 
     /// `askStrongGroundTouch`: did this landing hit hard enough for the heavy effect?
     pub(crate) fn ask_strong_ground_touch(&self) -> bool {
-        self.fall_start_y - self.pos.y > self.params.mario.damage_fall_height && self.vel.y <= -70.0
+        !self.on_yoshi()
+            && self.fall_start_y - self.pos.y > self.params.mario.damage_fall_height && self.vel.y <= -70.0
     }
 
     pub(crate) fn is_upper_pumping_style(&self) -> bool {

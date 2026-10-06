@@ -111,6 +111,22 @@ params! {
         jump_jump_catch_sp: f32 = 50.0, "mJumpJumpCatchSp";
         super_hip_attack_ct: i16 = 0x32, "mSuperHipAttackCt";
         trampoline_dec: f32 = 1.0, "mTrampolineDec";
+        get_off_yoshi_y: f32 = 30.0, "mGetOffYoshiY";
+    }
+}
+
+params! {
+    /// `/Mario/Yoshi.prm` (TYoshiParams): riding Yoshi.
+    YoshiParams {
+        run_yoshi_mult: f32 = 1.2, "mRunYoshiMult";
+        jump_yoshi_mult: f32 = 1.0, "mJumpYoshiMult";
+        rot_yoshi_mult: f32 = 1.5, "mRotYoshiMult";
+        head_front: f32 = 80.0, "mHeadFront";
+        head_radius: f32 = 50.0, "mHeadRadius";
+        hold_out_acc_ctrl_f: f32 = 0.01, "mHoldOutAccCtrlF";
+        hold_out_acc_ctrl_b: f32 = 0.023, "mHoldOutAccCtrlB";
+        hold_out_sld_ctrl: f32 = 0.3, "mHoldOutSldCtrl";
+        dec_brake: f32 = 1.0, "mDecBrake";
     }
 }
 
@@ -344,12 +360,14 @@ pub struct Params {
     pub hover: Hover,
     pub diving: Diving,
     pub water_gun: WaterGun,
+    pub yoshi: YoshiParams,
     pub slip_normal: Slip,
     pub slip_all: Slip,
     pub slip_all_slider: Slip,
     pub slip_45: Slip,
     pub slip_water_ground: Slip,
     pub slip_water_slope: Slip,
+    pub slip_yoshi: Slip,
     pub nozzles: [Nozzle; 6],
     /// By `mType` (`prmNames`, ModelWaterManager.cpp).
     pub water_particles: [WaterParticle; 17],
@@ -371,12 +389,14 @@ impl Default for Params {
             hover: Hover::default(),
             diving: Diving::default(),
             water_gun: WaterGun::default(),
+            yoshi: YoshiParams::default(),
             slip_normal: slip.clone(),
             slip_all: slip.clone(),
             slip_all_slider: slip.clone(),
             slip_45: slip.clone(),
             slip_water_ground: slip.clone(),
-            slip_water_slope: slip,
+            slip_water_slope: slip.clone(),
+            slip_yoshi: slip,
             nozzles: Default::default(),
             water_particles: Default::default(),
         }
@@ -394,6 +414,8 @@ mod files {
     pub const HOVER: &str = "hhover.prm";
     pub const DIVING: &str = "diving.prm";
     pub const WATER_GUN: &str = "watergun.prm";
+    pub const YOSHI: &str = "yoshi.prm";
+    pub const SLIP_YOSHI: &str = "slipparamyoshi.prm";
     pub const SLIP_NORMAL: &str = "slipparamnormal.prm";
     pub const SLIP_ALL: &str = "slipparamall.prm";
     pub const SLIP_ALL_SLIDER: &str = "slipparamall_slider.prm";
@@ -469,6 +491,9 @@ impl Params {
         if let Some(prm) = get(files::WATER_GUN) {
             p.water_gun.apply(&prm);
         }
+        if let Some(prm) = get(files::YOSHI) {
+            p.yoshi.apply(&prm);
+        }
         if let Some(prm) = get(files::SLIP_NORMAL) {
             p.slip_normal.apply(&prm);
         }
@@ -479,6 +504,10 @@ impl Params {
         p.slip_45 = p.slip_normal.clone();
         p.slip_water_ground = p.slip_normal.clone();
         p.slip_water_slope = p.slip_normal.clone();
+        p.slip_yoshi = p.slip_normal.clone();
+        if let Some(prm) = get(files::SLIP_YOSHI) {
+            p.slip_yoshi.apply(&prm);
+        }
         if let Some(prm) = get(files::SLIP_ALL) {
             p.slip_all.apply(&prm);
         }

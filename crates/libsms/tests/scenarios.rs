@@ -856,6 +856,7 @@ impl Host for FruitHost {
                 id: 7,
                 pos: self.fruit,
                 radius: 40.0,
+                fruit: None,
             });
         }
     }
@@ -922,4 +923,248 @@ fn mario_picks_up_fruit_carries_puts_and_throws_it() {
     assert_eq!(s.mario().status, Status::Pitching);
     assert!(s.until(120, |m| m.held.is_none()));
     assert!(s.event_count(|e| matches!(e, Event::Throw { id: 7, .. })) == 1);
+}
+
+// ---- Yoshi ---------------------------------------------------------------------------------
+
+/// A flat floor with fruit lying about; taken fruit stays out of reach until it is eaten.
+struct YoshiHost {
+    fruits: Vec<(Vec3, libsms::Fruit, bool)>,
+}
+
+impl Host for YoshiHost {
+    fn ground(&self, _p: Vec3) -> Option<libsms::GroundHit> {
+        Some(libsms::GroundHit {
+            height: 0.0,
+            normal: Vec3::Y,
+            flags: libsms::SurfaceFlags::NONE,
+        })
+    }
+    fn takeables(&self, pos: Vec3, radius: f32, out: &mut Vec<libsms::host::Takeable>) {
+        for (i, (p, kind, taken)) in self.fruits.iter().enumerate() {
+            if !taken && (*p - pos).length() < radius + 40.0 {
+                out.push(libsms::host::Takeable {
+                    id: i as u64,
+                    pos: *p,
+                    radius: 40.0,
+                    fruit: Some(*kind),
+                });
+            }
+        }
+    }
+    fn take(&mut self, id: u64) -> bool {
+        match self.fruits.get_mut(id as usize) {
+            Some(f) if !f.2 => {
+                f.2 = true;
+                true
+            }
+            _ => false,
+        }
+    }
+}
+
+/// A scene with every clip length from the disc (Yoshi's and the egg's too).
+fn yoshi_scene(fruits: Vec<(Vec3, libsms::Fruit)>) -> Scene<YoshiHost> {
+    let mut s = Scene::new(YoshiHost {
+        fruits: fruits.into_iter().map(|(p, k)| (p, k, false)).collect(),
+    });
+    if let Some(dir) = extracted() {
+        s.sim.mario.anims = libsms::Assets::load(&dir).anim_table;
+    }
+    s.sim.mario.give_fludd();
+    s
+}
+
+/// Puts Yoshi under a falling Mario so he lands on him.
+fn mount<H: Host>(s: &mut Scene<H>, fruit: Option<libsms::Fruit>) {
+    s.step(2);
+    s.press_a();
+    assert!(s.until(240, |m| m.vel.y < 0.0 && m.pos.y < 60.0));
+    let p = s.mario().pos;
+    s.sim.mario.spawn_yoshi(Vec3::new(p.x, 0.0, p.z), 0, fruit);
+    assert!(s.until(10, |m| m.on_yoshi()));
+    assert!(s.until(240, |m| m.status == Status::Wait));
+}
+
+fn sound_count<H: Host>(s: &Scene<H>, name: &str) -> usize {
+    s.event_count(|e| matches!(e, Event::Sound(c) if c.name == name))
+}
+
+#[test]
+fn the_egg_hatches_yoshi_for_the_fruit_it_wants_and_comes_back() {
+    let mut s = yoshi_scene(vec![(Vec3::new(0.0, 0.0, 60.0), libsms::Fruit::Papaya)]);
+    let egg = s.sim.mario.add_egg(Vec3::new(0.0, 0.0, 600.0), i16::MIN);
+    s.sim.mario.eggs[egg].wants = libsms::Fruit::Papaya;
+    s.step(2);
+    // Pick the papaya up and carry it to the egg.
+    s.pad.b = true;
+    s.step(1);
+    s.pad.b = false;
+    assert!(s.until(300, |m| m.held.is_some() && m.status == Status::Wait));
+    assert_eq!(s.mario().held_fruit, Some(libsms::Fruit::Papaya));
+    s.run_forward();
+    assert!(s.until(240, |m| m.eggs[0].state == libsms::EggState::Right));
+    s.pad.stick = Vec2::ZERO;
+    assert_eq!(sound_count(&s, "MSD_SE_SY_COLLECT_PRETTY"), 1);
+    // The egg breaks and Yoshi hatches, eating the papaya out of Mario's hands.
+    assert!(s.until(600, |m| m.yoshi.state == libsms::YoshiState::Hatching));
+    assert!(s.mario().held.is_none());
+    assert_eq!(s.event_count(|e| matches!(e, Event::Eaten { id: 0 })), 1);
+    assert_eq!(s.mario().yoshi.color, 1, "papaya juice is orange");
+    assert!(s.until(600, |m| m.yoshi.state == libsms::YoshiState::Unmounted));
+    assert!(s.until(600, |m| m.eggs[0].state == libsms::EggState::Gone));
+    assert!(s.mario().yoshi_look().is_some());
+
+    // Out of juice, Yoshi goes and the egg is back with a new wish.
+    s.sim.mario.yoshi.juice = 30;
+    assert!(s.until(120, |m| m.yoshi.state == libsms::YoshiState::Egg));
+    assert_eq!(s.mario().eggs[0].state, libsms::EggState::Waiting);
+    assert!(s.mario().yoshi_look().is_none());
+}
+
+#[test]
+fn the_egg_shakes_its_head_at_the_wrong_fruit() {
+    let mut s = yoshi_scene(vec![(Vec3::new(0.0, 0.0, 60.0), libsms::Fruit::Durian)]);
+    let egg = s.sim.mario.add_egg(Vec3::new(0.0, 0.0, 600.0), i16::MIN);
+    s.sim.mario.eggs[egg].wants = libsms::Fruit::Banana;
+    s.step(2);
+    s.pad.b = true;
+    s.step(1);
+    s.pad.b = false;
+    assert!(s.until(300, |m| m.held.is_some() && m.status == Status::Wait));
+    s.run_forward();
+    assert!(s.until(600, |m| m.eggs[0].state == libsms::EggState::Wrong));
+    s.pad.stick = Vec2::ZERO;
+    assert_eq!(sound_count(&s, "MSD_SE_SY_NOT_COLLECT_YOSHI"), 1);
+    assert!(!s.mario().yoshi.is_hatched());
+    assert!(s.mario().held.is_some());
+}
+
+#[test]
+fn landing_on_yoshi_rides_him_and_x_gets_off() {
+    let mut s = yoshi_scene(vec![]);
+    mount(&mut s, None);
+    let m = s.mario();
+    assert_eq!(m.fludd.as_ref().unwrap().nozzle, NozzleKind::Yoshi);
+    assert_eq!(m.yoshi.pos, m.pos);
+    assert_eq!(sound_count(&s, "MSD_SE_YV_DELICIOUS"), 1);
+    // Mario's clip follows Yoshi's.
+    assert!(s.mario().anim.clip.starts_with("yo_"), "{}", s.mario().anim.clip);
+    // B is the tongue, not a dive or a grab.
+    s.pad.b = true;
+    s.step(1);
+    s.pad.b = false;
+    assert_ne!(s.mario().status, Status::TakePose);
+    assert_ne!(
+        s.mario().yoshi.tongue.state,
+        libsms::tongue::TongueState::Idle
+    );
+
+    s.step(120);
+    s.pad.x = true;
+    s.step(1);
+    s.pad.x = false;
+    assert!(!s.mario().on_yoshi());
+    assert_eq!(s.mario().status, Status::BackJump);
+    assert_eq!(s.mario().yoshi.state, libsms::YoshiState::Unmounted);
+    assert_eq!(s.mario().fludd.as_ref().unwrap().nozzle, NozzleKind::Spray);
+    // Standing next to him, Mario is kept out of his body.
+    assert!(s.until(600, |m| m.status == Status::Wait));
+    let d = s.mario().pos - s.mario().yoshi.pos;
+    assert!(Vec2::new(d.x, d.z).length() >= 100.0, "{d:?}");
+}
+
+#[test]
+fn yoshi_runs_faster_and_flutters() {
+    if need_disc() {
+        return;
+    }
+    let top = |ride: bool| {
+        let mut s = yoshi_scene(vec![]);
+        if ride {
+            mount(&mut s, None);
+        }
+        s.run_forward();
+        s.secs(3.0);
+        s.mario().forward_vel
+    };
+    let (walk, ride) = (top(false), top(true));
+    assert!(ride > walk * 1.1, "riding {ride} vs {walk}");
+
+    // Holding A past the top of a jump flutters: longer in the air.
+    let airtime = |hold: bool| {
+        let mut s = yoshi_scene(vec![]);
+        mount(&mut s, None);
+        s.pad.a = true;
+        let mut n = 0;
+        while (n == 0 || s.mario().status.is_jumping()) && n < 2000 {
+            if s.mario().vel.y < 0.0 {
+                s.pad.a = hold;
+            }
+            s.step(1);
+            n += 1;
+        }
+        n
+    };
+    let (plain, held) = (airtime(false), airtime(true));
+    assert!(held > plain + 60, "held {held} vs released at the top {plain}");
+}
+
+#[test]
+fn yoshi_tongues_fruit_and_spits_its_juice() {
+    let mut s = yoshi_scene(vec![(Vec3::new(0.0, 0.0, 3000.0), libsms::Fruit::Banana)]);
+    mount(&mut s, None);
+    // No juice before he has eaten.
+    s.pad.r_analog = 255;
+    s.step(30);
+    s.pad.r_analog = 0;
+    assert_eq!(
+        s.event_count(|e| matches!(e, Event::WaterEmit(w) if w.nozzle == NozzleKind::Yoshi)),
+        0
+    );
+    let p = s.mario().pos;
+    s.host.world.fruits[0].0 = p + Vec3::new(0.0, 0.0, 250.0);
+    s.pad.b = true;
+    s.step(1);
+    s.pad.b = false;
+    assert!(
+        s.until(240, |m| m.yoshi.color != 0),
+        "{:?}",
+        s.mario().yoshi.tongue
+    );
+    assert_eq!(s.event_count(|e| matches!(e, Event::Eaten { id: 0 })), 1);
+    assert_eq!(s.mario().yoshi.color, 3, "banana juice is pink");
+    assert_eq!(s.mario().juice_color(), 3);
+
+    s.step(30);
+    s.pad.r_analog = 255;
+    s.step(30);
+    let emits: Vec<WaterEmit> = s
+        .host
+        .events
+        .iter()
+        .filter_map(|e| match e {
+            Event::WaterEmit(w) if w.nozzle == NozzleKind::Yoshi => Some(*w),
+            _ => None,
+        })
+        .collect();
+    assert!(!emits.is_empty());
+    if !need_disc() {
+        assert_eq!(emits[0].particle_type, 12, "WTP12_YoshiMouth");
+    }
+    // The head eats while spitting.
+    assert_eq!(
+        s.mario().yoshi.eat.map(|e| e.0),
+        Some(libsms::yoshi::clip::EAT)
+    );
+}
+
+#[test]
+fn running_out_of_juice_throws_mario_off() {
+    let mut s = yoshi_scene(vec![]);
+    mount(&mut s, Some(libsms::Fruit::Pine));
+    s.sim.mario.yoshi.juice = 20;
+    assert!(s.until(60, |m| !m.on_yoshi()));
+    assert_eq!(s.mario().status, Status::YoshiThrown);
+    assert!(s.until(60, |m| m.yoshi.state == libsms::YoshiState::Egg));
 }

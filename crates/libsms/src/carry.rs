@@ -42,7 +42,7 @@ impl Mario {
         ) {
             return false;
         }
-        if self.upper != UpperState::Idle || self.held.is_some() {
+        if self.upper != UpperState::Idle || self.held.is_some() || self.on_yoshi() {
             return false;
         }
         let d = t.pos - self.pos;
@@ -63,6 +63,7 @@ impl Mario {
         host.takeables(self.pos, self.params.mario.hold_radius, &mut found);
         if let Some(t) = found.into_iter().find(|t| self.is_take_situation(t)) {
             self.take_target = Some(t.id);
+            self.take_fruit = t.fruit;
             self.change_status(Status::Take, 0, false);
         }
     }
@@ -87,6 +88,7 @@ impl Mario {
             if host.take(id) {
                 self.exert();
                 self.held = Some(id);
+                self.held_fruit = self.take_fruit;
             } else {
                 self.take_target = None;
                 return self.change_status(Status::Wait, 0, false);
@@ -133,6 +135,7 @@ impl Mario {
                 yaw: self.face_yaw,
             });
             self.held = None;
+            self.held_fruit = None;
         }
         false
     }
@@ -154,6 +157,7 @@ impl Mario {
     /// `dropObject`: let go with a throw.
     pub(crate) fn drop_object(&mut self) {
         if let Some(id) = self.held.take() {
+            self.held_fruit = None;
             self.events.push(Event::Throw {
                 id,
                 pos: self.pos,

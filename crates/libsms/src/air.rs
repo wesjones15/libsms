@@ -13,6 +13,12 @@ impl Mario {
     pub(crate) fn jump_main(&mut self, host: &mut dyn Host) -> bool {
         use Status::*;
         match self.status {
+            YoshiThrown => {
+                // Lands in `THROWN_DOWN`, which the sim does not have; the back-down is the
+                // nearest lying-down status.
+                self.jumping_basic(host, BackDown, "thrown", 0);
+                false
+            }
             ForceJump | Jump => {
                 if self.jumping_common_events() {
                     return true;
@@ -160,7 +166,9 @@ impl Mario {
                     return r;
                 }
                 self.set_anim(c, 1.0);
-                if self
+                if self.on_yoshi() {
+                    self.set_player_velocity(0.0);
+                } else if self
                     .wall
                     .is_some_and(|w| w.flags.has(SurfaceFlags::NO_WALL_JUMP))
                 {
@@ -223,6 +231,9 @@ impl Mario {
         if self.input.dive {
             if self.input.l_pressed {
                 return self.change_status(Status::HipDrop, 0, false);
+            }
+            if self.on_yoshi() {
+                return false;
             }
             let v = self.params.jump.jump_jump_catch_sp;
             self.set_player_velocity(v);
