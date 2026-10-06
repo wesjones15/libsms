@@ -16,6 +16,7 @@
 // The port indexes parallel arrays the way the C++ does; iterator rewrites would obscure that.
 #![allow(clippy::needless_range_loop)]
 
+pub mod animation;
 pub mod calc;
 mod channel;
 mod dsp;

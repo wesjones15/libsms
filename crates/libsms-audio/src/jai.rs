@@ -745,6 +745,20 @@ impl SoundSystem {
         self.live(h).is_some()
     }
 
+    /// Renews a held SE without restarting its sequence, even when the host samples more
+    /// often than JAI's 30 Hz frame (`JAISeEntry::storeBuffer` keep-alive).
+    pub fn refresh(&mut self, h: SoundHandle, pos: Vec3) -> bool {
+        let Some(slot) = self.live(h) else {
+            return false;
+        };
+        let se = &mut self.ses[slot];
+        se.pos = Some(pos);
+        if se.id & id::SUSTAIN_MASK == 0 && se.state == state::STOPPING {
+            se.state = state::PLAYING;
+        }
+        true
+    }
+
     /// Moves a sound's emitter.
     pub fn set_position(&mut self, h: SoundHandle, pos: Vec3) {
         if let Some(s) = self.live(h) {
