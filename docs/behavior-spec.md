@@ -293,6 +293,42 @@ purpose, as is carrying the egg (`TEggYoshi` takes `HIT_MESSAGE_TAKE`).
 Not yet: coins and the other non-enemy extras on the tongue, sidewalk/pivot clips (no L/R
 strafing), `THROWN_DOWN` (the sim lands the throw in `BackDown`), swimming.
 
+## 7b. Damage, health and coins (MarioCollision.cpp, MarioReceiveMsg.cpp, Item.cpp)
+
+Mario starts with `mHPMax` (8 on disc) health. A host reports an enemy's touch with
+`Mario::damage(from, DamageKind)`; `receiveMessage` picks one of the `/Mario/Dmg*.prm`
+sets by the attacker's actor type (`DmgEnemyCommon` for most, `DmgHamukuri` for the
+Strollin' Stu, ...), and `damageExec` applies it:
+
+- While invincible, at 0 health, or down, nothing happens.
+- On Yoshi, no health is lost: Mario is thrown off (`getOffYoshi(true)`), Yoshi plays
+  `yoshi_damage` with `yoshi_damage_tx` eyes and cries `YV_DAMAGE`; no invincibility starts.
+- Otherwise Mario turns to the attacker and gets at least `mMinSpeed`. Attacker within 90
+  degrees of where he faced: he keeps facing it and slides backwards (`*_BACK_DOWN`);
+  behind him: he turns away and slides forward (`*_FORE_DOWN`). The status comes from
+  `mDownType` + airborne + direction: type 0 `SAFE_*_DOWN` (a stumble, `sfbdn`/`sffdn`), 1
+  `SHORT_*_DOWN`, 2 `*_DOWN`, 3 none; in the air `JUMP_SHORT_*_DOWN` / `JUMP_*_DOWN`. He drops
+  what he carries. `mInvincibleTime` ticks of invincibility start (300), the health drops by
+  `mDamage`, FLUDD loses `mDamageLoss` per `mWaterEmit`, and he cries by size: `MV01` for
+  more than 1, `MV03` for a stumble, else `MV02`.
+- While invincible the body, cap and hands get a pink fog (`addDamageFog`: colour (255, 0,
+  128), linear from 700 in front of Mario to 500 behind, both swinging 300 with
+  `sin(moveTicks * 0x888)`, a quarter-second pulse). The countdown is `thinkParams`, one a tick.
+- At 0 health (`loserExec`): `HP_DOWN`, Yoshi runs off, and `DOWN_LOSER` (`loserDown`: the
+  `die` clip, `MV08A_DOWN`, then `MV08B_DOWN_REACT`). `Event::Down` hands over to the host.
+
+Disc tables: EnemyCommon 1 damage, type 1, speed 30; Hamukuri 1, type 0, speed 30; Hinokuri
+3, type 1, 2 water bursts; Killer 3, type 1. `mInvincibleTime` is 300 unless a file says
+otherwise.
+
+Coins (`Mario::get_coin`): gold heals 1 (`getCoin`) and counts, red and blue heal 2; healing
+stops at `mHPMax` and chimes `SY_HP_RECOVER` only when it healed (`incHP`). The coin's own
+sound comes with it (`SY_COIN`, `SY_RED_COIN_GET`, `SY_BLUE_COIN_GET`).
+
+Not ported: the run flinch for type 3 (`setUpperDamageRun`), the water the hit sprays out,
+camera shake and rumble (hosts can use `Event::Damaged`), dirt, air underwater, trampling
+enemies, lives and the 100-coin Shine.
+
 ## 8. Verified numbers (disc tuning, headless, `cargo run -p libsms --example report`)
 
 | What | Sim |

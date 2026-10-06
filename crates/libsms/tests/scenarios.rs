@@ -1236,3 +1236,109 @@ fn yoshi_tongues_and_eats_an_enemy_but_not_a_boo() {
     s.step(600);
     assert_eq!(s.event_count(|e| matches!(e, Event::EnemyEaten { .. })), 1);
 }
+
+#[test]
+fn a_hit_knocks_mario_back_costs_health_and_he_flashes() {
+    let mut s = Scene::flat();
+    s.step(2);
+    let max = s.mario().params.mario.hp_max;
+    assert_eq!(s.mario().health, max);
+    // An enemy straight ahead (+Z): he falls on his back, sliding away from it.
+    assert!(s.sim.mario.damage(Vec3::new(0.0, 0.0, 100.0), libsms::DamageKind::EnemyCommon));
+    assert_eq!(s.mario().health, max - 1);
+    assert!(s.mario().is_invincible());
+    assert!(
+        matches!(
+            s.mario().status,
+            Status::ShortBackDown | Status::SafeBackDown | Status::BackDown
+        ),
+        "{:?}",
+        s.mario().status
+    );
+    // While flashing, another hit does nothing.
+    assert!(!s.sim.mario.damage(Vec3::new(0.0, 0.0, 100.0), libsms::DamageKind::EnemyCommon));
+    s.step(30);
+    assert!(s.mario().pos.z < -10.0, "{:?}", s.mario().pos);
+    assert_eq!(s.event_count(|e| matches!(e, Event::Damaged { damage: 1, .. })), 1);
+    assert!(s.until(600, |m| m.status == Status::Wait));
+    assert!(s.until(600, |m| !m.is_invincible()));
+    // From behind he falls forward, away from it.
+    let behind = s.mario().pos - Vec3::new(0.0, 0.0, 100.0);
+    assert!(s.sim.mario.damage(behind, libsms::DamageKind::EnemyCommon));
+    assert!(
+        matches!(
+            s.mario().status,
+            Status::ShortForeDown | Status::SafeForeDown | Status::ForeDown
+        ),
+        "{:?}",
+        s.mario().status
+    );
+    assert_eq!(s.mario().health, max - 2);
+}
+
+#[test]
+fn the_strollin_stu_only_trips_mario() {
+    if need_disc() {
+        return;
+    }
+    let mut s = Scene::flat();
+    s.step(2);
+    // `DmgHamukuri.prm`: down type 0, a stumble.
+    assert!(s.sim.mario.damage(Vec3::new(0.0, 0.0, 100.0), libsms::DamageKind::Hamukuri));
+    assert_eq!(s.mario().status, Status::SafeBackDown);
+    assert_eq!(sound_count(&s, "MSD_SE_MV03_DAMAGE_LITLE_01"), 0);
+    s.step(1);
+    assert_eq!(sound_count(&s, "MSD_SE_MV03_DAMAGE_LITLE_01"), 1);
+}
+
+#[test]
+fn coins_heal_up_to_full() {
+    let mut s = Scene::flat();
+    s.sim.mario.health = 5;
+    s.sim.mario.get_coin(libsms::Coin::Gold);
+    assert_eq!(s.mario().health, 6);
+    s.sim.mario.get_coin(libsms::Coin::Red);
+    assert_eq!(s.mario().health, 8);
+    s.sim.mario.get_coin(libsms::Coin::Blue);
+    assert_eq!(s.mario().health, 8);
+    assert_eq!(s.mario().coins, 1);
+    s.step(1);
+    assert_eq!(sound_count(&s, "MSD_SE_SY_COIN"), 1);
+    // The chime only while it heals.
+    assert_eq!(sound_count(&s, "MSD_SE_SY_HP_RECOVER"), 2);
+}
+
+#[test]
+fn on_yoshi_a_hit_throws_mario_off_and_costs_nothing() {
+    let mut s = yoshi_scene(vec![]);
+    mount(&mut s, Some(libsms::Fruit::Papaya));
+    let max = s.mario().health;
+    assert!(s.sim.mario.damage(Vec3::new(0.0, 0.0, 100.0), libsms::DamageKind::EnemyCommon));
+    assert!(!s.mario().on_yoshi());
+    assert_eq!(s.mario().status, Status::YoshiThrown);
+    assert_eq!(s.mario().health, max);
+    s.step(1);
+    assert_eq!(sound_count(&s, "MSD_SE_YV_DAMAGE"), 1);
+    assert_eq!(
+        s.event_count(|e| matches!(e, Event::Damaged { yoshi: true, .. })),
+        1
+    );
+}
+
+#[test]
+fn out_of_health_mario_lies_down_for_good() {
+    let mut s = Scene::flat();
+    s.step(2);
+    for _ in 0..s.mario().params.mario.hp_max {
+        s.sim.mario.invincible = 0;
+        s.sim.mario.damage(Vec3::new(0.0, 0.0, 100.0), libsms::DamageKind::EnemyCommon);
+    }
+    assert_eq!(s.mario().health, 0);
+    assert!(s.mario().is_down());
+    s.step(600);
+    assert!(s.mario().is_down());
+    assert_eq!(s.event_count(|e| matches!(e, Event::Down)), 1);
+    assert_eq!(sound_count(&s, "MSD_SE_MV08B_DOWN_REACT_01"), 1);
+    s.sim.mario.invincible = 0;
+    assert!(!s.sim.mario.damage(Vec3::ZERO, libsms::DamageKind::EnemyCommon));
+}

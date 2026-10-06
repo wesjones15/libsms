@@ -479,6 +479,8 @@ impl Mario {
             ForeDown => self.downing(host, clip::SLIDE_FORE, 42.0),
             ShortBackDown => self.downing(host, "sdown", 88.0),
             ShortForeDown => self.downing(host, "shfdn", 80.0),
+            SafeBackDown => self.downing(host, "sfbdn", 200.0),
+            SafeForeDown => self.downing(host, "sffdn", 100.0),
             CatchDown => self.downing(host, "sldwn", 128.0),
             Slip => false,
             _ => false,

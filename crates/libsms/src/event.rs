@@ -42,6 +42,11 @@ pub enum Event {
     Eaten { id: u64 },
     /// Yoshi swallowed the enemy `id` off his tongue (`HIT_MESSAGE_UNKB`: `kill`).
     EnemyEaten { id: u64 },
+    /// A hit landed (`damageExec`): `damage` health lost, `health` left. `yoshi`: Mario was
+    /// riding, so Yoshi took it and threw him off instead. Hosts shake the camera and rumble.
+    Damaged { damage: u8, health: i16, yoshi: bool },
+    /// Out of health (`loserExec`): Mario lies down for good until the host restarts him.
+    Down,
     /// A sound the game starts at this point (`startSoundActor` and friends), by its
     /// `MSD_SE_*` name. Ids without the `0x800` bit are held sounds the game re-requests every
     /// frame while they last; hosts keep them alive rather than restarting them.

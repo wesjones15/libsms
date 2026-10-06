@@ -64,6 +64,9 @@ pub enum Status {
     ForeDown,
     ShortBackDown,
     ShortForeDown,
+    /// A stumble from a light hit (`SAFE_BACK_DOWN`, `mDownType` 0).
+    SafeBackDown,
+    SafeForeDown,
     CatchDown,
     // Jumping (type 0x080)
     Jump,
@@ -105,6 +108,8 @@ pub enum Status {
     HangJumping,
     /// Thrown off Yoshi (status 0x89C, `getOffYoshi(true)`): a jump that lands lying down.
     YoshiThrown,
+    /// Out of health (`DOWN_LOSER`, `loserDown`): lying down for good.
+    DownLoser,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,9 +130,9 @@ impl Status {
             Run | RotateL | RotateR | Turn | TurnEnd | Brake | WalkEnd | Slip | SlipFore
             | SlipBack | Catch | JumpSlip | LandSlip | SecJumpSlip | UTurnJumpSlip
             | UltraJumpSlip | BroadJumpSlip | BackDown | ForeDown | ShortBackDown
-            | ShortForeDown | CatchDown => Kind::Running,
+            | ShortForeDown | SafeBackDown | SafeForeDown | CatchDown => Kind::Running,
             CatchLost | Take | TakePose | Putting | Pitching => Kind::Action,
-            Hanging | Ascend | Descend | HangJumping => Kind::Special,
+            Hanging | Ascend | Descend | HangJumping | DownLoser => Kind::Special,
             _ => Kind::Jumping,
         }
     }
@@ -247,6 +252,12 @@ pub struct Mario {
     pub(crate) fludd_emitting: bool,
     pub(crate) hover_target_y: f32,
     pub(crate) in_water: bool,
+    /// `mHealth`, out of `mHPMax`.
+    pub health: i16,
+    /// `mInvincibilityFrames`: ticks left of the flashing after a hit.
+    pub invincible: i16,
+    /// Gold coins picked up.
+    pub coins: u32,
 
     pub ticks: u64,
 }
@@ -254,6 +265,7 @@ pub struct Mario {
 impl Mario {
     pub fn new(params: Params, anims: AnimTable, pos: Vec3, face_yaw: Angle) -> Mario {
         let anim = AnimState::new(clip::WAIT, &anims);
+        let health = params.mario.hp_max;
         Mario {
             params,
             anims,
@@ -316,6 +328,9 @@ impl Mario {
             fludd_emitting: false,
             hover_target_y: pos.y,
             in_water: false,
+            health,
+            invincible: 0,
+            coins: 0,
             ticks: 0,
         }
     }
@@ -367,6 +382,7 @@ impl Mario {
         self.check_take(host);
         self.state_machine_upper(pad);
         self.think_height(host);
+        self.think_params();
         self.gun_exec(host, pad);
         self.yoshi_movement(host);
         self.eggs_tick(host);

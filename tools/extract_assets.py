@@ -70,14 +70,17 @@ REQUIRED = [
     "scene/mapobj/eggyoshi_normal.bmd",
     "yoshi/yoshi_model.bmd",
     "enemy/hamukuri/default.bmd",
+    "scene/mapobj/coin.bmd",
+    "params_mario/dmghamukuri.prm",
 ]
 
 # Folders gathered from every stage archive into one: (prefix, destination). Matches
 # libsms::extract::SCENE_FOLDERS. monte* are the Piantas.
 SCENE_FOLDERS = [("monte", "npc"), ("hamukuri", "enemy")]
 # Single files gathered from the stage archives: (folder/name prefix, destination). The fruit
-# Mario picks up (TResetFruit, MapObjBall.cpp) and Yoshi's egg (TEggYoshi, Item.cpp).
-SCENE_FILES = [("mapobj/fruit", "scene"), ("mapobj/eggyoshi", "scene")]
+# Mario picks up (TResetFruit, MapObjBall.cpp), Yoshi's egg (TEggYoshi, Item.cpp) and the
+# coins (coin_data, MapObjInit.cpp).
+SCENE_FILES = [("mapobj/fruit", "scene"), ("mapobj/eggyoshi", "scene"), ("mapobj/coin", "scene")]
 
 GAME_IDS = {
     b"GMSJ01": "Japan (NTSC-J)",

@@ -8,6 +8,7 @@
 pub mod anim;
 pub mod assets;
 pub mod clock;
+pub mod damage;
 pub mod event;
 pub mod extract;
 pub mod fludd;
@@ -33,6 +34,7 @@ mod physics;
 pub use anim::{AnimState, AnimTable, ClipInfo, LoopMode};
 pub use assets::Assets;
 pub use clock::{FixedClock, TICK_DT, TICK_HZ};
+pub use damage::{Coin, DamageKind};
 pub use event::{Event, JumpKind, SoundCue, WaterEmit};
 pub use fludd::{Fludd, TriggerState};
 pub use fludd_anim::FluddLook;

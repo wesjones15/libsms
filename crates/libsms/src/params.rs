@@ -35,10 +35,10 @@ impl Field for u8 {
 /// Declares a parameter struct: `field: type = code_default, "mKeyInPrm"` (extra keys after
 /// the first are accepted aliases, for names the decomp got wrong).
 macro_rules! params {
-    ($(#[$m:meta])* $name:ident { $($field:ident : $ty:ty = $def:expr, $($key:literal),+ ;)* }) => {
+    ($(#[$m:meta])* $name:ident { $($(#[$fm:meta])* $field:ident : $ty:ty = $def:expr, $($key:literal),+ ;)* }) => {
         $(#[$m])*
         #[derive(Debug, Clone, PartialEq)]
-        pub struct $name { $(pub $field: $ty,)* }
+        pub struct $name { $($(#[$fm])* pub $field: $ty,)* }
 
         impl Default for $name {
             fn default() -> Self { Self { $($field: $def,)* } }
@@ -160,6 +160,26 @@ params! {
         hang_wall_movable_angle: f32 = 0.3, "mHangWallMovableAngle";
         hold_radius: f32 = 100.0, "mHoldRadius";
         throw_power: f32 = 2.0, "mThrowPower";
+        hp_max: i16 = 8, "mHPMax";
+    }
+}
+
+params! {
+    /// One `/Mario/Dmg*.prm` (`TMario::TEParams`, MarioInit.cpp): what a kind of hit does to
+    /// Mario (`damageExec`).
+    Damage {
+        damage: u8 = 1, "mDamage";
+        /// 0 a stumble (`SAFE_*_DOWN`), 1 a short fall, 2 a full fall, 3 no knock-back.
+        down_type: u8 = 1, "mDownType";
+        /// Bursts of FLUDD's water lost (`TWaterGun::damage`).
+        water_emit: u8 = 0, "mWaterEmit";
+        /// Rumble length.
+        motor: u8 = 25, "mMotor";
+        /// Knock-back speed at least this.
+        min_speed: f32 = 16.0, "mMinSpeed";
+        dirty: f32 = 0.0, "mDirty";
+        /// Ticks Mario can't be hurt again, flashing pink (`addDamageFog`).
+        invincible_time: i16 = 300, "mInvincibleTime";
     }
 }
 
@@ -371,6 +391,8 @@ pub struct Params {
     pub nozzles: [Nozzle; 6],
     /// By `mType` (`prmNames`, ModelWaterManager.cpp).
     pub water_particles: [WaterParticle; 17],
+    /// By [`crate::DamageKind`].
+    pub damage: [Damage; crate::damage::DamageKind::ALL.len()],
 }
 
 impl Default for Params {
@@ -399,6 +421,7 @@ impl Default for Params {
             slip_yoshi: slip,
             nozzles: Default::default(),
             water_particles: Default::default(),
+            damage: Default::default(),
         }
     }
 }
@@ -430,6 +453,22 @@ mod files {
         "watergun/nozzleyoshimouth.prm",
         "watergun/nozzletrghover.prm",
         "watergun/nozzletrgturbo.prm",
+    ];
+    /// Indexed by `DamageKind` (`TMario::TMario`'s `mDmgParams*`).
+    pub const DAMAGE: [&str; 13] = [
+        "dmgenemycommon.prm",
+        "dmghamukuri.prm",
+        "dmgnamekuri.prm",
+        "dmghinokuri.prm",
+        "dmgfire.prm",
+        "dmgbgtentacle.prm",
+        "dmgbosseel.prm",
+        "dmghanachanboss.prm",
+        "dmgpoihana.prm",
+        "dmgkiller.prm",
+        "dmglamptrapiron.prm",
+        "dmglamptrapspike.prm",
+        "dmgenemymario.prm",
     ];
     pub const WATER_PARTICLES: [&str; 17] = [
         "wtp00_normal.prm",
@@ -533,6 +572,11 @@ impl Params {
                 p.water_particles[i].apply(&prm);
             }
         }
+        for (i, path) in files::DAMAGE.iter().enumerate() {
+            if let Some(prm) = get(path) {
+                p.damage[i].apply(&prm);
+            }
+        }
         (p, loaded)
     }
 
@@ -543,6 +587,10 @@ impl Params {
 
     pub fn nozzle(&self, kind: NozzleKind) -> &Nozzle {
         &self.nozzles[kind as usize]
+    }
+
+    pub fn damage(&self, kind: crate::damage::DamageKind) -> &Damage {
+        &self.damage[kind as usize]
     }
 }
 
