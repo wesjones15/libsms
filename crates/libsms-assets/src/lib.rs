@@ -69,6 +69,8 @@ pub mod paths {
     pub const NOZZLE_HOVER: &str = "watergun2/hover_wg/hover_wg.bmd";
     pub const NOZZLE_ROCKET: &str = "watergun2/rocket_wg/rocket_wg.bmd";
     pub const NOZZLE_TURBO: &str = "watergun2/back_wg/back_wg.bmd";
+    /// The Yoshi slot's model (`nozzleBmdData[3]`): FLUDD's head folded away while Mario rides.
+    pub const NOZZLE_YOSHI: &str = "watergun2/dummy_wg/dummy_wg.bmd";
     /// Blinking (`marioAnimeTexPatternFilenames[0]`, MarioDraw.cpp).
     pub const WINK: &str = "btp/ma_wink_tx.btp";
 }

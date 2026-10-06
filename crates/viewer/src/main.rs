@@ -819,8 +819,15 @@ async fn main() {
     });
     let (mut cam_a, mut cam_p) = (std::f32::consts::PI, 0.35f32);
     let mut show_help = true;
-    let mut cam_target = mq(sim.mario.pos) + vec3(0.0, 1.0, 0.0);
+    let focus_yoshi = std::env::var("SMS_FOCUS").as_deref() == Ok("yoshi");
+    let mut cam_target = if focus_yoshi {
+        mq(sim.mario.yoshi.pos) + vec3(0.0, 1.3, 0.0)
+    } else {
+        mq(sim.mario.pos) + vec3(0.0, 1.0, 0.0)
+    };
     let mut frame_no = 0u32;
+    let prof = std::env::var("SMS_PROF").is_ok();
+    let mut prof_acc = [0.0f64; 5];
     // `SMS_CAM=yaw,pitch,dist` overrides the starting camera.
     let mut cam_dist = 6.0f32;
     if let Some(v) = std::env::var("SMS_CAM").ok().map(|s| {
@@ -940,6 +947,7 @@ async fn main() {
         }
 
         // Simulate. Water events are drained into droplets right after each frame's ticks.
+        let t0 = std::time::Instant::now();
         let ticks = sim.advance_observed(&mut world, &pad, camera_yaw, dt, |mario, world| {
             world.tick_fruits();
             world.tick_stus();
@@ -966,9 +974,16 @@ async fn main() {
             water.events.clear();
         }
 
+        let t1 = std::time::Instant::now();
         // Render.
         clear_background(Color::new(0.45, 0.65, 0.9, 1.0));
         let target = mq(sim.mario.prev_pos.lerp(sim.mario.pos, sim.alpha())) + vec3(0.0, 1.0, 0.0);
+        // `SMS_FOCUS=yoshi` follows Yoshi instead (for screenshots).
+        let target = if focus_yoshi {
+            mq(sim.mario.yoshi.pos) + vec3(0.0, 1.3, 0.0)
+        } else {
+            target
+        };
         cam_target = cam_target.lerp(target, (dt * 8.0).min(1.0));
         let eye = cam_target
             + vec3(
@@ -1079,10 +1094,12 @@ async fn main() {
             }
             _ => draw_mario(&sim, rig.as_ref(), sim.alpha()),
         }
+        let t2 = std::time::Instant::now();
         match water_view.as_mut() {
             Some(v) => v.draw(&water, &camera, sim.mario.juice_color()),
             None => draw_water_plain(&water),
         }
+        let t3 = std::time::Instant::now();
         set_default_camera();
         hud(&sim, &data_label, rig.as_ref(), show_help);
         if show_help {
@@ -1121,6 +1138,26 @@ async fn main() {
             }
         }
 
+        // `SMS_PROF=1` prints where each second's frame time went.
+        if prof {
+            prof_acc[0] += (t1 - t0).as_secs_f64();
+            prof_acc[1] += (t2 - t1).as_secs_f64();
+            prof_acc[2] += (t3 - t2).as_secs_f64();
+            prof_acc[3] += dt as f64;
+            prof_acc[4] += 1.0;
+            if prof_acc[3] >= 1.0 {
+                let n = prof_acc[4];
+                eprintln!(
+                    "prof: {:.0} fps  sim+audio {:.2} ms  scene {:.2} ms  water {:.2} ms  drops {}",
+                    n / prof_acc[3],
+                    prof_acc[0] / n * 1e3,
+                    prof_acc[1] / n * 1e3,
+                    prof_acc[2] / n * 1e3,
+                    water.particles.len()
+                );
+                prof_acc = [0.0; 5];
+            }
+        }
         next_frame().await;
     }
 }

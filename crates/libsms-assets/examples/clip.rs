@@ -13,7 +13,7 @@ fn main() {
             jt.name,
             jt.rotation,
             jt.translation,
-            s.map(|s| (s.rot, s.trans))
+            s.map(|s| (s.scale, s.rot, s.trans))
         );
     }
 }

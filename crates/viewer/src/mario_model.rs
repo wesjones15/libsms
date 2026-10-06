@@ -67,8 +67,8 @@ pub struct MarioModel {
     hands: [[Part; 2]; 2],
     cap: Part,
     fludd: Part,
-    /// Spray, Hover, Rocket, Turbo.
-    nozzles: [Option<Part>; 4],
+    /// Spray, Hover, Rocket, Turbo, Yoshi (`dummy_wg`).
+    nozzles: [Option<Part>; 5],
     /// Every `watergun2/*/*.bck` by file stem: FLUDD's and the nozzles' clips.
     fludd_clips: HashMap<String, Clip>,
     wink: Option<TexPattern>,
@@ -97,6 +97,7 @@ impl MarioModel {
             paths::NOZZLE_HOVER,
             paths::NOZZLE_ROCKET,
             paths::NOZZLE_TURBO,
+            paths::NOZZLE_YOSHI,
         ]
         .map(|p| Part::load(&mut r, dir, p).ok());
         // The nozzles ship an 8x8 stand-in for FLUDD's env-map texture; the game points it at
@@ -243,7 +244,8 @@ impl MarioModel {
             NozzleKind::Hover | NozzleKind::Underwater => Some(1),
             NozzleKind::Rocket => Some(2),
             NozzleKind::Turbo => Some(3),
-            NozzleKind::Yoshi => None,
+            // The water leaves Yoshi's mouth (`getEmitMtx`); FLUDD shows `dummy_wg`.
+            NozzleKind::Yoshi => Some(4),
         });
         let nozzle_at = fludd_base
             .zip(self.fludd.model.bmd.joint("nozzle_center"))
@@ -265,7 +267,7 @@ impl MarioModel {
                 };
                 let clip = l.nozzle_clip.and_then(|c| self.fludd_clips.get(c));
                 let js = part.posed(clip, l.nozzle_frame, extra);
-                if let Some(at) = nozzle_at {
+                if let Some(at) = nozzle_at.filter(|_| l.nozzle != NozzleKind::Yoshi) {
                     for name in ["null_G_muzzle", "null_G_muzzle2"] {
                         if let Some(j) = part.model.bmd.joint(name) {
                             let mm = at * js[j];

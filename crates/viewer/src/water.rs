@@ -57,6 +57,8 @@ pub struct WaterView {
     screen_indices: miniquad::BufferId,
     scratch: Vec<f32>,
     copy: Option<FrameCopy>,
+    /// The window's framebuffer, asked for once: `glGetIntegerv` waits for the GPU.
+    window_fb: Option<u32>,
 }
 
 const ACCUM_VERTEX: &str = "#version 100
@@ -258,6 +260,7 @@ impl WaterView {
             screen_indices,
             scratch: Vec::with_capacity(SLOTS * 4 * FLOATS),
             copy: None,
+            window_fb: None,
         })
     }
 
@@ -399,11 +402,15 @@ impl WaterView {
         // (`drawSilhouette`).
         ctx.begin_default_pass(PassAction::Nothing);
         ctx.apply_pipeline(&self.accum);
-        let mut window_fb = 0;
+        let window_fb = *self.window_fb.get_or_insert_with(|| {
+            let mut fb = 0;
+            // SAFETY: GL call on the main thread with the context current.
+            unsafe { gl::glGetIntegerv(gl::GL_FRAMEBUFFER_BINDING, &mut fb) };
+            fb as u32
+        });
         // SAFETY: GL calls on the main thread with the context current. The pipeline has set
         // the colour mask to alpha only, so the clear touches nothing else.
         unsafe {
-            gl::glGetIntegerv(gl::GL_FRAMEBUFFER_BINDING, &mut window_fb);
             gl::glClearColor(0.0, 0.0, 0.0, 0.0);
             gl::glClear(gl::GL_COLOR_BUFFER_BIT);
             gl::glDepthMask(gl::GL_FALSE as _);
@@ -423,7 +430,7 @@ impl WaterView {
         ctx.begin_pass(Some(copy_pass), PassAction::Nothing);
         // SAFETY: as above; the copy pass's framebuffer is bound for drawing.
         unsafe {
-            gl::glBindFramebuffer(gl::GL_READ_FRAMEBUFFER, window_fb as u32);
+            gl::glBindFramebuffer(gl::GL_READ_FRAMEBUFFER, window_fb);
             gl::glBlitFramebuffer(
                 0,
                 0,
