@@ -610,10 +610,12 @@ impl Mario {
             Status::BroadJump => {
                 self.forward_vel = j.broad_jump_force;
                 self.vel.y = j.broad_jump_force_y;
+                event = Some(JumpKind::Long);
             }
             Status::RotateBroadJump => {
                 self.forward_vel = j.rot_broad_jump_force;
                 self.vel.y = j.rot_broad_jump_force_y;
+                event = Some(JumpKind::Long);
             }
             Status::Rocket => {
                 // setStatusToJumping case ROCKET: a small initial pop, FLUDD does the rest.

@@ -114,10 +114,21 @@ impl SceneAudio {
         sys.player = mario.pos;
         for event in events {
             let name = match event {
-                // `TMario::soundProcess` handles forced jumps explicitly. Ordinary jump
-                // voices and takeoff/landing sounds are already in the animation tables.
-                Event::Jump(JumpKind::Forced) => {
-                    sys.mario_voice("MSD_SE_MV24_JUMP_SPECIAL_01");
+                // `TMario::setStatusToJumping` (MarioMove.cpp) starts the voice separately
+                // from the animation's takeoff effects. `.bas` alone is not enough.
+                Event::Jump(kind) => {
+                    let voice = match kind {
+                        JumpKind::Normal => "MSD_SE_MV21_JUMP_SMALL_01",
+                        JumpKind::Second | JumpKind::Wall | JumpKind::Long => {
+                            "MSD_SE_MV22_JUMP_MID_01"
+                        }
+                        JumpKind::Triple | JumpKind::Back | JumpKind::UTurn | JumpKind::Spin => {
+                            "MSD_SE_MV23_JUMP_LARGE_01"
+                        }
+                        JumpKind::Dive => "MSD_SE_MV13_ACTION_SMALL_01",
+                        JumpKind::Forced => "MSD_SE_MV24_JUMP_SPECIAL_01",
+                    };
+                    sys.mario_voice(voice);
                     continue;
                 }
                 // `TMario::hipAttacking` / `soundProcess` and `jumping` (MarioJump.cpp).
@@ -127,7 +138,10 @@ impl SceneAudio {
                 // The event does not retain impact speed, so use its hard-impact variant.
                 Event::WallBump => "MSD_SE_MA_WALL_COL_CMN_H",
                 // TNozzleTrigger::movement and TWaterGun's trigger setup (WaterGun.cpp).
-                Event::TriggerFired(NozzleKind::Rocket) => "MSD_SE_PO_ROCKET_TRIGGER",
+                Event::TriggerFired(NozzleKind::Rocket) => {
+                    sys.mario_voice("MSD_SE_MV24_JUMP_SPECIAL_01");
+                    "MSD_SE_PO_ROCKET_TRIGGER"
+                }
                 Event::TriggerFired(NozzleKind::Turbo) => "MSD_SE_PO_SNIPER_TRIGGER",
                 // TWaterGun::changeNozzle: front vs back selection sound.
                 Event::NozzleChanged(NozzleKind::Spray) => "MSD_SE_SY_SELECT_POMP",
@@ -317,6 +331,41 @@ mod tests {
         let assets = libsms::Assets::discover(None)?;
         let data = SoundData::load(&assets.dir).expect("extracted sound data");
         Some((assets, SoundSystem::new(Arc::new(data))))
+    }
+
+    #[test]
+    fn jump_events_render_voice_without_animation_or_music() {
+        let Some((assets, _)) = fixture() else {
+            return;
+        };
+        let data = Arc::new(SoundData::load(&assets.dir).unwrap());
+        let mario = Mario::new(assets.params, assets.anim_table, Vec3::ZERO, 0);
+        for kind in [
+            JumpKind::Normal,
+            JumpKind::Second,
+            JumpKind::Triple,
+            JumpKind::Wall,
+            JumpKind::Spin,
+            JumpKind::Back,
+            JumpKind::UTurn,
+            JumpKind::Long,
+            JumpKind::Dive,
+            JumpKind::Forced,
+        ] {
+            let mut sys = SoundSystem::new(data.clone());
+            let mut scene = SceneAudio::load(&assets.dir, &sys);
+            scene.events(&mut sys, &[Event::Jump(kind)], &mario);
+            assert!(sys.active_sounds() > 0, "no voice registered for {kind:?}");
+            let mut peak = 0.0f32;
+            let mut buffer = [0.0; 1600];
+            for _ in 0..30 {
+                sys.frame();
+                sys.render(&mut buffer, 24000.0);
+                assert!(buffer.iter().all(|v| v.is_finite()));
+                peak = peak.max(buffer.iter().map(|v| v.abs()).fold(0.0, f32::max));
+            }
+            assert!(peak > 0.001, "silent {kind:?} voice: {peak}");
+        }
     }
 
     #[test]
