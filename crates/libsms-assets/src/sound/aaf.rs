@@ -260,7 +260,8 @@ impl InitData {
                     // offsets to four `FxlineConfig_`s per scene.
                     let t = Be(chunk(word(i)?, word(i + 1)?)?);
                     let n = t.u32(0)? as usize;
-                    let sizes: Vec<u32> = (0..4).map(|k| t.u32(4 + k * 4)).collect::<Result<_, _>>()?;
+                    let sizes: Vec<u32> =
+                        (0..4).map(|k| t.u32(4 + k * 4)).collect::<Result<_, _>>()?;
                     for sc in 0..n {
                         let o = t.u32(0x14 + sc * 4)? as usize;
                         let mut lines = [FxLine {

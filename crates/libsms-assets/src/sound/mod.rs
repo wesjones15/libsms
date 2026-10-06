@@ -15,6 +15,7 @@ pub mod aaf;
 pub mod adpcm;
 pub mod bank;
 pub mod barc;
+pub mod bas;
 pub mod names;
 pub mod stream;
 
@@ -25,6 +26,7 @@ use std::sync::{Arc, Mutex};
 pub use aaf::{CategoryInfo, InitData, SoundInfo, SoundTable};
 pub use bank::{Ibnk, Inst, Osc, Perc, Program, Wave, WaveBank};
 pub use barc::SeqArchive;
+pub use bas::{AnimSound, AnimSoundTable};
 pub use names::SoundNames;
 pub use stream::Stream;
 

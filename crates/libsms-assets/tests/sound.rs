@@ -78,3 +78,33 @@ fn title_stream_decodes() {
     assert_eq!(s.header.sample_rate, 32000);
     assert_eq!(s.stereo.len(), s.header.samples as usize * 2);
 }
+
+#[test]
+fn every_anim_sound_table_parses_to_known_sounds() {
+    let Some(dir) = libsms::assets::find(None) else {
+        eprintln!("skipped: no assets/");
+        return;
+    };
+    let data = SoundData::load(&dir).expect("sound data");
+    let mut entries = 0;
+    for f in std::fs::read_dir(dir.join("bas")).expect("bas dir") {
+        let p = f.unwrap().path();
+        let t = libsms_assets::sound::AnimSoundTable::parse(&std::fs::read(&p).unwrap())
+            .unwrap_or_else(|e| panic!("{}: {e:?}", p.display()));
+        for s in &t.sounds {
+            assert!(
+                s.start_frame >= 0.0 && s.pitch > 0.0,
+                "{}: {s:?}",
+                p.display()
+            );
+            assert!(
+                data.init.sound_table.info(s.id).is_some(),
+                "{}: no sound {:#x}",
+                p.display(),
+                s.id
+            );
+        }
+        entries += t.sounds.len();
+    }
+    assert!(entries > 100, "{entries} entries");
+}
