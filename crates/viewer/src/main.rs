@@ -21,10 +21,12 @@
 mod j3d;
 mod mario_model;
 mod sound;
+mod water;
 
 use std::path::Path;
 
 use libsms::math::to_angle;
+use libsms::water::WaterManager;
 use libsms::{
     AnimTable, Event, GroundHit, Host, NozzleKind, Pad, Params, RoofHit, Sim, Status, SurfaceFlags,
     TICK_HZ, Vec2 as SV2, Vec3 as V3, WallHit, WaterEmit,
@@ -54,21 +56,13 @@ struct Ramp {
     color: Color,
 }
 
-struct Drop {
-    pos: V3,
-    vel: V3,
-    life: i32,
-}
-
 struct World {
     half: f32,
     blocks: Vec<Block>,
     ramps: Vec<Ramp>,
-    drops: Vec<Drop>,
     emits: Vec<WaterEmit>,
     sounds: Vec<Event>,
     log: Vec<String>,
-    seed: u32,
 }
 
 impl World {
@@ -121,57 +115,16 @@ impl World {
             half: 3000.0,
             blocks,
             ramps,
-            drops: Vec::new(),
             emits: Vec::new(),
             sounds: Vec::new(),
             log: Vec::new(),
-            seed: 0x1234_5678,
         }
-    }
-
-    fn rand(&mut self) -> f32 {
-        self.seed ^= self.seed << 13;
-        self.seed ^= self.seed >> 17;
-        self.seed ^= self.seed << 5;
-        (self.seed % 20_000) as f32 / 10_000.0 - 1.0
     }
 
     fn note(&mut self, s: String) {
         self.log.push(s);
         if self.log.len() > 6 {
             self.log.remove(0);
-        }
-    }
-
-    fn spawn_water(&mut self, w: &WaterEmit, mario_vel: V3) {
-        for _ in 0..w.count.min(8) {
-            let jitter = V3::new(self.rand(), self.rand(), self.rand()) * 0.03 * w.power;
-            self.drops.push(Drop {
-                pos: w.pos,
-                vel: w.dir * w.power + mario_vel * 0.125 + jitter,
-                life: 240,
-            });
-        }
-        if self.drops.len() > 4000 {
-            self.drops.drain(..self.drops.len() - 4000);
-        }
-    }
-
-    /// Droplets use the same conventions as Mario: `pos += vel / 4` per tick, light gravity.
-    fn step_drops(&mut self, ticks: u32) {
-        for _ in 0..ticks {
-            let mut drops = std::mem::take(&mut self.drops);
-            drops.retain_mut(|d| {
-                d.pos += d.vel * 0.25;
-                d.vel.y -= 0.3;
-                d.life -= 1;
-                let floor = self
-                    .ground(d.pos + V3::Y * 1.0)
-                    .map(|g| g.height)
-                    .unwrap_or(-1.0e9);
-                d.life > 0 && d.pos.y > floor
-            });
-            self.drops = drops;
         }
     }
 }
@@ -340,8 +293,17 @@ fn draw_world(w: &World) {
         );
         draw_line_3d(b2, vec3(r.x1 * S, h1 * S, r.z1 * S), BLACK);
     }
-    for d in &w.drops {
-        draw_sphere(mq(d.pos), 0.045, None, Color::new(0.45, 0.7, 1.0, 0.9));
+}
+
+/// Water without the disc's textures: plain spheres.
+fn draw_water_plain(water: &WaterManager) {
+    for p in &water.particles {
+        draw_sphere(
+            mq(p.pos),
+            (p.size * S * 0.5).clamp(0.02, 0.3),
+            None,
+            Color::new(0.45, 0.7, 1.0, 0.8),
+        );
     }
 }
 
@@ -683,6 +645,9 @@ async fn main() {
 
     let mut sim = mk();
     let mut world = World::course();
+    let mut water = WaterManager::new(&params);
+    let mut water_view = assets.as_ref().and_then(|a| water::WaterView::load(&a.dir));
+    let mut water_ticks = 0u32;
     let (mut cam_a, mut cam_p) = (std::f32::consts::PI, 0.35f32);
     let mut show_help = true;
     let mut cam_target = mq(sim.mario.pos) + vec3(0.0, 1.0, 0.0);
@@ -758,7 +723,7 @@ async fn main() {
         }
         if is_key_pressed(KeyCode::R) || sim.mario.pos.y < -2500.0 {
             sim = mk();
-            world.drops.clear();
+            water.particles.clear();
             if let Some(audio) = &mut audio {
                 audio.reset();
             }
@@ -809,12 +774,22 @@ async fn main() {
             }
             world.sounds.clear();
         });
-        let emits = std::mem::take(&mut world.emits);
-        let vel = V3::new(sim.mario.vel.x, sim.mario.vel.y, sim.mario.vel.z);
-        for e in &emits {
-            world.spawn_water(e, vel);
+        // FLUDD's water (`TModelWaterManager`): emitted every tick, moved once a frame.
+        for e in std::mem::take(&mut world.emits) {
+            water.emit(&e);
         }
-        world.step_drops(ticks);
+        water_ticks += ticks;
+        while water_ticks >= 4 {
+            water_ticks -= 4;
+            water.step(&world, sim.mario.pos);
+            if let Some(v) = water_view.as_mut() {
+                v.step(&water.events);
+            }
+            if let Some(audio) = &mut audio {
+                audio.water(&water.events);
+            }
+            water.events.clear();
+        }
 
         // Render.
         clear_background(Color::new(0.45, 0.65, 0.9, 1.0));
@@ -830,13 +805,14 @@ async fn main() {
             let to_units = |v: Vec3| V3::new(v.x, v.y, v.z) / S;
             audio.listener(to_units(eye), to_units(cam_target));
         }
-        set_camera(&Camera3D {
+        let camera = Camera3D {
             position: eye,
             target: cam_target,
             up: vec3(0.0, 1.0, 0.0),
             fovy: 0.9,
             ..Default::default()
-        });
+        };
+        set_camera(&camera);
         draw_world(&world);
         match (&mut mario_model, &rig) {
             (Some(model), Some(r)) => {
@@ -867,6 +843,10 @@ async fn main() {
                 }
             }
             _ => draw_mario(&sim, rig.as_ref(), sim.alpha()),
+        }
+        match water_view.as_mut() {
+            Some(v) => v.draw(&water, &camera),
+            None => draw_water_plain(&water),
         }
         set_default_camera();
         hud(&sim, &data_label, rig.as_ref(), show_help);
@@ -1001,6 +981,7 @@ mod tests {
         let mut w = World::course();
         let mut s = sim_on_course();
         s.mario.give_fludd();
+        let mut water = WaterManager::new(&s.mario.params);
         let spray = Pad {
             r_analog: 150,
             ..Pad::default()
@@ -1009,13 +990,14 @@ mod tests {
             s.advance(&mut w, &spray, i16::MIN, 1.0 / TICK_HZ as f32);
         }
         assert!(!w.emits.is_empty(), "no water events");
-        let vel = V3::ZERO;
         for e in std::mem::take(&mut w.emits) {
-            w.spawn_water(&e, vel);
+            water.emit(&e);
         }
-        assert!(!w.drops.is_empty());
-        w.step_drops(20);
+        assert!(!water.particles.is_empty());
+        for _ in 0..5 {
+            water.step(&w, s.mario.pos);
+        }
         // Droplets travel forward (+Z, Mario faces 0).
-        assert!(w.drops.iter().any(|d| d.pos.z > 100.0));
+        assert!(water.particles.iter().any(|d| d.pos.z > 100.0));
     }
 }

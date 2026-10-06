@@ -14,6 +14,7 @@ use std::{
 
 const MARIO: u64 = 0x4D41_5249;
 const FLUDD: u64 = 0x464C_5544;
+const WATER: u64 = 0x5741_5452;
 
 pub struct Audio {
     scene: SceneAudio,
@@ -258,6 +259,29 @@ impl Audio {
             self.scene.events(&mut sys, events, mario);
         }
     }
+    /// `TModelWaterManager`'s sounds for one frame of water: splashes on the ground
+    /// (`splashSound`, `MSD_SE_WT_GND`), drops into water, and stuck water drying up.
+    pub fn water(&mut self, events: &[libsms::water::WaterEvent]) {
+        use libsms::water::WaterEvent;
+        let mut sys = self.sys.lock().unwrap();
+        let mut dried = false;
+        for e in events {
+            match *e {
+                WaterEvent::SplashSound { pos, .. } => {
+                    sys.play("MSD_SE_WT_GND", Some(pos), WATER);
+                }
+                WaterEvent::IntoWater(pos) => {
+                    sys.play("MSD_SE_WT_INTO_WATER", Some(pos), WATER);
+                }
+                WaterEvent::DryUp(pos) if !dried => {
+                    dried = true;
+                    sys.play("MSD_SE_PO_WT_DRY_UP", Some(pos), WATER);
+                }
+                _ => {}
+            }
+        }
+    }
+
     pub fn listener(&self, eye: Vec3, target: Vec3) {
         if let Ok(mut sys) = self.sys.lock() {
             sys.set_listener(Mat4::look_at_rh(eye, target, Vec3::Y), eye);

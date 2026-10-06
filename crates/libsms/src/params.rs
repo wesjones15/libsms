@@ -268,6 +268,18 @@ params! {
     }
 }
 
+params! {
+    /// One `/Mario/WTPnn_*.prm` (TWaterParticleType, ModelWaterManager.cpp): how a kind of
+    /// FLUDD water particle falls, spreads and is drawn.
+    WaterParticle {
+        extension: f32 = 0.5, "mExtension";
+        magnify: f32 = 0.3, "mMagnify";
+        clean_size: f32 = 12.0, "mCleanSize";
+        gravity: f32 = -0.4, "mGravity";
+        alive: f32 = 255.0, "mAlive";
+    }
+}
+
 /// FLUDD nozzle slots, in the decomp's `TNozzleType` order (WaterGun.hpp).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(u8)]
@@ -323,6 +335,8 @@ pub struct Params {
     pub slip_water_ground: Slip,
     pub slip_water_slope: Slip,
     pub nozzles: [Nozzle; 6],
+    /// By `mType` (`prmNames`, ModelWaterManager.cpp).
+    pub water_particles: [WaterParticle; 17],
 }
 
 impl Default for Params {
@@ -347,6 +361,7 @@ impl Default for Params {
             slip_water_ground: slip.clone(),
             slip_water_slope: slip,
             nozzles: Default::default(),
+            water_particles: Default::default(),
         }
     }
 }
@@ -375,6 +390,25 @@ mod files {
         "watergun/nozzleyoshimouth.prm",
         "watergun/nozzletrghover.prm",
         "watergun/nozzletrgturbo.prm",
+    ];
+    pub const WATER_PARTICLES: [&str; 17] = [
+        "wtp00_normal.prm",
+        "wtp01_wide.prm",
+        "wtp02_bomb.prm",
+        "wtp03_trgrocket.prm",
+        "wtp04_hhover.prm",
+        "wtp05_sinper.prm",
+        "wtp06_yoshi.prm",
+        "wtp07_diving.prm",
+        "wtp08_bubble.prm",
+        "wtp09_parasol.prm",
+        "wtp10_back.prm",
+        "wtp11_sprinkler.prm",
+        "wtp12_yoshimouth.prm",
+        "wtp13_turbo.prm",
+        "wtp14_rocket.prm",
+        "wtp15_hover.prm",
+        "wtp16_sprocket.prm",
     ];
 }
 
@@ -442,6 +476,11 @@ impl Params {
         for (i, path) in files::NOZZLES.iter().enumerate() {
             if let Some(prm) = get(path) {
                 p.nozzles[i].apply(&prm);
+            }
+        }
+        for (i, path) in files::WATER_PARTICLES.iter().enumerate() {
+            if let Some(prm) = get(path) {
+                p.water_particles[i].apply(&prm);
             }
         }
         (p, loaded)

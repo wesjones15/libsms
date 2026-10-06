@@ -19,6 +19,7 @@ pub mod math;
 pub mod params;
 pub mod prm;
 pub mod skeleton;
+pub mod water;
 
 mod air;
 mod ground;
