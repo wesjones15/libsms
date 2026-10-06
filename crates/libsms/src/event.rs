@@ -24,6 +24,21 @@ pub enum Event {
     TriggerFired(NozzleKind),
     /// Mario fell into a void (no legal ground for too long).
     Fell,
+    /// A sound the game starts at this point (`startSoundActor` and friends), by its
+    /// `MSD_SE_*` name. Ids without the `0x800` bit are held sounds the game re-requests every
+    /// frame while they last; hosts keep them alive rather than restarting them.
+    Sound(SoundCue),
+}
+
+/// One `startSoundActor` / `startSoundActorWithInfo` call.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SoundCue {
+    /// `MSD_SE_*` name from MSound/SoundEffects.hpp.
+    pub name: &'static str,
+    pub pos: Vec3,
+    /// `startSoundActorWithInfo`'s value, which the sound's registered modulation curve turns
+    /// into pitch or volume (`JALSystem::processModFunc`).
+    pub info: Option<f32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,4 +70,13 @@ pub struct WaterEmit {
     pub attack: i16,
     pub hit_radius: f32,
     pub hit_height: f32,
+    /// Velocity the particles inherit from Mario: `mVel.xz * 0.125` (`getEmitPosDirSpeed`).
+    pub inherit: Vec3,
+    /// Particle size and the random spreads (`mSize`, `mSizeTremble`, `mDirTremble`,
+    /// `mPowTremble`), and which `/Mario/WaterParticle` type they are (`mType`).
+    pub size: f32,
+    pub size_tremble: f32,
+    pub dir_tremble: f32,
+    pub pow_tremble: f32,
+    pub particle_type: i16,
 }

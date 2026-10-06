@@ -211,6 +211,11 @@ pub struct Mario {
 
     pub fludd: Option<Fludd>,
     pub upper: UpperState,
+    /// The pumping arm layer (`M3UModelMario` slot 1): whether it is applied, its clip and
+    /// its frame controller (`getPumpFrame`).
+    pub(crate) upper_on: bool,
+    pub(crate) upper_clip: Option<crate::anim::ClipName>,
+    pub upper_ctrl: crate::anim::FrameCtrl,
     pub(crate) pump_cooldown: i32,
     pub(crate) dash_speed: f32,
     pub(crate) dash_timer: i32,
@@ -267,6 +272,12 @@ impl Mario {
             anim,
             fludd: None,
             upper: UpperState::Idle,
+            upper_on: false,
+            upper_clip: None,
+            upper_ctrl: crate::anim::FrameCtrl {
+                rate: 0.0,
+                ..crate::anim::FrameCtrl::new(AnimTable::FALLBACK)
+            },
             pump_cooldown: 0,
             dash_speed: 0.0,
             dash_timer: 0,
@@ -315,6 +326,12 @@ impl Mario {
         self.gun_exec(host, pad);
 
         self.anim.advance();
+        // `calcAnim`: the pumping arm, FLUDD's handles and nozzle clip.
+        self.add_upper();
+        self.fludd_calc_animation();
+        if let Some(f) = self.fludd.as_mut() {
+            f.nozzle_frame_update();
+        }
         self.pad_prev = *pad;
         for e in self.events.drain(..) {
             host.event(e);

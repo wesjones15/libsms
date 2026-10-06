@@ -35,6 +35,9 @@ struct Slot {
     gate: u16,
     /// Continuous nozzles: current output `0..=1` (`unk378`).
     amount: f32,
+    /// Continuous nozzles: the last rise in trigger pressure before scaling (`unk374`); the
+    /// Spray's air noise is pitched by it.
+    pressure: f32,
     /// Fractional particle accumulator (`unk37C`).
     emit_acc: f32,
     /// Trigger nozzles.
@@ -64,6 +67,21 @@ pub struct Fludd {
     /// 0 = Spray fitted, 1 = secondary nozzle fitted (`mSwitchToSecondNozzleProgress`).
     pub switch_progress: f32,
     switch_speed: f32,
+    /// FLUDD's handles: 1 = folded away, 0 = held out for pumping (`unk1CEC`). Water only
+    /// leaves once it reaches 0.
+    pub housed: f32,
+    /// Ticks to wait before folding the handles back (`unk1CFA`).
+    pub(crate) house_hold: i16,
+    /// FLUDD's body clip and frame (`calcAnimation`).
+    pub body_clip: crate::anim::ClipName,
+    pub body_frame: f32,
+    /// Each nozzle's clip state, by `NozzleKind`.
+    pub(crate) nozzle_anims: [crate::fludd_anim::NozzleAnim; 6],
+    /// Muzzles reported by the host, in Mario's model space, for `emitters_for`.
+    pub(crate) emitters: [Option<(Vec3, Vec3)>; 2],
+    pub(crate) emitters_for: NozzleKind,
+    /// Particles accepted this tick (`mIsEmitWater`).
+    pub emitted: u32,
 }
 
 impl Fludd {
@@ -79,6 +97,14 @@ impl Fludd {
             prop_speed: 0.0,
             switch_progress: 0.0,
             switch_speed: 0.0,
+            housed: 1.0,
+            house_hold: 0,
+            body_clip: crate::fludd_anim::body_clip::HOUSE,
+            body_frame: 0.0,
+            nozzle_anims: Default::default(),
+            emitters: [None; 2],
+            emitters_for: NozzleKind::Spray,
+            emitted: 0,
         }
     }
 
@@ -138,21 +164,45 @@ impl Fludd {
         }
         self.nozzle = to;
         self.slots[to as usize] = Slot::default();
+        self.nozzle_anims[to as usize].init(to);
         self.water = (used * p.nozzle(to).amount_max as f32) as i32;
     }
 
     /// `changeBackup` (X): start swapping between Spray and the second nozzle.
-    pub fn swap_nozzle(&mut self, p: &Params) {
+    /// Returns the selection sound it starts (`startSoundSystemSE`).
+    pub fn swap_nozzle(&mut self, p: &Params) -> Option<&'static str> {
+        let mut sound = None;
         if self.switch_progress == 0.0 {
+            sound = Some("MSD_SE_SY_SELECT_POMP_BACK");
             self.switch_speed = p.water_gun.change_speed;
         }
         if self.switch_progress == 1.0 {
+            sound = Some("MSD_SE_SY_SELECT_POMP");
             self.switch_speed = -p.water_gun.change_speed;
         }
+        sound
     }
 
     pub fn is_switching(&self) -> bool {
         self.switch_speed != 0.0
+    }
+
+    /// `isSwitchingToSecondaryNozzle`.
+    pub fn switching_to_second(&self) -> bool {
+        self.switch_speed > 0.0
+    }
+
+    /// `isSwitchingToSprayNozzle`.
+    pub fn switching_to_spray(&self) -> bool {
+        self.switch_speed < 0.0
+    }
+
+    /// The host-reported muzzle `index` for the fitted nozzle, in Mario's model space.
+    pub(crate) fn emitter(&self, index: usize) -> Option<(Vec3, Vec3)> {
+        if self.emitters_for != self.nozzle {
+            return None;
+        }
+        self.emitters.get(index).copied().flatten()
     }
 
     /// Refill the tank to the current nozzle's maximum.
@@ -160,8 +210,8 @@ impl Fludd {
         self.water = self.max_water(p);
     }
 
-    /// `TWaterGun::movement`: smoothing, propeller, nozzle swap progress.
-    fn movement(&mut self, p: &Params) {
+    /// `TWaterGun::movement`: smoothing, propeller, nozzle swap progress, nozzle clip.
+    fn movement(&mut self, p: &Params, table: &crate::anim::AnimTable) {
         if !self.can_spray(p) {
             self.tilt_target = [0, 0];
         }
@@ -198,6 +248,7 @@ impl Fludd {
                 self.switch_speed = 0.0;
             }
         }
+        self.nozzle_animation(table);
     }
 
     /// `rotateProp`.
@@ -284,7 +335,8 @@ impl Mario {
             return false;
         };
         let np = f.nozzle_params(&self.params);
-        !(self.status == Status::RocketLanding && np.rocket_type == 1)
+        crate::anim::pump_clip(self.anim.clip).is_some()
+            && !(self.status == Status::RocketLanding && np.rocket_type == 1)
             && !(f.nozzle.is_trigger() && f.trigger_state() == TriggerState::Dead)
             && !f.is_switching()
     }
@@ -313,20 +365,23 @@ impl Mario {
         match self.upper {
             UpperState::Pumping => {
                 if !self.check_pump_enable() {
+                    self.upper_ctrl.frame = 0.0;
                     self.upper = UpperState::Idle;
                 }
                 if r_level == 0.0 {
                     self.upper = UpperState::HoldingPump;
-                    self.pump_cooldown = 5;
+                    self.pump_cooldown = self.params.upper_body.pump_wait_time as i32;
                 }
             }
             UpperState::HoldingPump => {
                 if !self.check_pump_enable() {
+                    self.upper_ctrl.frame = 0.0;
                     self.upper = UpperState::Idle;
                 }
                 if self.pump_cooldown != 0 {
                     self.pump_cooldown -= 1;
                 } else {
+                    self.upper_ctrl.frame = 0.0;
                     self.upper = UpperState::Idle;
                 }
                 self.check_pumping(r_level);
@@ -395,6 +450,9 @@ impl Mario {
             return;
         }
         let r_level = lr_level(pad.r_analog, &self.params.controller);
+        if let Some(f) = self.fludd.as_mut() {
+            f.emitted = 0;
+        }
 
         self.nozzle_movement(host, r_level, pad);
 
@@ -402,12 +460,17 @@ impl Mario {
         if self.in_water {
             // TWaterGun::suck: standing in water refills at `suck_rate` x current pressure.
             let pressure = (r_level * 150.0) as i32;
+            let mut sucked = false;
             if let Some(f) = self.fludd.as_mut() {
                 let rate = (pressure as f32 * params_ptr.nozzle(f.nozzle).suck_rate) as i32;
                 if f.nozzle != NozzleKind::Yoshi && rate > 0 {
                     let max = f.max_water(&params_ptr);
                     f.water = (f.water + rate).min(max);
+                    sucked = f.water < max;
                 }
+            }
+            if sucked {
+                self.sound("MSD_SE_PO_SUCK_WATER_B", None);
             }
         }
         if self.upper == UpperState::Pumping {
@@ -415,19 +478,21 @@ impl Mario {
         }
 
         let x_edge = pad.x && !self.pad_prev.x;
-        if x_edge
-            && self.status != Status::BackJump
-            && let Some(f) = self.fludd.as_mut()
-        {
-            f.swap_nozzle(&params_ptr);
+        if x_edge && self.status != Status::BackJump {
+            let sound = self.fludd.as_mut().and_then(|f| f.swap_nozzle(&params_ptr));
+            if let Some(name) = sound {
+                self.sound(name, None);
+            }
         }
+        let anims = std::mem::take(&mut self.anims);
         if let Some(f) = self.fludd.as_mut() {
             let before = f.nozzle;
-            f.movement(&params_ptr);
+            f.movement(&params_ptr, &anims);
             if f.nozzle != before {
                 host.event(Event::NozzleChanged(f.nozzle));
             }
         }
+        self.anims = anims;
     }
 
     /// `TNozzleBase/Trigger/Deform::movement` for the fitted nozzle.
@@ -442,6 +507,7 @@ impl Mario {
         let np = p.nozzle(kind).clone();
         let water = f.water;
         let max_water = np.amount_max;
+        let (mut charging, mut fired) = (false, None);
 
         if kind.is_trigger() {
             let s = &mut f.slots[kind as usize];
@@ -465,6 +531,10 @@ impl Mario {
             }
             if can {
                 s.fill += 150.0 * r_level;
+                if s.state == TriggerState::Inactive && r_level > 0.0 {
+                    // The charging hiss, every tick it builds (`MSD_SE_SY_NEWP_AIR_TAME`).
+                    charging = true;
+                }
             }
             s.fill -= np.inside_pressure_dec;
             if s.fill < 0.0 {
@@ -476,6 +546,12 @@ impl Mario {
                     s.state = TriggerState::Active;
                     s.timer = np.trigger_time;
                     host.event(Event::TriggerFired(kind));
+                    // `unk38C`, set in `TWaterGun::init`; Hover has none.
+                    fired = match kind {
+                        NozzleKind::Rocket => Some("MSD_SE_PO_ROCKET_TRIGGER"),
+                        NozzleKind::Turbo => Some("MSD_SE_PO_SNIPER_TRIGGER"),
+                        _ => None,
+                    };
                 }
             }
             if s.state == TriggerState::Dead {
@@ -492,9 +568,13 @@ impl Mario {
                 let var1 = (256.0 * r_level * 150.0) as i32;
                 if !fades {
                     s.amount = var1 as f32 * 0.000_015_258_789;
+                    if var1 > s.gate as i32 {
+                        s.pressure = s.amount;
+                    }
                     s.gate = var1 as u16;
                 } else if var1 > s.gate as i32 {
                     s.amount = (var1 - s.gate as i32) as f32 * 0.000_015_258_789;
+                    s.pressure = s.amount;
                     s.gate = s.gate.wrapping_add(np.trigger_rate as u16);
                     if var1 < s.gate as i32 {
                         s.gate = var1 as u16;
@@ -505,7 +585,7 @@ impl Mario {
                 }
                 if kind == NozzleKind::Spray {
                     // TNozzleDeform::movement
-                    s.amount = (s.amount * 10.0).min(1.0);
+                    s.amount = (s.amount * np.emit_pow_scale).min(1.0);
                 }
             }
         }
@@ -518,6 +598,12 @@ impl Mario {
             (-np_base(&p, kind)).clamp(np_min(&p, kind), np_max(&p, kind))
         };
         s.gun_angle += (target - s.gun_angle) * np_chase(&p, kind);
+        if charging {
+            self.sound("MSD_SE_SY_NEWP_AIR_TAME", None);
+        }
+        if let Some(name) = fired {
+            self.sound(name, None);
+        }
     }
 
     /// `TWaterGun::emit` + the nozzle's `emit`: fires water and applies recoil.
@@ -525,19 +611,49 @@ impl Mario {
         let p = self.params.clone();
         let Some(f) = self.fludd.as_ref() else { return };
         let kind = f.nozzle;
-        if kind == NozzleKind::Yoshi {
+        // The handles have to be out first (`unk1CEC > 0` returns).
+        if kind == NozzleKind::Yoshi || f.housed > 0.0 {
             return;
         }
         for i in 0..Self::emitter_count(kind) {
             self.emit_one(host, kind, i, &p);
         }
+        let Some(f) = self.fludd.as_ref() else { return };
+        if f.water <= 0 {
+            return;
+        }
+        let s = &f.slots[kind as usize];
+        let (amount, pressure, emitted) = (s.amount, s.pressure, f.emitted);
+        // The held sounds `TWaterGun::emit` starts after the nozzle emits.
+        match kind {
+            NozzleKind::Spray => {
+                // The Spray case falls through into the Turbo one.
+                self.sound("MSD_SE_PO_NORMAL_NOZZLE_IMI", Some(pressure));
+                self.sound("MSD_SE_PO_WATER_HI", Some(amount));
+            }
+            NozzleKind::Turbo => self.sound("MSD_SE_PO_WATER_HI", Some(amount)),
+            NozzleKind::Underwater => self.sound("MSD_SE_PO_HOVER", None),
+            NozzleKind::Hover if emitted > 0 => self.sound("MSD_SE_PO_HOVER", None),
+            _ => {}
+        }
     }
 
     fn emit_one(&mut self, host: &mut dyn Host, kind: NozzleKind, index: usize, p: &Params) {
         let np = p.nozzle(kind).clone();
-        let dir = self.nozzle_pitch_dir(kind, index);
-        let pos = self.nozzle_pos(kind, index);
+        // `getEmitPosDirSpeed`: the drawn muzzle when the host reported it.
+        let (pos, dir) = match self.fludd.as_ref().and_then(|f| f.emitter(index)) {
+            Some((p, d)) => (
+                self.model_to_world(p),
+                self.rotate_model(d).try_normalize().unwrap_or(Vec3::Z),
+            ),
+            None => (
+                self.nozzle_pos(kind, index),
+                self.nozzle_pitch_dir(kind, index),
+            ),
+        };
         let face = self.face_yaw;
+        let inherit = Vec3::new(self.vel.x * 0.125, 0.0, self.vel.z * 0.125);
+        let (mut size, mut dir_tremble) = (np.size, np.dir_tremble);
 
         let (count, attack, power, reaction);
         {
@@ -579,6 +695,18 @@ impl Mario {
                 attack = (a * (np.attack - np.attack_min) as f32 + np.attack_min as f32) as i16;
                 power = a * (np.emit_pow - np.emit_pow_min) + np.emit_pow_min;
                 reaction = a * (np.reaction_pow - np.reaction_pow_min) + np.reaction_pow_min;
+                dir_tremble = a * (np.dir_tremble - np.dir_tremble_min) + np.dir_tremble_min;
+                // Size grows with pressure between `mSizeMinPressure` and `mSizeMaxPressure`.
+                // The decomp's `(min - a) / (max - a)` is negative inside the range (the
+                // function is NonMatching); this is the plain ramp.
+                let t = if a < np.size_min_pressure {
+                    0.0
+                } else if a < np.size_max_pressure {
+                    (a - np.size_min_pressure) / (np.size_max_pressure - np.size_min_pressure)
+                } else {
+                    1.0
+                };
+                size = t * (np.size - np.size_min) + np.size_min;
             } else {
                 // TNozzleBase::emit
                 let a = s.amount;
@@ -598,6 +726,7 @@ impl Mario {
             }
             // emitRequest accepts every particle in this model.
             f.water = (f.water - count * np.dec_rate as i32).max(0);
+            f.emitted += count as u32;
         }
 
         host.event(Event::WaterEmit(WaterEmit {
@@ -609,6 +738,12 @@ impl Mario {
             attack,
             hit_radius: np.hit_radius,
             hit_height: np.hit_height,
+            inherit,
+            size,
+            size_tremble: np.size_tremble,
+            dir_tremble,
+            pow_tremble: np.pow_tremble,
+            particle_type: np.particle_type,
         }));
 
         // Recoil: `addVelocity(reaction * -(dir . forward) * power)`; vertical reaction pushes

@@ -49,11 +49,13 @@ impl Assets {
         let skeleton = std::fs::read(dir.join("bmd/ma_mdl1.bmd"))
             .ok()
             .and_then(|b| Skeleton::from_bmd(&b));
+        let mut anim_table = AnimTable::from_dir(&dir.join("bck"));
+        crate::fludd_anim::insert_fludd_clips(&mut anim_table, &dir.join("watergun2"));
         Assets {
             dir: dir.to_path_buf(),
             params,
             prm_files,
-            anim_table: AnimTable::from_dir(&dir.join("bck")),
+            anim_table,
             clips: ClipLibrary::from_dir(&dir.join("bck")),
             skeleton,
         }

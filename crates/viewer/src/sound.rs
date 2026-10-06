@@ -3,7 +3,7 @@
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use glam::{Mat4, Vec3};
-use libsms::{Event, JumpKind, Mario, NozzleKind};
+use libsms::{Event, JumpKind, Mario, NozzleKind, SoundCue};
 use libsms_assets::sound::{AnimSoundTable, SoundData};
 use libsms_audio::{SoundHandle, SoundSystem, animation::AnimationPlayer};
 use std::{
@@ -26,7 +26,8 @@ struct SceneAudio {
     tables: HashMap<String, AnimSoundTable>,
     animation: AnimationPlayer,
     clip: Option<&'static str>,
-    water: Option<SoundHandle>,
+    /// Held sounds (ids without `0x800`) the sim re-requests each tick, by name.
+    held: HashMap<&'static str, SoundHandle>,
     tracks: Vec<(String, u32)>,
     track: Option<usize>,
     ticks: u32,
@@ -72,7 +73,7 @@ impl SceneAudio {
             tables,
             animation: AnimationPlayer::default(),
             clip: None,
-            water: None,
+            held: HashMap::new(),
             tracks,
             track: None,
             ticks: 0,
@@ -81,7 +82,7 @@ impl SceneAudio {
 
     fn reset(&mut self, sys: &mut SoundSystem) {
         self.animation.stop(sys);
-        if let Some(h) = self.water.take() {
+        for (_, h) in self.held.drain() {
             sys.stop(h, 0);
         }
         self.clip = None;
@@ -137,38 +138,55 @@ impl SceneAudio {
                 // `MSound::getWallSound`: the sample course uses common hard walls.
                 // The event does not retain impact speed, so use its hard-impact variant.
                 Event::WallBump => "MSD_SE_MA_WALL_COL_CMN_H",
-                // TNozzleTrigger::movement and TWaterGun's trigger setup (WaterGun.cpp).
+                // The rocket launch call; the trigger's own sound comes as a `Sound` event.
                 Event::TriggerFired(NozzleKind::Rocket) => {
                     sys.mario_voice("MSD_SE_MV24_JUMP_SPECIAL_01");
-                    "MSD_SE_PO_ROCKET_TRIGGER"
+                    continue;
                 }
-                Event::TriggerFired(NozzleKind::Turbo) => "MSD_SE_PO_SNIPER_TRIGGER",
-                // TWaterGun::changeNozzle: front vs back selection sound.
-                Event::NozzleChanged(NozzleKind::Spray) => "MSD_SE_SY_SELECT_POMP",
-                Event::NozzleChanged(_) => "MSD_SE_SY_SELECT_POMP_BACK",
-                Event::WaterEmit(w) => {
-                    // TWaterGun::emit: held sounds, refreshed while water is emitted.
-                    let name = match w.nozzle {
-                        NozzleKind::Spray => "MSD_SE_PO_NORMAL_NOZZLE_IMI",
-                        NozzleKind::Hover => "MSD_SE_PO_HOVER",
-                        NozzleKind::Turbo => "MSD_SE_PO_WATER_HI",
-                        _ => continue,
-                    };
-                    let id = sys.id(name);
-                    // Different nozzle loops must not inherit the previous handle.
-                    if self.water.is_some_and(|h| sys.sound_id(h) != id)
-                        && let Some(h) = self.water.take()
-                    {
-                        sys.stop(h, 0);
-                    }
-                    if !self.water.is_some_and(|h| sys.refresh(h, w.pos)) {
-                        self.water = sys.play(name, Some(w.pos), FLUDD);
-                    }
+                // The sim's `startSoundActor` points (FLUDD's water, triggers, pumping,
+                // nozzle selection).
+                Event::Sound(cue) => {
+                    self.cue(sys, cue);
                     continue;
                 }
                 _ => continue,
             };
             sys.play(name, Some(mario.pos), MARIO);
+        }
+    }
+
+    /// One `startSoundActor(WithInfo)`. Held sounds keep their handle while re-requested
+    /// (the game requests them once a frame; the sim reports every tick).
+    fn cue(&mut self, sys: &mut SoundSystem, cue: &SoundCue) {
+        let Some(id) = sys.id(cue.name) else {
+            return;
+        };
+        if id & 0xC00 != 0 {
+            match cue.info {
+                Some(v) => sys.play_with_info(cue.name, Some(cue.pos), FLUDD, v),
+                None => sys.play(cue.name, Some(cue.pos), FLUDD),
+            };
+            return;
+        }
+        if let Some(&h) = self.held.get(cue.name)
+            && sys.refresh(h, cue.pos)
+        {
+            if let Some(v) = cue.info {
+                sys.apply_info(h, cue.name, v);
+            }
+            return;
+        }
+        let h = match cue.info {
+            Some(v) => sys.play_with_info(cue.name, Some(cue.pos), FLUDD, v),
+            None => sys.play(cue.name, Some(cue.pos), FLUDD),
+        };
+        match h {
+            Some(h) => {
+                self.held.insert(cue.name, h);
+            }
+            None => {
+                self.held.remove(cue.name);
+            }
         }
     }
 
@@ -401,24 +419,22 @@ mod tests {
         };
         let mut scene = SceneAudio::load(&assets.dir, &sys);
         let mario = Mario::new(assets.params, assets.anim_table, Vec3::ZERO, 0);
-        let event = Event::WaterEmit(libsms::WaterEmit {
-            nozzle: NozzleKind::Hover,
+        let event = Event::Sound(SoundCue {
+            name: "MSD_SE_PO_HOVER",
             pos: Vec3::ZERO,
-            dir: Vec3::Y,
-            power: 1.0,
-            count: 1,
-            attack: 0,
-            hit_radius: 0.0,
-            hit_height: 0.0,
+            info: None,
         });
         scene.events(&mut sys, &[event], &mario);
-        let handle = scene.water.expect("hover sound registered");
+        let handle = *scene
+            .held
+            .get("MSD_SE_PO_HOVER")
+            .expect("hover sound registered");
         for _ in 0..8 {
             scene.events(&mut sys, &[event], &mario);
         }
         assert_eq!(
-            scene.water,
-            Some(handle),
+            scene.held.get("MSD_SE_PO_HOVER"),
+            Some(&handle),
             "repeated emission restarted sound"
         );
         let mut buffer = [0.0; 1600];
@@ -427,7 +443,7 @@ mod tests {
             sys.frame();
             sys.render(&mut buffer, 24000.0);
         }
-        assert_eq!(scene.water, Some(handle));
+        assert_eq!(scene.held.get("MSD_SE_PO_HOVER"), Some(&handle));
         for _ in 0..20 {
             sys.frame();
             sys.render(&mut buffer, 24000.0);

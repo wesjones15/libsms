@@ -729,6 +729,34 @@ impl SoundSystem {
         self.play_se(sid, pos, owner)
     }
 
+    /// `MSoundSE::startSoundActorWithInfo`: a gated start, then the sound's registered
+    /// curves applied to `info` (`JALSystem::gateCheckFunc` / `processModFunc`).
+    pub fn play_with_info(
+        &mut self,
+        name: &str,
+        pos: Option<Vec3>,
+        owner: u64,
+        info: f32,
+    ) -> Option<SoundHandle> {
+        if crate::modse::mods_for(name).any(|m| m.gated(info)) {
+            return None;
+        }
+        let h = self.play(name, pos, owner)?;
+        self.apply_info(h, name, info);
+        Some(h)
+    }
+
+    /// `processModFunc`: the curves of `name` at `info`, on layer 0.
+    pub fn apply_info(&mut self, h: SoundHandle, name: &str, info: f32) {
+        for m in crate::modse::mods_for(name) {
+            let v = m.value(info);
+            match m.target {
+                crate::modse::Target::Volume => self.set_volume(h, v, 0, 0),
+                crate::modse::Target::Pitch => self.set_pitch(h, v, 0, 0),
+            }
+        }
+    }
+
     fn handle(&self, slot: usize) -> SoundHandle {
         SoundHandle {
             slot,

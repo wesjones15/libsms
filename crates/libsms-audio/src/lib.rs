@@ -9,6 +9,7 @@
 //! - [`osc`]: envelopes and LFOs (JASOscillator.cpp).
 //! - [`jai`]: the game layer (JAInterface + MSound): sound effects through the SE sequence,
 //!   music, the title stream, Mario's voice. Hosts use [`SoundSystem`].
+//! - [`modse`]: per-sound volume/pitch curves driven by a game value (JALModSe.cpp).
 //! - [`animation`]: `.bas` cue timing, held sound windows, loop/direction flags and
 //!   animation-change cleanup. Hosts sample [`animation::AnimationPlayer`] each sim tick.
 //!
@@ -24,6 +25,7 @@ mod channel;
 mod dsp;
 pub mod engine;
 pub mod jai;
+pub mod modse;
 pub mod osc;
 mod track;
 

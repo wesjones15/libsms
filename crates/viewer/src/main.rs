@@ -280,7 +280,7 @@ impl Host for World {
             Event::NozzleChanged(n) => self.note(format!("nozzle: {n:?}")),
             Event::Fell => {}
             Event::WaterEmit(w) => self.emits.push(w),
-            Event::Land { .. } => {}
+            Event::Land { .. } | Event::Sound(_) => {}
         }
     }
 }
@@ -747,11 +747,15 @@ async fn main() {
         };
 
         // `--demo` replays a scripted loop (run, jump, dive, pound, spray) instead of the keys.
-        let pad = if demo {
+        let mut pad = if demo {
             demo_pad(get_time() as f32)
         } else {
             pad
         };
+        // `SMS_R=<0-255>` holds the trigger (for screenshots of spraying).
+        if let Some(r) = std::env::var("SMS_R").ok().and_then(|v| v.parse().ok()) {
+            pad.r_analog = r;
+        }
         if is_key_pressed(KeyCode::R) || sim.mario.pos.y < -2500.0 {
             sim = mk();
             world.drops.clear();
@@ -782,7 +786,11 @@ async fn main() {
             ] {
                 if is_key_pressed(key) {
                     if f.nozzle != n {
-                        world.sounds.push(Event::NozzleChanged(n));
+                        world.sounds.push(Event::Sound(libsms::SoundCue {
+                            name: "MSD_SE_SY_SELECT_POMP",
+                            pos: sim.mario.pos,
+                            info: None,
+                        }));
                     }
                     f.change_nozzle(n, false, &p);
                     f.refill(&p);
@@ -833,10 +841,13 @@ async fn main() {
         match (&mut mario_model, &rig) {
             (Some(model), Some(r)) => {
                 let m = &sim.mario;
-                let joints = match r.clips.get(m.anim.clip) {
-                    Some(clip) => r.skeleton.pose(clip, m.anim.frame),
-                    None => r.skeleton.bind_world(),
-                };
+                // The body clip, with the pumping arm over the chest while pumping.
+                let upper = m
+                    .upper_layer()
+                    .and_then(|(c, f)| Some((r.clips.get(c)?, f, r.skeleton.find("jnt_chest")?)));
+                let joints = r
+                    .skeleton
+                    .pose_layered(r.clips.get(m.anim.clip).map(|c| (c, m.anim.frame)), upper);
                 let p = mq(m.prev_pos.lerp(m.pos, sim.alpha()));
                 let yaw = m.model_yaw as f32 * std::f32::consts::PI / 32768.0;
                 let root = mario_model::root_matrix(::glam::Vec3::new(p.x, p.y, p.z), yaw, S);
@@ -849,7 +860,11 @@ async fn main() {
                     10000.0,
                 );
                 draw_shadow(&sim, sim.alpha());
-                model.draw(&sim, &joints, root, view, proj, get_time() as f32);
+                let muzzles = model.draw(&sim, &joints, root, view, proj, get_time() as f32);
+                if let Some(f) = &sim.mario.fludd {
+                    let kind = f.nozzle;
+                    sim.mario.set_emitters(kind, &muzzles);
+                }
             }
             _ => draw_mario(&sim, rig.as_ref(), sim.alpha()),
         }

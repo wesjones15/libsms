@@ -93,7 +93,11 @@ impl AnimTable {
     }
 
     pub fn get(&self, name: &str) -> ClipInfo {
-        self.clips.get(name).copied().unwrap_or(Self::FALLBACK)
+        self.clips
+            .get(name)
+            .copied()
+            .or_else(|| crate::fludd_anim::default_info(name))
+            .unwrap_or(Self::FALLBACK)
     }
 
     /// Reads the length and loop mode out of a BCK file (`J3D1bck1`, first chunk `ANK1`).
@@ -212,6 +216,126 @@ impl AnimState {
     }
 }
 
+/// The upper-body clip Mario pumps FLUDD with over each body clip (`TMarioAnimeData::unk2`,
+/// `gMarioAnimeData` in Player/MarioDraw.cpp). `None` is the table's 200: no pumping in that
+/// clip (`isPumpOK`).
+pub fn pump_clip(body: &str) -> Option<ClipName> {
+    Some(match body {
+        "hang" | "rope_hgwat" | "fence_move_down" => "hgpmp",
+        "fence_wait" | "fence_move_l" | "fence_move_r" | "fence_move_up" => "fepmp",
+        "float" | "paddle_end" | "paddle_start" | "paddle_to_wait" | "swim" | "swim_damage"
+        | "swim_down" | "swim_start" | "swim_to_wait" | "swim_wait" | "wait_to_paddle"
+        | "wait_to_swim" => "swpmp",
+        "2jmed" | "2jmp1" | "2jmp2" | "brake" | "brend" | "broad_jump" | "damage_wait"
+        | "damage_wait_start" | "dive_land" | "dive_wait" | "fepmp" | "giant_rolling" | "hipat"
+        | "hipsr" | "hot_wait" | "jmped" | "jump" | "jump_rolling" | "laend" | "land" | "pivot"
+        | "ride_shell_wait" | "roll" | "roll_jump" | "rope_run" | "rope_swait" | "rope_wait"
+        | "rope_walk" | "rope_wtosw" | "rope_wtosw_r" | "run1" | "run2" | "sink_down"
+        | "sinking" | "spin_p" | "sqend" | "sqsta" | "sqwat" | "sstep" | "step1" | "step2"
+        | "step3" | "swait" | "swlkl" | "swlkr" | "swpmp" | "t_wait" | "tjmp1" | "tjmp2"
+        | "trned" | "turbo_dash" | "turn" | "wait" | "walk" | "wjmp" => "pump",
+        _ => return None,
+    })
+}
+
+/// A frame controller driven by explicit rates (`J3DFrameCtrl`, J3DAnimation.cpp): the upper
+/// body layer and FLUDD's clips, whose rates the game sets directly instead of through
+/// `setAnimation`'s `rate * 0.5`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FrameCtrl {
+    pub mode: LoopMode,
+    pub end: f32,
+    pub frame: f32,
+    pub rate: f32,
+    /// `STATE_COMPLETED_ONCE | STATE_LOOPED_ONCE` from the last update.
+    pub done: bool,
+}
+
+impl FrameCtrl {
+    /// `J3DFrameCtrl::init(end)` with the clip's own attribute: frame 0, rate 1.
+    pub fn new(info: ClipInfo) -> FrameCtrl {
+        FrameCtrl {
+            mode: info.mode,
+            end: info.frames,
+            frame: 0.0,
+            rate: 1.0,
+            done: false,
+        }
+    }
+
+    /// `J3DFrameCtrl::update`.
+    pub fn update(&mut self) {
+        self.done = false;
+        self.frame += self.rate;
+        let (start, end) = (0.0, self.end);
+        match self.mode {
+            LoopMode::Once | LoopMode::OnceReset => {
+                let reset = self.mode == LoopMode::OnceReset;
+                if self.frame < start {
+                    self.frame = start;
+                    self.rate = 0.0;
+                    self.done = true;
+                }
+                if self.frame >= end {
+                    self.frame = if reset { start } else { end - 0.001 };
+                    self.rate = 0.0;
+                    self.done = true;
+                }
+            }
+            LoopMode::Loop => {
+                if end > start {
+                    while self.frame < start {
+                        self.done = true;
+                        self.frame += end - start;
+                    }
+                    while self.frame >= end {
+                        self.done = true;
+                        self.frame -= end - start;
+                    }
+                }
+            }
+            LoopMode::MirrorOnce => {
+                if self.frame >= end {
+                    self.frame = end - 0.001;
+                    self.rate = -self.rate;
+                }
+                if self.frame < start {
+                    self.frame = start;
+                    self.rate = 0.0;
+                    self.done = true;
+                }
+            }
+            LoopMode::MirrorLoop => {
+                if self.frame >= end {
+                    self.frame = end - 0.001;
+                    self.rate = -self.rate;
+                }
+                if self.frame < start {
+                    self.frame = start;
+                    self.rate = -self.rate;
+                    self.done = true;
+                }
+            }
+        }
+    }
+
+    /// `J3DFrameCtrl::checkPass` for the next update (once and ping-pong attributes).
+    pub fn will_pass(&self, mark: f32) -> bool {
+        let cur = self.frame;
+        let next = (self.frame + self.rate).clamp(0.0, (self.end - 0.001).max(0.0));
+        if cur <= next {
+            cur <= mark && mark < next
+        } else {
+            next <= mark && mark < cur
+        }
+    }
+
+    /// The "finished" test the nozzles use: completed or looped, or within 0.1 of the end.
+    pub fn finished(&self) -> bool {
+        self.done || self.frame > self.end - 0.1
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -269,6 +393,39 @@ mod tests {
         assert_eq!(a.rate, 2.0);
         a.set("loop", 1.0, &t);
         assert_eq!(a.frame, 0.0);
+    }
+
+    #[test]
+    fn ping_pong_loop_bounces_and_once_holds() {
+        let mut c = FrameCtrl::new(ClipInfo {
+            frames: 10.0,
+            mode: LoopMode::MirrorLoop,
+        });
+        c.rate = 4.0;
+        for _ in 0..3 {
+            c.update();
+        }
+        assert!(c.rate < 0.0 && c.frame < 10.0, "{c:?}");
+        for _ in 0..3 {
+            c.update();
+        }
+        assert!(c.rate > 0.0 && c.frame == 0.0 && c.done, "{c:?}");
+        let mut o = FrameCtrl::new(ClipInfo {
+            frames: 5.0,
+            mode: LoopMode::Once,
+        });
+        for _ in 0..10 {
+            o.update();
+        }
+        assert!(o.finished() && o.rate == 0.0);
+    }
+
+    #[test]
+    fn pump_clips_follow_the_anime_table() {
+        assert_eq!(pump_clip("wait"), Some("pump"));
+        assert_eq!(pump_clip("hang"), Some("hgpmp"));
+        assert_eq!(pump_clip("swim"), Some("swpmp"));
+        assert_eq!(pump_clip("sldct"), None);
     }
 
     #[test]

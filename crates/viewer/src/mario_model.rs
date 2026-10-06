@@ -1,12 +1,14 @@
 //! Mario as the game draws him, from the user's extracted `mario.szs`: the body skinned by the
 //! clip the sim is playing, the hand models `changeHand` picks per clip, the cap on `M_head`
 //! (`TMarioCap`), FLUDD on `jnt_chest` and the current nozzle on FLUDD's `nozzle_center`
-//! (`TWaterGun::init`, WaterGun.cpp), and the eyes' blink pattern.
+//! (`TWaterGun::init`, WaterGun.cpp), and the eyes' blink pattern. FLUDD's and the nozzle's
+//! clips come from the sim (`Mario::fludd_look`); the nozzle joints get the game's aiming
+//! callbacks, and the posed muzzles go back to the sim so water leaves the drawn nozzle.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use glam::{Mat4, Vec3};
-use libsms::mario::UpperState;
 use libsms::{Clip, NozzleKind, Sim};
 use libsms_assets::btp::TexPattern;
 use libsms_assets::mario::{BODY_HAND_SHAPES, HIDDEN_SHAPE, Hands, SHIRT_SHAPE, hands_for_clip};
@@ -29,15 +31,24 @@ impl Part {
     }
 
     /// Model-space joint matrices with `clip` at `frame`; joints it doesn't animate keep
-    /// their bind transform.
-    fn posed(&self, clip: Option<&Clip>, frame: f32) -> Vec<Mat4> {
+    /// their bind transform. `extra` adds a joint callback's rotation after the local
+    /// transform (`MTXConcat(J3DSys::mCurrentMtx, rot)`).
+    fn posed(
+        &self,
+        clip: Option<&Clip>,
+        frame: f32,
+        extra: impl Fn(&str) -> Option<Mat4>,
+    ) -> Vec<Mat4> {
         let b = &self.model.bmd;
         let mut out: Vec<Mat4> = Vec::with_capacity(b.joints.len());
         for (j, jt) in b.joints.iter().enumerate() {
-            let local = match clip.and_then(|c| c.sample(j, frame)) {
+            let mut local = match clip.and_then(|c| c.sample(j, frame)) {
                 Some(s) => libsms_assets::pose::srt_matrix(s.scale, s.rot, s.trans),
                 None => libsms_assets::pose::srt_matrix(jt.scale, jt.rotation, jt.translation),
             };
+            if let Some(r) = extra(&jt.name) {
+                local *= r;
+            }
             out.push(match jt.parent {
                 Some(p) if p < out.len() => out[p] * local,
                 _ => local,
@@ -58,12 +69,8 @@ pub struct MarioModel {
     fludd: Part,
     /// Spray, Hover, Rocket, Turbo.
     nozzles: [Option<Part>; 4],
-    /// FLUDD's handles folded away (`wg_house`) and held for pumping (`wg_pump`).
-    fludd_house: Option<Clip>,
-    fludd_pump: Option<Clip>,
-    /// `TWaterGun::unk1CEC`: 1 = handles fully housed.
-    housed: f32,
-    last_time: f32,
+    /// Every `watergun2/*/*.bck` by file stem: FLUDD's and the nozzles' clips.
+    fludd_clips: HashMap<String, Clip>,
     wink: Option<TexPattern>,
     eye_materials: Vec<usize>,
     hand_joints: [Option<usize>; 2],
@@ -105,11 +112,27 @@ impl MarioModel {
                 }
             }
         }
-        let clip = |name: &str| {
-            std::fs::read(dir.join(format!("watergun2/body/{name}.bck")))
-                .ok()
-                .and_then(|d| Clip::parse(&d))
-        };
+        let mut fludd_clips = HashMap::new();
+        for folder in std::fs::read_dir(dir.join("watergun2"))
+            .into_iter()
+            .flatten()
+            .flatten()
+        {
+            for f in std::fs::read_dir(folder.path())
+                .into_iter()
+                .flatten()
+                .flatten()
+            {
+                let path = f.path();
+                if path.extension().and_then(|e| e.to_str()) != Some("bck") {
+                    continue;
+                }
+                let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+                if let Some(c) = std::fs::read(&path).ok().and_then(|d| Clip::parse(&d)) {
+                    fludd_clips.insert(stem.to_owned(), c);
+                }
+            }
+        }
         let wink = std::fs::read(dir.join(paths::WINK))
             .ok()
             .and_then(|d| TexPattern::parse(&d).ok());
@@ -134,10 +157,7 @@ impl MarioModel {
             cap,
             fludd,
             nozzles,
-            fludd_house: clip("wg_house"),
-            fludd_pump: clip("wg_pump"),
-            housed: 1.0,
-            last_time: 0.0,
+            fludd_clips,
             wink,
             eye_materials,
             blink_at: 2.0,
@@ -145,7 +165,9 @@ impl MarioModel {
     }
 
     /// Draws Mario. `joints` are the body's model-space joint matrices for this frame (from
-    /// `Skeleton::pose`); `root` places model space (decomp units) in the scene.
+    /// `Skeleton::pose_layered`); `root` places model space (decomp units) in the scene.
+    /// Returns FLUDD's posed muzzles in model space (position, X axis) for
+    /// `Mario::set_emitters`.
     #[allow(clippy::too_many_arguments)]
     pub fn draw(
         &mut self,
@@ -155,7 +177,7 @@ impl MarioModel {
         view: Mat4,
         proj: Mat4,
         time: f32,
-    ) {
+    ) -> Vec<(Vec3, Vec3)> {
         let m = &sim.mario;
         // `SMS_HIDE=fludd,nozzle,cap,hands,body` leaves parts out (for checking placement).
         let hide = std::env::var("SMS_HIDE").unwrap_or_default();
@@ -198,33 +220,63 @@ impl MarioModel {
             ..Default::default()
         };
 
-        // FLUDD's handles (`TWaterGun::calcAnimation`): pumping holds `wg_pump`; otherwise
-        // `wg_house` runs toward its last frame, folding them away.
-        let dt = (time - self.last_time).clamp(0.0, 0.1);
-        self.last_time = time;
-        let pumping = matches!(m.upper, UpperState::Pumping | UpperState::HoldingPump);
-        if pumping {
-            self.housed = 0.0;
-        } else {
-            self.housed = (self.housed + dt * 3.0).min(1.0);
-        }
-        let fludd_joints = if pumping {
-            self.fludd.posed(self.fludd_pump.as_ref(), 0.0)
-        } else {
-            let end = self.fludd_house.as_ref().map_or(0.0, |c| c.frames);
-            self.fludd
-                .posed(self.fludd_house.as_ref(), self.housed * end)
-        };
-
-        // FLUDD on the chest, the nozzle on FLUDD.
-        let fludd_root = m.fludd.as_ref().and_then(|_| world(self.chest));
-        let nozzle = m.fludd.as_ref().and_then(|f| match f.nozzle {
+        // FLUDD in model space: on the chest, tilted back as the chest leans
+        // (`TWaterGun::setBaseTRMtx`: `|m[1][0]| * (unk1D04 - unk1D06) + unk1D06`, 0 and
+        // -0x1800), posed by the sim's clip (`calcAnimation`). The nozzle sits on
+        // `nozzle_center` with its own clip and the aiming callbacks (`TWaterGun::init`).
+        let look = m.fludd_look();
+        let deg = |a: f32| a * std::f32::consts::PI / 32768.0;
+        let fludd_base = look
+            .and(self.chest)
+            .and_then(|c| joints.get(c))
+            .map(|chest| {
+                let lean = chest.x_axis.truncate().normalize_or_zero().y.abs();
+                *chest * Mat4::from_rotation_z(deg(lean * 6144.0 - 6144.0))
+            });
+        let fludd_joints = self.fludd.posed(
+            look.and_then(|l| self.fludd_clips.get(l.body_clip)),
+            look.map_or(0.0, |l| l.body_frame),
+            |_| None,
+        );
+        let slot = look.and_then(|l| match l.nozzle {
             NozzleKind::Spray => Some(0),
-            NozzleKind::Hover => Some(1),
+            NozzleKind::Hover | NozzleKind::Underwater => Some(1),
             NozzleKind::Rocket => Some(2),
             NozzleKind::Turbo => Some(3),
-            _ => None,
+            NozzleKind::Yoshi => None,
         });
+        let nozzle_at = fludd_base
+            .zip(self.fludd.model.bmd.joint("nozzle_center"))
+            .map(|(base, c)| base * fludd_joints[c]);
+        let mut muzzles = Vec::new();
+        let nozzle_joints = match (look, slot.and_then(|i| self.nozzles[i].as_ref())) {
+            (Some(l), Some(part)) => {
+                let extra = |name: &str| match name {
+                    // `NozzleCtrl`: the neck dips with the aim, never above level.
+                    "chn_muzzle_1" | "jnt_back_nozzle_neck" if l.gun_angle < 0.0 => {
+                        Some(Mat4::from_rotation_z(deg(l.gun_angle)))
+                    }
+                    // `WaterGunDivingCtrlL/R`: the hover jets lean with the steering.
+                    "jnt_nozzle_L" => Some(Mat4::from_rotation_z(deg(-l.tilt[0]))),
+                    "jnt_nozzle_R" => Some(Mat4::from_rotation_z(deg(-l.tilt[1]))),
+                    // `RotateCtrl`: the Turbo propeller.
+                    "chn_back_nozzle_prop" => Some(Mat4::from_rotation_x(deg(l.prop_angle))),
+                    _ => None,
+                };
+                let clip = l.nozzle_clip.and_then(|c| self.fludd_clips.get(c));
+                let js = part.posed(clip, l.nozzle_frame, extra);
+                if let Some(at) = nozzle_at {
+                    for name in ["null_G_muzzle", "null_G_muzzle2"] {
+                        if let Some(j) = part.model.bmd.joint(name) {
+                            let mm = at * js[j];
+                            muzzles.push((mm.w_axis.truncate(), mm.x_axis.truncate()));
+                        }
+                    }
+                }
+                js
+            }
+            _ => Vec::new(),
+        };
 
         for pass in [Pass::Opaque, Pass::Translucent] {
             let r = &mut self.renderer;
@@ -273,8 +325,8 @@ impl MarioModel {
                     }
                 }
             }
-            if let Some(at) = fludd_root {
-                let pose = Pose::new(&self.fludd.model.bmd, at, &fludd_joints);
+            if let Some(base) = fludd_base {
+                let pose = Pose::new(&self.fludd.model.bmd, root * base, &fludd_joints);
                 if shown("fludd") {
                     r.draw(
                         &mut self.fludd.model,
@@ -286,28 +338,23 @@ impl MarioModel {
                         pass,
                     );
                 }
-                let center = self
-                    .fludd
-                    .model
-                    .bmd
-                    .joint("nozzle_center")
-                    .map(|j| at * fludd_joints[j]);
-                let nozzle = nozzle.filter(|_| shown("nozzle"));
-                if let (Some(c), Some(Some(part))) = (center, nozzle.map(|i| &mut self.nozzles[i]))
-                {
-                    let pose = Pose::new(&part.model.bmd, c, &part.bind);
-                    r.draw(
-                        &mut part.model,
-                        &pose,
-                        view,
-                        proj,
-                        &lights,
-                        &Look::default(),
-                        pass,
-                    );
-                }
+            }
+            if let (Some(at), Some(i)) = (nozzle_at, slot.filter(|_| shown("nozzle")))
+                && let Some(part) = self.nozzles[i].as_mut()
+            {
+                let pose = Pose::new(&part.model.bmd, root * at, &nozzle_joints);
+                r.draw(
+                    &mut part.model,
+                    &pose,
+                    view,
+                    proj,
+                    &lights,
+                    &Look::default(),
+                    pass,
+                );
             }
         }
+        muzzles
     }
 }
 

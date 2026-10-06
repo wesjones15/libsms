@@ -169,6 +169,37 @@ impl Skeleton {
             .collect();
         self.world(&locals)
     }
+
+    /// Is `j` the joint `root` or below it?
+    pub fn under(&self, j: usize, root: usize) -> bool {
+        let mut at = Some(j);
+        while let Some(i) = at {
+            if i == root {
+                return true;
+            }
+            at = self.parents[i].filter(|&p| p < i);
+        }
+        false
+    }
+
+    /// Body clip with a second clip over `root` and its subtree: Mario's pumping arm, which
+    /// `M3UModelMario` hangs on `jnt_chest` (`setInfo[1]`, `TMario::initModel`).
+    pub fn pose_layered(
+        &self,
+        base: Option<(&Clip, f32)>,
+        upper: Option<(&Clip, f32, usize)>,
+    ) -> Vec<Mat4> {
+        let locals: Vec<Srt> = (0..self.len())
+            .map(|j| {
+                let up = upper
+                    .filter(|&(_, _, root)| self.under(j, root))
+                    .and_then(|(c, f, _)| c.sample(j, f));
+                up.or_else(|| base.and_then(|(c, f)| c.sample(j, f)))
+                    .unwrap_or(self.bind[j])
+            })
+            .collect();
+        self.world(&locals)
+    }
 }
 
 /// One animated channel: either a constant or a list of Hermite keys.

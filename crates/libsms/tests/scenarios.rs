@@ -441,6 +441,112 @@ fn spraying_drains_the_tank_and_recoils() {
 }
 
 #[test]
+fn spray_waits_for_the_handles_then_shoots_with_its_sounds() {
+    let mut s = Scene::flat();
+    s.sim.mario.give_fludd();
+    s.step(1);
+    {
+        let look = s.mario().fludd_look().unwrap();
+        assert_eq!(look.body_clip, "wg_house");
+        assert_eq!(look.nozzle_clip, Some("normal_wg_house"));
+    }
+    s.pad.r_analog = 200;
+    // `unk1CEC` falls 0.1 a tick: ten ticks of handles before any water.
+    s.step(5);
+    assert_eq!(s.event_count(|e| matches!(e, Event::WaterEmit(_))), 0);
+    assert!(s.mario().fludd.as_ref().unwrap().housed > 0.0);
+    s.step(20);
+    let f = s.mario().fludd.as_ref().unwrap();
+    assert_eq!(f.housed, 0.0);
+    assert!(s.event_count(|e| matches!(e, Event::WaterEmit(_))) > 0);
+    let look = s.mario().fludd_look().unwrap();
+    assert_eq!(look.body_clip, "wg_pump");
+    assert!(
+        matches!(
+            look.nozzle_clip,
+            Some("normal_wg_shoot_start" | "normal_wg_shooting")
+        ),
+        "{look:?}"
+    );
+    let (upper, _) = s.mario().upper_layer().expect("pumping arm");
+    assert_eq!(upper, "pump");
+    let sounds: Vec<&str> = s
+        .host
+        .events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Sound(c) => Some(c.name),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        sounds.contains(&"MSD_SE_PO_NORMAL_NOZZLE_IMI"),
+        "{sounds:?}"
+    );
+    assert!(sounds.contains(&"MSD_SE_PO_WATER_HI"), "{sounds:?}");
+    // Water leaves a reported muzzle, turned with Mario.
+    s.sim
+        .mario
+        .set_emitters(NozzleKind::Spray, &[(Vec3::new(0.0, 100.0, 50.0), Vec3::Z)]);
+    s.host.events.clear();
+    s.step(4);
+    let w = s
+        .host
+        .events
+        .iter()
+        .find_map(|e| match e {
+            Event::WaterEmit(w) => Some(*w),
+            _ => None,
+        })
+        .unwrap();
+    let m = s.mario();
+    assert!(
+        (w.pos - (m.pos + Vec3::new(0.0, 100.0, 50.0))).length() < 1.0,
+        "{w:?}"
+    );
+    // Release: the handles stay out a while, then fold back.
+    s.pad.r_analog = 0;
+    s.secs(2.0);
+    assert_eq!(s.mario().fludd.as_ref().unwrap().housed, 0.0);
+    s.secs(6.0);
+    assert_eq!(s.mario().fludd.as_ref().unwrap().housed, 1.0);
+    assert!(s.mario().upper_layer().is_none());
+}
+
+#[test]
+fn pumping_an_empty_tank_makes_the_pump_sounds() {
+    let mut s = Scene::flat();
+    s.sim.mario.give_fludd();
+    s.sim.mario.fludd.as_mut().unwrap().water = 0;
+    s.pad.r_analog = 255;
+    s.secs(1.0);
+    assert!(s.event_count(|e| matches!(e, Event::Sound(c) if c.name == "MSD_SE_PO_POMPING1")) > 0);
+    assert!(s.event_count(|e| matches!(e, Event::Sound(c) if c.name == "MSD_SE_PO_POMPING2")) > 0);
+}
+
+#[test]
+fn x_swap_plays_the_nozzle_clips() {
+    let mut s = Scene::flat();
+    s.sim.mario.give_fludd();
+    s.pad.x = true;
+    s.step(1);
+    s.pad.x = false;
+    s.step(2);
+    let look = s.mario().fludd_look().unwrap();
+    assert_eq!(look.nozzle, NozzleKind::Spray);
+    assert_eq!(look.nozzle_clip, Some("house_wg_change_start"));
+    assert!(s.until(60, |m| m.fludd.as_ref().unwrap().nozzle
+        == NozzleKind::Hover));
+    s.step(1);
+    let look = s.mario().fludd_look().unwrap();
+    assert_eq!(look.nozzle_clip, Some("hover_wg_change_end"));
+    assert!(
+        s.event_count(|e| matches!(e, Event::Sound(c) if c.name == "MSD_SE_SY_SELECT_POMP_BACK"))
+            == 1
+    );
+}
+
+#[test]
 fn an_empty_tank_does_not_spray() {
     let mut s = Scene::flat();
     s.sim.mario.give_fludd();

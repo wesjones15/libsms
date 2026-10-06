@@ -178,6 +178,17 @@ params! {
 }
 
 params! {
+    /// `/Mario/UpperBody.prm` (TUpperBodyParams): the pumping stance.
+    UpperBody {
+        pump_wait_time: i16 = 10, "mPumpWaitTime";
+        pump_anm_speed: f32 = 0.01, "mPumpAnmSpeed";
+        hover_head_angle: i16 = -0x2000, "mHoverHeadAngle";
+        feel_deep_head_angle: i16 = 0x2000, "mFeelDeepHeadAngle";
+        front_wall_head_angle: i16 = -0x2000, "mFrontWallHeadAngle";
+    }
+}
+
+params! {
     /// `/Mario/HHover.prm` (THHoverParams): hover-nozzle steering.
     Hover {
         rot_sp: i16 = 0x80, "mRotSp";
@@ -243,6 +254,17 @@ params! {
         l_angle_min: i16 = -0x2000, "mLAngleMin";
         l_angle_max: i16 = 0x2000, "mLAngleMax";
         l_angle_chase: f32 = 0.1, "mLAngleChase";
+        dir_tremble: f32 = 0.01, "mDirTremble";
+        pow_tremble: f32 = 1.0, "mPowTremble";
+        size: f32 = 40.0, "mSize";
+        size_tremble: f32 = 16.0, "mSizeTremble";
+        size_min_pressure: f32 = 0.0, "mSizeMinPressure";
+        size_max_pressure: f32 = 1.0, "mSizeMaxPressure";
+        dir_tremble_min: f32 = 0.01, "mDirTrembleMin";
+        size_min: f32 = 40.0, "mSizeMin";
+        particle_type: i16 = 0, "mType";
+        r_button_mult: f32 = 10000.0, "mRButtonMult";
+        emit_pow_scale: f32 = 10.0, "mEmitPowScale";
     }
 }
 
@@ -290,6 +312,7 @@ pub struct Params {
     pub jump: Jump,
     pub mario: Mario,
     pub controller: Controller,
+    pub upper_body: UpperBody,
     pub hover: Hover,
     pub diving: Diving,
     pub water_gun: WaterGun,
@@ -313,6 +336,7 @@ impl Default for Params {
             jump: Jump::default(),
             mario: Mario::default(),
             controller: Controller::default(),
+            upper_body: UpperBody::default(),
             hover: Hover::default(),
             diving: Diving::default(),
             water_gun: WaterGun::default(),
@@ -333,6 +357,7 @@ mod files {
     pub const JUMP: &str = "jump.prm";
     pub const MARIO: &str = "mario.prm";
     pub const CONTROLLER: &str = "controller.prm";
+    pub const UPPER_BODY: &str = "upperbody.prm";
     pub const HOVER: &str = "hhover.prm";
     pub const DIVING: &str = "diving.prm";
     pub const WATER_GUN: &str = "watergun.prm";
@@ -376,6 +401,9 @@ impl Params {
         }
         if let Some(prm) = get(files::CONTROLLER) {
             p.controller.apply(&prm);
+        }
+        if let Some(prm) = get(files::UPPER_BODY) {
+            p.upper_body.apply(&prm);
         }
         if let Some(prm) = get(files::HOVER) {
             p.hover.apply(&prm);
