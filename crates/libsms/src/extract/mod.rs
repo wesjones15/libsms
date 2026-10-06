@@ -89,8 +89,9 @@ pub const EXTRACTS: [(&str, &str, &str); 4] = [
 /// `TMonteM*Manager::createModelData` / `TMonteW*Manager` (NpcManager.cpp) loads its body from
 /// `/scene/montem<x>/` or `/scene/montew<x>/` (some share `montem/`), and `montemcommon/` /
 /// `montewcommon/` hold the shared clips (`mom_*` / `mow_*` .bck, .btp, .bas) and accessory
-/// models (hats, glasses, ...).
-pub const SCENE_FOLDERS: [(&str, &str); 1] = [("monte", "npc")];
+/// models (hats, glasses, ...). `mapobj/fruit*` are the fruit Mario picks up and throws
+/// (`TResetFruit`, MapObjBall.cpp; `FruitPapaya` and friends in MapObjInit.cpp).
+pub const SCENE_FOLDERS: [(&str, &str); 2] = [("monte", "npc"), ("mapobj/fruit", "scene")];
 
 /// Disc folders copied as they are: `AudioRes/` holds the wave archives (`Banks/*.aw`), the
 /// sequence archive (`Seqs/sequence.arc`), streams and `mSound.asn` (MSound.cpp,
@@ -99,7 +100,7 @@ pub const DISC_FOLDERS: [&str; 1] = ["AudioRes/"];
 
 /// Files that must exist for the library and viewer to work. Adding one here makes an older
 /// `assets/` incomplete, so hosts re-extract it on the next run.
-pub const REQUIRED: [&str; 21] = [
+pub const REQUIRED: [&str; 22] = [
     "params_mario/run.prm",
     "params_mario/jump.prm",
     "params_mario/mario.prm",
@@ -121,6 +122,7 @@ pub const REQUIRED: [&str; 21] = [
     "npc/montewcommon/mow_wait.bck",
     "npc/montema/moma_model.bmd",
     "npc/montew/mow_model.bmd",
+    "scene/mapobj/fruitpapaya.bmd",
 ];
 
 pub const GAME_IDS: [(&str, &str); 3] = [

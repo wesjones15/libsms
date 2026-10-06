@@ -5,7 +5,7 @@
 //!
 //! Controls
 //!   WASD            move (Left Alt = gentle push)        Arrows   orbit camera
-//!   Space           jump (A)    hold for full height     F        dive (B)
+//!   Space           jump (A)    hold for full height     F        B: dive, grab, put, throw
 //!   Z               ground pound in the air (L)          Left Ctrl  crouch/aim (R click)
 //!   Left Shift      spray (R, half press)                X        swap nozzle (Spray <-> second)
 //!   1 2 3 4         fit Spray / Hover / Rocket / Turbo   G        refill tank
@@ -20,6 +20,7 @@
 
 mod j3d;
 mod mario_model;
+mod props;
 mod sound;
 mod water;
 
@@ -61,6 +62,8 @@ struct World {
     blocks: Vec<Block>,
     ramps: Vec<Ramp>,
     emits: Vec<WaterEmit>,
+    /// Fruit to pick up and throw (indices are their take ids).
+    fruits: Vec<props::Fruit>,
     sounds: Vec<Event>,
     log: Vec<String>,
 }
@@ -116,8 +119,27 @@ impl World {
             blocks,
             ramps,
             emits: Vec::new(),
+            fruits: vec![
+                props::Fruit::new(props::Kind::Papaya, V3::new(150.0, 0.0, 200.0)),
+                props::Fruit::new(props::Kind::Coconut, V3::new(-200.0, 0.0, 150.0)),
+                props::Fruit::new(props::Kind::Pine, V3::new(300.0, 0.0, -150.0)),
+                props::Fruit::new(props::Kind::Banana, V3::new(0.0, 0.0, 350.0)),
+                props::Fruit::new(props::Kind::Durian, V3::new(-300.0, 0.0, -250.0)),
+            ],
             sounds: Vec::new(),
             log: Vec::new(),
+        }
+    }
+
+    /// One 120 Hz tick of the loose fruit.
+    fn tick_fruits(&mut self) {
+        for i in 0..self.fruits.len() {
+            if self.fruits[i].held {
+                continue;
+            }
+            let p = self.fruits[i].pos + V3::Y * 30.0;
+            let floor = self.ground(p).map_or(-1.0e9, |g| g.height);
+            self.fruits[i].tick(|_| floor);
         }
     }
 
@@ -226,6 +248,33 @@ impl Host for World {
         c
     }
 
+    fn takeables(&self, pos: V3, radius: f32, out: &mut Vec<libsms::host::Takeable>) {
+        for (i, f) in self.fruits.iter().enumerate() {
+            let t = f.takeable(i);
+            if !f.held && (t.pos - pos).length() < radius + t.radius {
+                out.push(t);
+            }
+        }
+    }
+
+    fn take(&mut self, id: u64) -> bool {
+        match self.fruits.get_mut(id as usize) {
+            Some(f) if !f.held => {
+                f.held = true;
+                f.vel = V3::ZERO;
+                // `TMario::soundProcess`: fruit kinds take with MA_TAKE_DRIAN.
+                let pos = f.pos;
+                self.sounds.push(Event::Sound(libsms::SoundCue {
+                    name: "MSD_SE_MA_TAKE_DRIAN",
+                    pos,
+                    info: None,
+                }));
+                true
+            }
+            _ => false,
+        }
+    }
+
     fn event(&mut self, e: Event) {
         self.sounds.push(e);
         match e {
@@ -237,6 +286,27 @@ impl Host for World {
             Event::NozzleChanged(n) => self.note(format!("nozzle: {n:?}")),
             Event::Fell => {}
             Event::WaterEmit(w) => self.emits.push(w),
+            Event::Put { id, pos, yaw } => {
+                if let Some(f) = self.fruits.get_mut(id as usize) {
+                    f.put(pos, yaw);
+                    self.sounds.push(Event::Sound(libsms::SoundCue {
+                        name: "MSD_SE_MA_PUT_DRIAN",
+                        pos,
+                        info: None,
+                    }));
+                }
+            }
+            Event::Throw {
+                id,
+                pos,
+                yaw,
+                power,
+                vel,
+            } => {
+                if let Some(f) = self.fruits.get_mut(id as usize) {
+                    f.throw(pos, yaw, power, vel);
+                }
+            }
             Event::Land { .. } | Event::Sound(_) => {}
         }
     }
@@ -510,7 +580,7 @@ fn hud(sim: &Sim, data: &str, rig: Option<&Rig>, show_help: bool) {
     if show_help {
         let h = screen_height();
         draw_text(
-            "WASD move  Space jump  F dive  Z pound  Ctrl crouch  Shift spray  X swap  1-4 nozzle",
+            "WASD move  Space jump  F dive/grab  Z pound  Ctrl crouch  Shift spray  X swap  1-4 nozzle",
             14.0,
             h - 34.0,
             20.0,
@@ -658,9 +728,16 @@ async fn main() {
         m.change_status(Status::Hanging, 0, true);
     }
     let mut world = World::course();
+    // `SMS_HOLD=1` starts carrying the papaya (for screenshots).
+    if std::env::var("SMS_HOLD").is_ok() {
+        world.fruits[0].held = true;
+        sim.mario.held = Some(0);
+        sim.mario.upper = libsms::UpperState::HoldingObject;
+    }
     let mut water = WaterManager::new(&params);
     let mut water_view = assets.as_ref().and_then(|a| water::WaterView::load(&a.dir));
     let mut water_ticks = 0u32;
+    let mut props = assets.as_ref().map(|a| props::Props::load(&a.dir));
     let (mut cam_a, mut cam_p) = (std::f32::consts::PI, 0.35f32);
     let mut show_help = true;
     let mut cam_target = mq(sim.mario.pos) + vec3(0.0, 1.0, 0.0);
@@ -781,6 +858,7 @@ async fn main() {
 
         // Simulate. Water events are drained into droplets right after each frame's ticks.
         let ticks = sim.advance_observed(&mut world, &pad, camera_yaw, dt, |mario, world| {
+            world.tick_fruits();
             if let Some(audio) = &mut audio {
                 audio.events(&world.sounds, mario);
                 audio.tick(mario);
@@ -853,6 +931,20 @@ async fn main() {
                 if let Some(f) = &sim.mario.fludd {
                     let kind = f.nozzle;
                     sim.mario.set_emitters(kind, &muzzles);
+                }
+                // Fruit; a held one rides the right hand (`getTakingMtx`).
+                if let Some(pr) = props.as_mut().filter(|p| p.loaded()) {
+                    let hand = r.skeleton.find("jnt_hand_R").and_then(|h| joints.get(h));
+                    for f in &world.fruits {
+                        let at = match (f.held, hand) {
+                            (true, Some(h)) => {
+                                let lift = f.kind.held_offset() * S;
+                                ::glam::Mat4::from_translation(::glam::Vec3::Y * lift) * root * *h
+                            }
+                            _ => props::place(f.pos, f.yaw, S),
+                        };
+                        pr.draw(f.kind, at, view, proj);
+                    }
                 }
             }
             _ => draw_mario(&sim, rig.as_ref(), sim.alpha()),

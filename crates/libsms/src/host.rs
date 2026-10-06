@@ -73,6 +73,16 @@ pub struct WallHit {
     pub flags: SurfaceFlags,
 }
 
+/// Something Mario can pick up (a `TTakeActor`: fruit, barrels, ...).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Takeable {
+    /// The host's handle for it.
+    pub id: u64,
+    pub pos: Vec3,
+    /// Its hit radius (`getDamageRadius`).
+    pub radius: f32,
+}
+
 pub trait Host {
     /// Highest floor at or below `pos.y` (`TMap::checkGround`). `None` means a void.
     fn ground(&self, pos: Vec3) -> Option<GroundHit>;
@@ -91,6 +101,17 @@ pub trait Host {
 
     /// Gameplay events for the host to turn into sound, particles, damage and so on.
     fn event(&mut self, _event: Event) {}
+
+    /// Takeable objects whose hit cylinders Mario's (`radius`) overlaps at `pos`. Sunshine's
+    /// hit check calls `TMario::hitWantToTake` for these each tick.
+    fn takeables(&self, _pos: Vec3, _radius: f32, _out: &mut Vec<Takeable>) {}
+
+    /// `receiveMessage(HIT_MESSAGE_TAKE)`: Mario's hand closes on `id`. Return whether it is
+    /// now held; the host then keeps it at Mario's right hand (`getTakingMtx`) until an
+    /// [`Event::Put`] or [`Event::Throw`].
+    fn take(&mut self, _id: u64) -> bool {
+        false
+    }
 }
 
 /// Infinite flat floor at y = 0, no ceiling, optionally one infinite wall plane. For tests.

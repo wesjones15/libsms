@@ -22,6 +22,7 @@ pub mod skeleton;
 pub mod water;
 
 mod air;
+pub mod carry;
 mod ground;
 pub mod hang;
 mod physics;

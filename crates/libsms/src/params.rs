@@ -142,6 +142,8 @@ params! {
         damage_fall_height: f32 = 1000.0, "mDamageFallHeight";
         feel_deep: f32 = 500.0, "mFeelDeep";
         hang_wall_movable_angle: f32 = 0.3, "mHangWallMovableAngle";
+        hold_radius: f32 = 100.0, "mHoldRadius";
+        throw_power: f32 = 2.0, "mThrowPower";
     }
 }
 

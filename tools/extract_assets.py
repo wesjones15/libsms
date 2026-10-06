@@ -64,11 +64,15 @@ REQUIRED = [
     "npc/montewcommon/mow_wait.bck",
     "npc/montema/moma_model.bmd",
     "npc/montew/mow_model.bmd",
+    "scene/mapobj/fruitpapaya.bmd",
 ]
 
 # Folders gathered from every stage archive into one: (prefix, destination). Matches
 # libsms::extract::SCENE_FOLDERS. monte* are the Piantas.
 SCENE_FOLDERS = [("monte", "npc")]
+# Single files gathered from the stage archives: (folder/name prefix, destination). The fruit
+# Mario picks up (TResetFruit, MapObjBall.cpp).
+SCENE_FILES = [("mapobj/fruit", "scene")]
 
 GAME_IDS = {
     b"GMSJ01": "Japan (NTSC-J)",
@@ -109,9 +113,11 @@ def read_game_id(iso):
     return head if head in GAME_IDS else None
 
 
-def run(cmd):
+def run(cmd, check=True):
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
+        if not check:
+            return ""
         sys.stderr.write(r.stdout + r.stderr)
         sys.exit(f"command failed ({r.returncode}): {' '.join(cmd)}")
     return r.stdout
@@ -215,6 +221,23 @@ def main():
                 dst.mkdir(parents=True, exist_ok=True)
                 run([dtk, "vfs", "cp", f"{iso}:files/data/scene/{scene}:{folder}/", str(dst) + os.sep])
                 normalise(dst)
+
+    for prefix, dest in SCENE_FILES:
+        folder, stem = prefix.rsplit("/", 1)
+        print(f"extracting {prefix}* from {len(scenes)} stage archives")
+        for scene in scenes:
+            listing = run([dtk, "vfs", "ls", f"{iso}:files/data/scene/{scene}:{folder}/"], check=False)
+            for line in listing.splitlines():
+                if "|" not in line:
+                    continue
+                name = line.split("|")[1].strip()
+                if not name.startswith(stem):
+                    continue
+                dst = out / dest / folder / name.lower()
+                if dst.exists():
+                    continue
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                run([dtk, "vfs", "cp", f"{iso}:files/data/scene/{scene}:{folder}/{name}", str(dst)])
 
     for folder in DISC_FOLDERS:
         dst = out / folder

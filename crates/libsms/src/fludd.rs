@@ -391,8 +391,13 @@ impl Mario {
                     self.check_pumping(r_level);
                 }
             }
+            UpperState::HoldingObject => {
+                if self.status == Status::Putting || self.held.is_none() {
+                    self.upper = UpperState::Idle;
+                }
+            }
         }
-        if self.fludd.is_none() {
+        if self.fludd.is_none() && self.upper != UpperState::HoldingObject {
             self.upper = UpperState::Idle;
         }
     }

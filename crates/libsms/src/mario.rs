@@ -94,6 +94,10 @@ pub enum Status {
     JumpBackDown,
     // Actions (type 0x180)
     CatchLost,
+    Take,
+    TakePose,
+    Putting,
+    Pitching,
     // Special (type 0x300): hanging from a ledge (MarioSpecial.cpp)
     Hanging,
     Ascend,
@@ -120,7 +124,7 @@ impl Status {
             | SlipBack | Catch | JumpSlip | LandSlip | SecJumpSlip | UTurnJumpSlip
             | UltraJumpSlip | BroadJumpSlip | BackDown | ForeDown | ShortBackDown
             | ShortForeDown | CatchDown => Kind::Running,
-            CatchLost => Kind::Action,
+            CatchLost | Take | TakePose | Putting | Pitching => Kind::Action,
             Hanging | Ascend | Descend | HangJumping => Kind::Special,
             _ => Kind::Jumping,
         }
@@ -151,6 +155,8 @@ pub enum UpperState {
     Pumping,
     /// Just released: the pump stays up for a moment (`mPumpWaitTime`).
     HoldingPump,
+    /// Carrying something (`UPPER_STATE_HOLDING_OBJECT`).
+    HoldingObject,
 }
 
 /// Build-time options for behaviours that need states this crate does not have yet.
@@ -221,6 +227,10 @@ pub struct Mario {
     pub(crate) upper_clip: Option<crate::anim::ClipName>,
     pub upper_ctrl: crate::anim::FrameCtrl,
     pub(crate) pump_cooldown: i32,
+    /// What Mario carries (`mHeldObject`), by the host's id.
+    pub held: Option<u64>,
+    /// What his hand is closing on (`unk384`).
+    pub(crate) take_target: Option<u64>,
     pub(crate) dash_speed: f32,
     pub(crate) dash_timer: i32,
     pub(crate) fludd_emitting: bool,
@@ -283,6 +293,8 @@ impl Mario {
                 ..crate::anim::FrameCtrl::new(AnimTable::FALLBACK)
             },
             pump_cooldown: 0,
+            held: None,
+            take_target: None,
             dash_speed: 0.0,
             dash_timer: 0,
             fludd_emitting: false,
@@ -325,6 +337,7 @@ impl Mario {
 
         self.check_player_action(host, pad);
         self.state_machine(host);
+        self.check_take(host);
         self.state_machine_upper(pad);
         self.think_height(host);
         self.gun_exec(host, pad);

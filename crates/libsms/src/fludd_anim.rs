@@ -292,6 +292,15 @@ impl Mario {
                     }
                 }
             }
+            UpperState::HoldingObject => {
+                // Slot 1 to `carry_p` (anim 0x4B).
+                self.upper_on = true;
+                let c = crate::carry::clip::CARRY;
+                if self.upper_clip != Some(c) {
+                    self.upper_clip = Some(c);
+                    self.upper_ctrl = FrameCtrl::new(self.anims.get(c));
+                }
+            }
             UpperState::Idle => self.upper_on = false,
         }
         if self.upper == UpperState::Pumping {

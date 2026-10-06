@@ -117,7 +117,7 @@ impl Mario {
     }
 
     /// `stopCommon`: stand still, play `c`, go to `next` when it ends.
-    fn stop_common(&mut self, host: &mut dyn Host, c: ClipName, next: Status) {
+    pub(crate) fn stop_common(&mut self, host: &mut dyn Host, c: ClipName, next: Status) {
         self.wait_process(host);
         self.set_anim(c, 1.0);
         if self.anim.at_last_frame() {
@@ -151,6 +151,10 @@ impl Mario {
 
     pub(crate) fn wait_main(&mut self, host: &mut dyn Host) -> bool {
         use Status::*;
+        // `waitMain`: B with something in hand puts it down (or throws a throwing kind).
+        if self.check_throw_start(host, false) {
+            return true;
+        }
         match self.status {
             Wait => self.waiting(host),
             Squat => self.squating(host),
@@ -234,6 +238,11 @@ impl Mario {
 
     /// `waitingCommonEvents`.
     fn waiting_common_events(&mut self) -> bool {
+        // B with nothing in hand reaches out (`mInput & 0x10000`, whose source isn't in the
+        // decomp's `checkController`; taken as a B press).
+        if self.held.is_none() && self.input.b_pressed {
+            return self.change_status(Status::TakePose, 0, false);
+        }
         if self.input.jump {
             if self.consider_rotate_jump_start() {
                 return true;
@@ -472,6 +481,9 @@ impl Mario {
 
     fn running(&mut self, host: &mut dyn Host) -> bool {
         self.status_timer += 1;
+        if self.check_throw_start(host, true) {
+            return true;
+        }
 
         if self.is_running_slip_start() {
             return self.change_status(Status::Slip, 0, false);
@@ -484,12 +496,14 @@ impl Mario {
         if self.input.jump {
             return self.change_tri_jump();
         }
-        if self.input.dive
-            && self.forward_vel > self.params.run.do_jump_catch_sp
-            && self.intended_mag > 0.75
-        {
-            self.vel.y = 20.0;
-            return self.change_status(Status::JumpCatch, 1, false);
+        if self.input.dive {
+            if self.forward_vel > self.params.run.do_jump_catch_sp && self.intended_mag > 0.75 {
+                self.vel.y = 20.0;
+                return self.change_status(Status::JumpCatch, 1, false);
+            }
+            if self.held.is_none() {
+                self.change_status(Status::TakePose, 0, false);
+            }
         }
         if self.input.idle {
             if self.status_timer > 0xF0
@@ -700,6 +714,9 @@ impl Mario {
         }
         if self.input.stick {
             return self.change_status(Status::Run, 0, false);
+        }
+        if self.input.dive && self.held.is_none() {
+            return self.change_status(Status::TakePose, 0, false);
         }
         if self.consider_rotate_start() {
             return true;
@@ -925,8 +942,13 @@ impl Mario {
 
     /// Actions: only `CatchLost` (getting up after a belly slide).
     pub(crate) fn action_main(&mut self, host: &mut dyn Host) -> bool {
-        if self.status != Status::CatchLost {
-            return false;
+        match self.status {
+            Status::Take => return self.taking(host),
+            Status::TakePose => return self.take_pose(host),
+            Status::Putting => return self.putting(host),
+            Status::Pitching => return self.pitching(host),
+            Status::CatchLost => {}
+            _ => return false,
         }
         if self.input.jump {
             if self.consider_rotate_jump_start() {

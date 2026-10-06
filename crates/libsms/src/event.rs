@@ -24,6 +24,19 @@ pub enum Event {
     TriggerFired(NozzleKind),
     /// Mario fell into a void (no legal ground for too long).
     Fell,
+    /// Mario set the held object down in front of him (`HIT_MESSAGE_PUT`): the object places
+    /// itself its radius plus Mario's plus 10 along `yaw` from `pos` (`TMapObjGeneral::put`).
+    Put { id: u64, pos: Vec3, yaw: i16 },
+    /// Mario let go of the held object with a throw (`HIT_MESSAGE_THROWN`): it starts at
+    /// `pos` and flies along `yaw` at `power` (`mThrowPower`) times its own throw speed, plus
+    /// its share of Mario's velocity `vel` (`TMapObjGeneral::thrown`).
+    Throw {
+        id: u64,
+        pos: Vec3,
+        yaw: i16,
+        power: f32,
+        vel: Vec3,
+    },
     /// A sound the game starts at this point (`startSoundActor` and friends), by its
     /// `MSD_SE_*` name. Ids without the `0x800` bit are held sounds the game re-requests every
     /// frame while they last; hosts keep them alive rather than restarting them.

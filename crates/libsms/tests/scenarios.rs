@@ -62,6 +62,12 @@ impl<H: Host> Host for Rig<H> {
     fn event(&mut self, e: Event) {
         self.events.push(e);
     }
+    fn takeables(&self, p: Vec3, r: f32, out: &mut Vec<libsms::host::Takeable>) {
+        self.world.takeables(p, r, out)
+    }
+    fn take(&mut self, id: u64) -> bool {
+        self.world.take(id)
+    }
 }
 
 struct Scene<H: Host> {
@@ -826,4 +832,94 @@ fn walking_slowly_off_an_edge_lowers_mario_to_hang() {
     assert!(s.mario().face_yaw.abs() < 0x100, "{}", s.mario().face_yaw);
     s.pad.stick = Vec2::ZERO;
     assert!(s.until(300, |m| m.status == Status::Hanging));
+}
+
+// ---- Carrying ------------------------------------------------------------------------------
+
+/// A flat floor with one fruit that Mario can take; it follows his hand while held.
+struct FruitHost {
+    fruit: Vec3,
+    held: bool,
+}
+
+impl Host for FruitHost {
+    fn ground(&self, _p: Vec3) -> Option<libsms::GroundHit> {
+        Some(libsms::GroundHit {
+            height: 0.0,
+            normal: Vec3::Y,
+            flags: libsms::SurfaceFlags::NONE,
+        })
+    }
+    fn takeables(&self, pos: Vec3, radius: f32, out: &mut Vec<libsms::host::Takeable>) {
+        if !self.held && (self.fruit - pos).length() < radius + 40.0 {
+            out.push(libsms::host::Takeable {
+                id: 7,
+                pos: self.fruit,
+                radius: 40.0,
+            });
+        }
+    }
+    fn take(&mut self, id: u64) -> bool {
+        self.held = id == 7;
+        self.held
+    }
+}
+
+fn press_b<H: Host>(s: &mut Scene<H>) {
+    s.pad.b = true;
+    s.step(1);
+    s.pad.b = false;
+}
+
+#[test]
+fn b_with_nothing_in_reach_grabs_at_the_air() {
+    let mut s = Scene::flat();
+    s.step(2);
+    press_b(&mut s);
+    assert_eq!(s.mario().status, Status::TakePose);
+    assert_eq!(s.mario().anim.clip, "get_fail");
+    assert!(s.until(300, |m| m.status == Status::Wait));
+    assert!(s.mario().held.is_none());
+}
+
+#[test]
+fn mario_picks_up_fruit_carries_puts_and_throws_it() {
+    let mut s = Scene::new(FruitHost {
+        fruit: Vec3::new(0.0, 0.0, 60.0),
+        held: false,
+    });
+    s.step(2);
+    // Hold B: the hand closes on the fruit at frame 11 of `raise`.
+    s.pad.b = true;
+    s.step(1);
+    assert_eq!(s.mario().status, Status::Take);
+    s.step(1);
+    assert_eq!(s.mario().anim.clip, "raise");
+    s.pad.b = false;
+    assert!(s.until(300, |m| m.status == Status::Wait));
+    assert_eq!(s.mario().held, Some(7));
+    assert_eq!(s.mario().upper, libsms::UpperState::HoldingObject);
+    assert_eq!(s.mario().upper_layer().map(|u| u.0), Some("carry_p"));
+
+    // B at a standstill puts it down.
+    s.step(5);
+    press_b(&mut s);
+    assert_eq!(s.mario().status, Status::Putting);
+    assert!(s.until(300, |m| m.held.is_none()));
+    assert!(s.event_count(|e| matches!(e, Event::Put { id: 7, .. })) == 1);
+    assert!(s.until(300, |m| m.status == Status::Wait));
+
+    // Take it again, run, and B throws.
+    s.host.world.held = false;
+    s.host.world.fruit = s.mario().pos + Vec3::new(0.0, 0.0, 60.0);
+    s.pad.b = true;
+    s.step(1);
+    s.pad.b = false;
+    assert!(s.until(300, |m| m.held.is_some() && m.status == Status::Wait));
+    s.run_forward();
+    assert!(s.until(240, |m| m.forward_vel > 16.0));
+    press_b(&mut s);
+    assert_eq!(s.mario().status, Status::Pitching);
+    assert!(s.until(120, |m| m.held.is_none()));
+    assert!(s.event_count(|e| matches!(e, Event::Throw { id: 7, .. })) == 1);
 }
