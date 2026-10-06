@@ -45,6 +45,18 @@ impl Kind {
         }
     }
 
+    /// How far above its position (the bottom, on the ground) the model's root sits:
+    /// `mBodyRadius` (`TMapObjBall::initMapObj`), less the banana's 50 when upright
+    /// (`TMapObjBall::calcCurrentMtx`).
+    fn body_lift(self) -> f32 {
+        match self {
+            Kind::Papaya | Kind::Coconut => 40.0,
+            Kind::Pine => 50.0,
+            Kind::Durian => 45.0,
+            Kind::Banana => 0.0,
+        }
+    }
+
     /// (gravity, bounce, friction, throw speed, throw rise, hit radius).
     fn physics(self) -> (f32, f32, f32, f32, f32, f32) {
         match self {
@@ -177,9 +189,10 @@ impl Props {
     }
 }
 
-/// A fruit's placement: scaled, turned about Y, at `pos` (decomp units).
-pub fn place(pos: V3, yaw: f32, scale: f32) -> Mat4 {
-    Mat4::from_translation(Vec3::new(pos.x, pos.y, pos.z) * scale)
+/// A loose fruit's placement: scaled, turned about Y, resting at `pos` (decomp units).
+pub fn place(kind: Kind, pos: V3, yaw: f32, scale: f32) -> Mat4 {
+    let lift = kind.body_lift();
+    Mat4::from_translation(Vec3::new(pos.x, pos.y + lift, pos.z) * scale)
         * Mat4::from_rotation_y(yaw)
         * Mat4::from_scale(Vec3::splat(scale))
 }

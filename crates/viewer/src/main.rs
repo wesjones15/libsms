@@ -941,7 +941,7 @@ async fn main() {
                                 let lift = f.kind.held_offset() * S;
                                 ::glam::Mat4::from_translation(::glam::Vec3::Y * lift) * root * *h
                             }
-                            _ => props::place(f.pos, f.yaw, S),
+                            _ => props::place(f.kind, f.pos, f.yaw, S),
                         };
                         pr.draw(f.kind, at, view, proj);
                     }
