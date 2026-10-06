@@ -18,7 +18,8 @@ This folder is the repo root. Sibling folders are read-only references:
   (`nintendo.szs:audi/`); `npc/monte*/` are the Pianta models, clips and accessories gathered
   from every stage archive, `params_npc/` the NPC tuning (`params.szs:npc/`), `scene/mapobj/fruit*`
   the fruit models and `scene/mapobj/eggyoshi*` Yoshi's egg (stage archives), `yoshi/` Yoshi
-  (`yoshi.szs`). Never commit it. Hosts call `Assets::discover_or_extract`, which finds a
+  (`yoshi.szs`), `enemy/hamukuri*` the Strollin' Stu (stage archives) and `params_enemy/` the
+  enemies' tuning (`params.szs:enemy/`). Never commit it. Hosts call `Assets::discover_or_extract`, which finds a
   complete folder or extracts from the disc (`SMS_DISC`, or an image in the given folders) on first
   run, and redoes an older partial one. The older copy at `../extracted/sms` is not used.
 - `../libpikmin/`: the pattern to follow (Host trait, fixed step, events, disc-parsed params).
@@ -34,7 +35,8 @@ Workspace:
   starts carrying fruit, `SMS_YOSHI=1` rides Yoshi (`=2`: he stands by), `SMS_B=<frame>` presses
   B once. FLUDD and the nozzle pose from `Mario::fludd_look`, and the drawn
   muzzles go back through `Mario::set_emitters`. Water is `libsms::water` drawn like the game: coverage into the
-  window's alpha against the scene's depth, then a refracting screen pass (`water.rs`); fruit is `props.rs`;
+  window's alpha against the scene's depth, then a refracting screen pass (`water.rs`); fruit is `props.rs`; a
+  walking Strollin' Stu for Yoshi to eat is `stu.rs` (a stand-in, no enemy AI);
   Yoshi, his tongue and the egg are `yoshi_model.rs` (`Mario::yoshi_look`, `Egg::look`; the posed
   mouth goes back via `Mario::set_yoshi_mouth`).
   miniquad disables the depth *test* for pipelines without depth writes; `j3d.rs` masks writes

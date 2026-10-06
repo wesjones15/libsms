@@ -38,7 +38,7 @@ pub use fludd::{Fludd, TriggerState};
 pub use fludd_anim::FluddLook;
 pub use glam::{Vec2, Vec3};
 pub use egg::{Egg, EggLook, EggState};
-pub use host::{FlatHost, Fruit, GroundHit, Host, RoofHit, SurfaceFlags, WallHit};
+pub use host::{Enemy, FlatHost, Fruit, GroundHit, Host, RoofHit, SurfaceFlags, WallHit};
 pub use yoshi::{YoshiLook, YoshiState};
 pub use input::{Input, Pad};
 pub use mario::{Mario, Options, Status, UpperState};

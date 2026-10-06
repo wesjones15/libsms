@@ -275,15 +275,23 @@ FLUDD's handles. Water is drawn in the juice colour (`gModelWaterManagerWaterCol
 
 **Tongue** (`TYoshiTongue`). `emitTongue` throws the tip from the mouth along the joint's X
 axis at 10 a tick plus half Mario's velocity, running up to 10 steps at once until it is 160
-out. Flying, it homes on the nearest fruit ahead (within 60 degrees, reach 1000) at 5% of the
-gap a tick and takes it within 200 (`YV_PERON`); it gives up after 60 ticks, behind the
-mouth or in a wall. Reeling in keeps 70% of the length a tick and shrinks the fruit to 80%;
-within 80 the fruit is swallowed (`Event::Eaten`). Yoshi's head plays `eat` / `eat_end` over
-`jnt_18` while the tongue is out or juice flows (`thinkUpper`).
+out. Flying, it homes on the nearest fruit or enemy ahead (within 60 degrees, reach 1000;
+enemies only when Mario shoots it, `findTarget`'s `allowExtra`) at 5% of the gap a tick and
+sends it `HIT_MESSAGE_TAKE` within 200 (`YV_PERON`). Fruit always lets itself be taken; an
+enemy only if it is edible (`TSmallEnemy::isEatenByYosshi`: small enemies yes, Boos and
+Blooper kin no; `Host::take_enemy`), otherwise the tongue keeps flying. It gives up after 60
+ticks, behind the mouth or in a wall. Reeling in keeps 70% of the length a tick and shrinks
+the catch to 80%; within 80 it is swallowed (`HIT_MESSAGE_UNKB`: `Event::Eaten` for fruit,
+`Event::EnemyEaten` for an enemy, which dies). Enemies don't change the juice. Alone he
+only goes for fruit. Yoshi's head plays `eat` / `eat_end` over `jnt_18` while the tongue is
+out or juice flows (`thinkUpper`).
 
-Not yet: enemies on the tongue (`allowExtra`), sidewalk/pivot clips (no L/R strafing),
-`THROWN_DOWN` (the sim lands the throw in `BackDown`), swimming, shadow-Mario eggs, the
-stage-specific wishes and the egg being carried.
+The egg's wish is always the random one; `decideRandomLoveFruit`'s per-stage picks (a
+pine in one stage, a durian in another, a banana for the shadow-Mario egg) are left out on
+purpose, as is carrying the egg (`TEggYoshi` takes `HIT_MESSAGE_TAKE`).
+
+Not yet: coins and the other non-enemy extras on the tongue, sidewalk/pivot clips (no L/R
+strafing), `THROWN_DOWN` (the sim lands the throw in `BackDown`), swimming.
 
 ## 8. Verified numbers (disc tuning, headless, `cargo run -p libsms --example report`)
 

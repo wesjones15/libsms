@@ -22,6 +22,7 @@ mod j3d;
 mod mario_model;
 mod props;
 mod sound;
+mod stu;
 mod water;
 mod yoshi_model;
 
@@ -65,6 +66,8 @@ struct World {
     emits: Vec<WaterEmit>,
     /// Fruit to pick up and throw (indices are their take ids).
     fruits: Vec<props::Fruit>,
+    /// Strollin' Stus for Yoshi to eat (indices are their enemy ids).
+    stus: Vec<stu::Stu>,
     sounds: Vec<Event>,
     log: Vec<String>,
 }
@@ -127,12 +130,19 @@ impl World {
                 props::Fruit::new(props::Kind::Banana, V3::new(0.0, 0.0, 350.0)),
                 props::Fruit::new(props::Kind::Durian, V3::new(-300.0, 0.0, -250.0)),
             ],
+            stus: vec![stu::Stu::new(V3::new(450.0, 0.0, 450.0), 150.0)],
             sounds: Vec::new(),
             log: Vec::new(),
         }
     }
 
     /// One 120 Hz tick of the loose fruit.
+    fn tick_stus(&mut self) {
+        for s in &mut self.stus {
+            s.tick();
+        }
+    }
+
     fn tick_fruits(&mut self) {
         for i in 0..self.fruits.len() {
             if self.fruits[i].held {
@@ -258,6 +268,25 @@ impl Host for World {
         }
     }
 
+    fn enemies(&self, pos: V3, radius: f32, out: &mut Vec<libsms::Enemy>) {
+        for (i, s) in self.stus.iter().enumerate() {
+            let d = s.pos - pos;
+            if s.loose() && V3::new(d.x, 0.0, d.z).length() < radius + stu::RADIUS {
+                out.push(s.enemy(i));
+            }
+        }
+    }
+
+    fn take_enemy(&mut self, id: u64) -> bool {
+        match self.stus.get_mut(id as usize) {
+            Some(s) if s.loose() => {
+                s.held = true;
+                true
+            }
+            _ => false,
+        }
+    }
+
     fn take(&mut self, id: u64) -> bool {
         match self.fruits.get_mut(id as usize) {
             Some(f) if f.loose() => {
@@ -295,6 +324,11 @@ impl Host for World {
                         pos,
                         info: None,
                     }));
+                }
+            }
+            Event::EnemyEaten { id } => {
+                if let Some(s) = self.stus.get_mut(id as usize) {
+                    s.eaten();
                 }
             }
             Event::Eaten { id } => {
@@ -778,6 +812,11 @@ async fn main() {
     let mut water_view = assets.as_ref().and_then(|a| water::WaterView::load(&a.dir));
     let mut water_ticks = 0u32;
     let mut props = assets.as_ref().map(|a| props::Props::load(&a.dir));
+    let mut stu_model = assets.as_ref().and_then(|a| {
+        stu::StuModel::load(&a.dir)
+            .map_err(|e| eprintln!("Strollin' Stu: {e}"))
+            .ok()
+    });
     let (mut cam_a, mut cam_p) = (std::f32::consts::PI, 0.35f32);
     let mut show_help = true;
     let mut cam_target = mq(sim.mario.pos) + vec3(0.0, 1.0, 0.0);
@@ -903,6 +942,7 @@ async fn main() {
         // Simulate. Water events are drained into droplets right after each frame's ticks.
         let ticks = sim.advance_observed(&mut world, &pad, camera_yaw, dt, |mario, world| {
             world.tick_fruits();
+            world.tick_stus();
             if let Some(audio) = &mut audio {
                 audio.events(&world.sounds, mario);
                 audio.tick(mario);
@@ -996,7 +1036,10 @@ async fn main() {
                 // tip, shrinking as it comes in.
                 if let Some(pr) = props.as_mut().filter(|p| p.loaded()) {
                     let hand = r.skeleton.find("jnt_hand_R").and_then(|h| joints.get(h));
-                    let tongue = sim.mario.yoshi.tongue.held.map(|(id, _)| id);
+                    let tongue = match sim.mario.yoshi.tongue.held {
+                        Some(libsms::tongue::Held::Object { id, .. }) => Some(id),
+                        _ => None,
+                    };
                     for (i, f) in world.fruits.iter().enumerate().filter(|f| f.1.gone == 0) {
                         let at = match (f.held, hand) {
                             _ if f.held && tongue == Some(i as u64) => {
@@ -1013,6 +1056,24 @@ async fn main() {
                             _ => props::place(f.kind, f.pos, f.yaw, S),
                         };
                         pr.draw(f.kind, at, view, proj);
+                    }
+                }
+                // Stus walk their circle; one on the tongue rides the tip, shrinking in.
+                if let Some(sm) = stu_model.as_mut() {
+                    let t = &sim.mario.yoshi.tongue;
+                    let on_tongue = match t.held {
+                        Some(libsms::tongue::Held::Enemy { id }) => Some(id),
+                        _ => None,
+                    };
+                    for (i, s) in world.stus.iter().enumerate().filter(|s| s.1.gone == 0) {
+                        let at = if s.held && on_tongue == Some(i as u64) {
+                            let lift = V3::Y * (0.5 * stu::HEIGHT * t.held_scale);
+                            stu::place(t.tip - lift, s.yaw, S)
+                                * ::glam::Mat4::from_scale(::glam::Vec3::splat(t.held_scale))
+                        } else {
+                            stu::place(s.pos, s.yaw, S)
+                        };
+                        sm.draw(s, at, view, proj);
                     }
                 }
             }

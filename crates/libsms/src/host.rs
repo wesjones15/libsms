@@ -97,6 +97,18 @@ pub struct Takeable {
     pub fruit: Option<Fruit>,
 }
 
+/// An enemy (`TSpineEnemy`, `ACTOR_TYPE_ENEMY`): what else Yoshi's tongue goes for when Mario
+/// shoots it (`TYoshiTongue::findTarget`'s `allowExtra`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Enemy {
+    /// The host's handle for it.
+    pub id: u64,
+    /// Its feet.
+    pub pos: Vec3,
+    /// Its hit cylinder's height (`mDamageHeight`); the tongue aims at half of it.
+    pub height: f32,
+}
+
 pub trait Host {
     /// Highest floor at or below `pos.y` (`TMap::checkGround`). `None` means a void.
     fn ground(&self, pos: Vec3) -> Option<GroundHit>;
@@ -125,6 +137,17 @@ pub trait Host {
     /// (`getTakingMtx`) until an [`Event::Put`] or [`Event::Throw`], or on the tongue tip
     /// (`Yoshi::tongue`) until an [`Event::Eaten`].
     fn take(&mut self, _id: u64) -> bool {
+        false
+    }
+
+    /// Enemies whose hit cylinders reach a sphere of `radius` at `pos`.
+    fn enemies(&self, _pos: Vec3, _radius: f32, _out: &mut Vec<Enemy>) {}
+
+    /// `receiveMessage(HIT_MESSAGE_TAKE)` from Yoshi's tongue. Return whether the enemy lets
+    /// itself be caught (`TSmallEnemy::isEatenByYosshi`: small enemies yes, Boos and the like
+    /// no); the host then keeps it on the tongue tip (`Yoshi::tongue`) until an
+    /// [`Event::EnemyEaten`].
+    fn take_enemy(&mut self, _id: u64) -> bool {
         false
     }
 }

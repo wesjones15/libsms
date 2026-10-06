@@ -68,6 +68,12 @@ impl<H: Host> Host for Rig<H> {
     fn take(&mut self, id: u64) -> bool {
         self.world.take(id)
     }
+    fn enemies(&self, p: Vec3, r: f32, out: &mut Vec<libsms::Enemy>) {
+        self.world.enemies(p, r, out)
+    }
+    fn take_enemy(&mut self, id: u64) -> bool {
+        self.world.take_enemy(id)
+    }
 }
 
 struct Scene<H: Host> {
@@ -927,9 +933,11 @@ fn mario_picks_up_fruit_carries_puts_and_throws_it() {
 
 // ---- Yoshi ---------------------------------------------------------------------------------
 
-/// A flat floor with fruit lying about; taken fruit stays out of reach until it is eaten.
+/// A flat floor with fruit lying about, and enemies (position, edible, caught); taken things
+/// stay out of reach until they are eaten.
 struct YoshiHost {
     fruits: Vec<(Vec3, libsms::Fruit, bool)>,
+    enemies: Vec<(Vec3, bool, bool)>,
 }
 
 impl Host for YoshiHost {
@@ -961,12 +969,33 @@ impl Host for YoshiHost {
             _ => false,
         }
     }
+    fn enemies(&self, pos: Vec3, radius: f32, out: &mut Vec<libsms::Enemy>) {
+        for (i, (p, _, caught)) in self.enemies.iter().enumerate() {
+            if !caught && (*p - pos).length() < radius + 60.0 {
+                out.push(libsms::Enemy {
+                    id: i as u64,
+                    pos: *p,
+                    height: 100.0,
+                });
+            }
+        }
+    }
+    fn take_enemy(&mut self, id: u64) -> bool {
+        match self.enemies.get_mut(id as usize) {
+            Some(e) if e.1 && !e.2 => {
+                e.2 = true;
+                true
+            }
+            _ => false,
+        }
+    }
 }
 
 /// A scene with every clip length from the disc (Yoshi's and the egg's too).
 fn yoshi_scene(fruits: Vec<(Vec3, libsms::Fruit)>) -> Scene<YoshiHost> {
     let mut s = Scene::new(YoshiHost {
         fruits: fruits.into_iter().map(|(p, k)| (p, k, false)).collect(),
+        enemies: Vec::new(),
     });
     if let Some(dir) = extracted() {
         s.sim.mario.anims = libsms::Assets::load(&dir).anim_table;
@@ -1167,4 +1196,43 @@ fn running_out_of_juice_throws_mario_off() {
     assert!(s.until(60, |m| !m.on_yoshi()));
     assert_eq!(s.mario().status, Status::YoshiThrown);
     assert!(s.until(60, |m| m.yoshi.state == libsms::YoshiState::Egg));
+}
+
+#[test]
+fn yoshi_tongues_and_eats_an_enemy_but_not_a_boo() {
+    let mut s = yoshi_scene(vec![]);
+    mount(&mut s, Some(libsms::Fruit::Papaya));
+    let p = s.mario().pos;
+    // A small enemy ahead, and something that won't be taken (`isEatenByYosshi` false).
+    s.host.world.enemies = vec![(p + Vec3::new(0.0, 0.0, 300.0), true, false)];
+    s.pad.b = true;
+    s.step(1);
+    s.pad.b = false;
+    assert!(
+        s.until(240, |m| m.yoshi.tongue.state == libsms::tongue::TongueState::Idle),
+        "{:?}",
+        s.mario().yoshi.tongue
+    );
+    assert_eq!(s.event_count(|e| matches!(e, Event::EnemyEaten { id: 0 })), 1);
+    // Enemies don't change the juice.
+    assert_eq!(s.mario().yoshi.color, 1);
+
+    s.host.world.enemies = vec![(p + Vec3::new(0.0, 0.0, 300.0), false, false)];
+    s.step(30);
+    s.pad.b = true;
+    s.step(1);
+    s.pad.b = false;
+    assert!(s.until(240, |m| m.yoshi.tongue.state == libsms::tongue::TongueState::Idle));
+    assert_eq!(s.event_count(|e| matches!(e, Event::EnemyEaten { .. })), 1);
+    assert!(!s.host.world.enemies[0].2);
+
+    // Alone, he only looks for fruit.
+    s.pad.x = true;
+    s.step(1);
+    s.pad.x = false;
+    assert!(s.until(600, |m| m.status == Status::Wait));
+    let y = s.mario().yoshi.pos;
+    s.host.world.enemies = vec![(y + Vec3::new(0.0, 0.0, 150.0), true, false)];
+    s.step(600);
+    assert_eq!(s.event_count(|e| matches!(e, Event::EnemyEaten { .. })), 1);
 }

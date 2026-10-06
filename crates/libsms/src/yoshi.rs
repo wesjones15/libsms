@@ -698,7 +698,7 @@ impl Mario {
             0 => {
                 self.yoshi.search_timer -= 1;
                 if self.yoshi.search_timer <= 0 {
-                    if let Some(t) = self.yoshi.tongue.find_target(host, false) {
+                    if let Some(t) = self.yoshi.tongue.find_target(host, false, false) {
                         let d = t.pos - self.yoshi.pos;
                         self.yoshi.search_yaw = matan(d.z, d.x);
                         self.yoshi.search = 1;

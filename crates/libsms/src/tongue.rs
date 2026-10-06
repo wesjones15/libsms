@@ -11,12 +11,14 @@
 //!
 //! Its hit cylinder is the game's way to find targets: radius 300 at rest, 1000 while flying,
 //! 10 reeling in (`mAttackRadius`, `calcEntryRadius`). Hosts answer through
-//! [`Host::takeables`]; only fruit is a target here (enemies, `allowExtra`, are not modelled).
+//! [`Host::takeables`] (fruit) and, when Mario shoots it, [`Host::enemies`] too
+//! (`allowExtra`); an enemy that lets itself be taken is swallowed like fruit, without the
+//! juice.
 
 use glam::Vec3;
 
 use crate::event::{Event, SoundCue};
-use crate::host::{Fruit, Host, Takeable};
+use crate::host::{Fruit, Host};
 
 /// `mInitialSpeed`.
 pub const INITIAL_SPEED: f32 = 10.0;
@@ -49,6 +51,23 @@ pub enum TongueState {
     Retracting,
 }
 
+/// What is on the tongue (`mHeldObject`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Held {
+    /// A takeable object (fruit), by host id.
+    Object { id: u64, fruit: Option<Fruit> },
+    /// An enemy, by host id.
+    Enemy { id: u64 },
+}
+
+/// A target `findTarget` picked, and where the tongue aims on it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Target {
+    pub held: Held,
+    pub pos: Vec3,
+    pub aim: Vec3,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Tongue {
     pub state: TongueState,
@@ -59,8 +78,8 @@ pub struct Tongue {
     pub tip: Vec3,
     velocity: Vec3,
     progress: u16,
-    /// The fruit on the tip, by host id, and its kind.
-    pub held: Option<(u64, Option<Fruit>)>,
+    /// What is on the tip.
+    pub held: Option<Held>,
     /// The held fruit's scale (`mHeldObject->mScaling`).
     pub held_scale: f32,
     /// What was just swallowed (`mActorTypeInMouth`).
@@ -117,17 +136,44 @@ impl Tongue {
         true
     }
 
-    /// `findTarget`: the nearest fruit in reach of the tip, optionally only ahead of the mouth.
-    pub(crate) fn find_target(&self, host: &dyn Host, forward: bool) -> Option<Takeable> {
+    /// `findTarget`: the nearest fruit in reach of the tip, and with `enemies` the nearest
+    /// enemy too (`allowExtra`), optionally only ahead of the mouth (within 60 degrees).
+    pub(crate) fn find_target(
+        &self,
+        host: &dyn Host,
+        enemies: bool,
+        forward: bool,
+    ) -> Option<Target> {
+        let mut candidates = Vec::new();
         let mut found = Vec::new();
         host.takeables(self.tip, self.reach(), &mut found);
-        let mut best: Option<(f32, Takeable)> = None;
         for t in found {
-            if t.fruit.is_none() {
-                continue;
+            if t.fruit.is_some() {
+                // Aim at the middle of its height (`mDamageHeight * 0.5`).
+                candidates.push(Target {
+                    held: Held::Object {
+                        id: t.id,
+                        fruit: t.fruit,
+                    },
+                    pos: t.pos,
+                    aim: t.pos + Vec3::Y * t.radius,
+                });
             }
-            // Aim at the middle of its height (`mDamageHeight * 0.5`).
-            let d = target_point(&t) - self.tip;
+        }
+        if enemies {
+            let mut found = Vec::new();
+            host.enemies(self.tip, self.reach(), &mut found);
+            for e in found {
+                candidates.push(Target {
+                    held: Held::Enemy { id: e.id },
+                    pos: e.pos,
+                    aim: e.pos + Vec3::Y * (0.5 * e.height),
+                });
+            }
+        }
+        let mut best: Option<(f32, Target)> = None;
+        for t in candidates {
+            let d = t.aim - self.tip;
             if d == Vec3::ZERO {
                 continue;
             }
@@ -157,10 +203,17 @@ impl Tongue {
                     self.held_scale = (self.held_scale * ELASTICITY).max(0.01);
                 }
                 if len < RETRACTED_LENGTH {
-                    if let Some((id, kind)) = self.held.take() {
-                        self.in_mouth = Some(kind);
-                        // HIT_MESSAGE_UNK8 then UNKB: let go and vanish.
-                        events.push(Event::Eaten { id });
+                    // HIT_MESSAGE_UNK8 then UNKB: let go and vanish.
+                    match self.held.take() {
+                        Some(Held::Object { id, fruit }) => {
+                            self.in_mouth = Some(fruit);
+                            events.push(Event::Eaten { id });
+                        }
+                        Some(Held::Enemy { id }) => {
+                            self.in_mouth = Some(None);
+                            events.push(Event::EnemyEaten { id });
+                        }
+                        None => {}
                     }
                     self.state = TongueState::Idle;
                 }
@@ -170,14 +223,18 @@ impl Tongue {
 
         match self.state {
             TongueState::Idle => self.tip = self.head,
-            TongueState::Extending => match self.find_target(host, true) {
+            TongueState::Extending => match self.find_target(host, true, true) {
                 Some(t) if self.held.is_none() => {
-                    let aim = target_point(&t);
-                    let step = (aim - self.tip) * EXTEND_AMOUNT;
+                    let step = (t.aim - self.tip) * EXTEND_AMOUNT;
                     self.tip += step;
                     self.velocity = step;
-                    if (aim - self.tip).length() < 200.0 && host.take(t.id) {
-                        self.held = Some((t.id, t.fruit));
+                    let taken = (t.aim - self.tip).length() < 200.0
+                        && match t.held {
+                            Held::Object { id, .. } => host.take(id),
+                            Held::Enemy { id } => host.take_enemy(id),
+                        };
+                    if taken {
+                        self.held = Some(t.held);
                         self.held_scale = 1.0;
                         events.push(Event::Sound(SoundCue {
                             name: "MSD_SE_YV_PERON",
@@ -204,7 +261,11 @@ impl Tongue {
     }
 }
 
-/// Where the tongue aims on a target: the middle of its height.
-fn target_point(t: &Takeable) -> Vec3 {
-    t.pos + Vec3::Y * t.radius
+impl Held {
+    /// The host's id for it.
+    pub fn id(self) -> u64 {
+        match self {
+            Held::Object { id, .. } | Held::Enemy { id } => id,
+        }
+    }
 }
