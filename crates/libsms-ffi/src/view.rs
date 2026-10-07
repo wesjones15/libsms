@@ -11,13 +11,18 @@
 //! [`sms_view_colors`] and a texture in [`sms_view_texture_ids`]. Textures are each material's
 //! TEV baked into one RGBA image ([`sms_view_texture`]); new ones (blink frames) can appear in
 //! any frame. Sound plays for the ticks a sim runs with this view passed to `sms_sim_step`.
+//!
+//! FLUDD's water is separate geometry in world space: [`sms_view_water_vertices`] (quads, the
+//! drops then the splashes, counted in [`sms_view_water_info`]) over the two textures from
+//! [`sms_view_water_texture`].
 
 use std::ffi::{CString, c_char};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
 
 use glam::{Mat4, Vec3, Vec4};
-use libsms_present::{Audio, View};
+use libsms_present::water::WaterVertex;
+use libsms_present::{Audio, View, WaterLook};
 
 use crate::{SmsSim, SmsVec3};
 
@@ -106,11 +111,35 @@ pub struct SmsViewFrame {
     pub up: SmsVec3,
     /// Sound volume 0..1.
     pub volume: f32,
+    /// How many 120 Hz ticks behind the sim the host draws Mario (its own smoothing between
+    /// steps); the water is drawn as far back, so it leaves the drawn nozzle.
+    pub lag: f32,
+}
+
+/// A corner of a water quad: world position (sim units), texture coordinates and opacity.
+/// Quads are 4 corners in order.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SmsWaterVertex {
+    pub pos: SmsVec3,
+    pub uv: [f32; 2],
+    pub alpha: f32,
+}
+
+/// This frame's water: [`Self::drop_quads`] drop quads (texture 0, drawn see-through in
+/// [`Self::tint`]), then [`Self::splash_quads`] splash quads (texture 1, as they are).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SmsWaterInfo {
+    pub drop_quads: u32,
+    pub splash_quads: u32,
+    pub tint: [f32; 4],
 }
 
 /// An opaque view handle.
 pub struct SmsView {
     pub(crate) view: View,
+    pub(crate) water: WaterLook,
     pub(crate) audio: Option<Audio>,
     status: CString,
     poisoned: bool,
@@ -152,6 +181,7 @@ pub unsafe extern "C" fn sms_view_new(assets_dir: *const c_char, sound: u8) -> *
         );
         Some(SmsView {
             view,
+            water: WaterLook::load(&dir),
             audio,
             status: CString::new(status).unwrap_or_default(),
             poisoned: false,
@@ -399,8 +429,8 @@ fn listener_view(eye: Vec3, forward: Vec3, up: Vec3) -> Mat4 {
     rot * Mat4::from_translation(-eye)
 }
 
-/// Poses `sim` for this frame (and points FLUDD's water at the drawn nozzle), and sets the
-/// listener and volume for its sounds.
+/// Poses `sim` for this frame (and points FLUDD's water at the drawn nozzle), builds its water's
+/// quads facing the camera, and sets the listener and volume for its sounds.
 ///
 /// # Safety
 /// `view` from [`sms_view_new`]; `sim` from `sms_sim_new`; `frame` readable.
@@ -422,6 +452,9 @@ pub unsafe extern "C" fn sms_view_update(view: *mut SmsView, sim: *mut SmsSim, f
             let up = fwd.cross(right);
             v.view.set_camera(right, up);
             v.view.update(&mut s.sim, f.dt.clamp(0.0, 0.25));
+            let frac = (s.water_ticks as f32 + s.sim.alpha() - f.lag) / 4.0;
+            let juice = s.sim.mario.juice_color();
+            v.water.build(&s.water, frac, f.eye.into(), right, up, juice);
             if let Some(a) = &v.audio {
                 a.set_volume(f.volume);
                 a.set_listener(listener_view(f.eye.into(), fwd, up), f.eye.into());
@@ -555,3 +588,91 @@ pub unsafe extern "C" fn sms_view_frame_uvs(view: *mut SmsView, count: *mut u32)
 }
 
 const _: () = assert!(std::mem::size_of::<SmsVec3>() == std::mem::size_of::<Vec3>());
+
+/// This frame's water quads (see [`SmsWaterInfo`]); `count` gets how many corners. Valid as
+/// [`sms_view_positions`].
+///
+/// # Safety
+/// As [`sms_view_positions`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_water_vertices(view: *mut SmsView, count: *mut u32) -> *const SmsWaterVertex {
+    // SAFETY: as above; the layouts match (checked below).
+    unsafe {
+        with_view(view, std::ptr::null(), |v| {
+            if let Some(c) = count.as_mut() {
+                *c = v.water.vertices.len() as u32;
+            }
+            v.water.vertices.as_ptr().cast()
+        })
+    }
+}
+
+/// This frame's water counts and drop tint.
+///
+/// # Safety
+/// `view` from [`sms_view_new`]; `out` writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_water_info(view: *mut SmsView, out: *mut SmsWaterInfo) -> u8 {
+    // SAFETY: as documented.
+    unsafe {
+        with_view(view, 0, |v| {
+            let Some(out) = out.as_mut() else {
+                return 0;
+            };
+            *out = SmsWaterInfo {
+                drop_quads: v.water.drop_quads,
+                splash_quads: v.water.splash_quads,
+                tint: v.water.tint,
+            };
+            1
+        })
+    }
+}
+
+/// The water's textures, like [`sms_view_texture`]: 0 the drop (white, its coverage in
+/// alpha), 1 the splash. Wrap is clamp. Returns 0 if it's missing (draw untextured) or `len`
+/// is short.
+///
+/// # Safety
+/// As [`sms_view_texture`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_water_texture(
+    view: *mut SmsView,
+    which: u32,
+    info: *mut SmsTexture,
+    rgba: *mut u8,
+    len: u32,
+) -> u8 {
+    // SAFETY: as documented.
+    unsafe {
+        with_view(view, 0, |v| {
+            let t = match which {
+                0 => &v.water.drop,
+                1 => &v.water.splash,
+                _ => return 0,
+            };
+            if t.rgba.is_empty() {
+                return 0;
+            }
+            if let Some(info) = info.as_mut() {
+                *info = SmsTexture {
+                    width: t.width,
+                    height: t.height,
+                    wrap_s: 1,
+                    wrap_t: 1,
+                    _pad: [0; 2],
+                };
+            }
+            if rgba.is_null() {
+                return 1;
+            }
+            if t.rgba.len() > len as usize {
+                return 0;
+            }
+            std::ptr::copy_nonoverlapping(t.rgba.as_ptr(), rgba, t.rgba.len());
+            1
+        })
+    }
+}
+
+const _: () = assert!(std::mem::size_of::<SmsWaterVertex>() == std::mem::size_of::<WaterVertex>());

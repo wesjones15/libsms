@@ -875,6 +875,12 @@ impl Mario {
     fn jump_slip_events(&mut self, rec: &JumpSlipRec) -> bool {
         self.status_timer += 1;
         if self.status_timer >= rec.max_timer {
+            // Host tuning: the chain stays on offer a little longer (`Options::chain_grace_ticks`;
+            // counted down from the next tick).
+            let grace = self.options.chain_grace_ticks;
+            if grace > 0 && matches!(rec.jump, Status::SecondJump | Status::UltraJump) {
+                self.chain_grace = Some((rec.jump, grace + 1));
+            }
             return self.change_status(rec.end, 0, false);
         }
         if self.input.jump {

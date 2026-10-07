@@ -19,13 +19,15 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;
 
 use libsms::event::{Event, JumpKind};
+use libsms::water::WaterManager;
 use view::SmsView;
 use libsms::{
-    Assets, GroundHit, Host, Pad, RoofHit, Sim, SurfaceFlags, Vec2, Vec3, WallHit, math,
+    Assets, GroundHit, Host, Pad, RoofHit, Sim, SurfaceFlags, TICK_HZ, Vec2, Vec3, WallHit,
+    WaterEmit, math,
 };
 
 /// ABI version, bumped when the C interface changes.
-pub const SMS_ABI_VERSION: u32 = 2;
+pub const SMS_ABI_VERSION: u32 = 3;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sms_abi_version() -> u32 {
@@ -234,9 +236,26 @@ pub struct SmsState {
     pub has_fludd: u8,
 }
 
+/// Host tuning that departs from the game on purpose ([`libsms::Options`]); zeroes and ones
+/// are the game.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct SmsTuning {
+    /// Jump heights times this (1: the game's).
+    pub jump_height: f32,
+    /// Seconds an A press in the air is remembered for the landing (0: the game's, none).
+    pub jump_buffer: f32,
+    /// Seconds past the landing window in which a jump still chains (0: the game's).
+    pub chain_grace: f32,
+}
+
 /// An opaque sim handle.
 pub struct SmsSim {
     pub(crate) sim: Sim,
+    /// FLUDD's water (`TModelWaterManager`), fed by the sim's emits and moved every 4 ticks.
+    pub(crate) water: WaterManager,
+    /// Ticks since the water last moved.
+    pub(crate) water_ticks: u32,
     status: CString,
     clip: CString,
     pub(crate) poisoned: bool,
@@ -405,6 +424,8 @@ pub unsafe extern "C" fn sms_sim_new(
     });
     match made {
         Ok(Some(sim)) => Box::into_raw(Box::new(SmsSim {
+            water: WaterManager::new(&sim.mario.params),
+            water_ticks: 0,
             sim,
             status: CString::default(),
             clip: CString::default(),
@@ -425,8 +446,9 @@ pub unsafe extern "C" fn sms_sim_free(sim: *mut SmsSim) {
 }
 
 /// Advances by `dt` seconds of host time: as many 120 Hz ticks as are due, each with `pad`.
-/// `camera_yaw` is the facing angle from Mario toward the camera. With a `view` (may be null),
-/// its sounds follow each tick's animation and events. Returns the ticks run.
+/// `camera_yaw` is the facing angle from Mario toward the camera. FLUDD's water moves too,
+/// through the same callbacks. With a `view` (may be null), its sounds follow each tick's
+/// animation and events, and its splashes the water's. Returns the ticks run.
 ///
 /// # Safety
 /// `sim` from [`sms_sim_new`]; `host` and `pad` valid for the call; `view` null or from
@@ -452,8 +474,13 @@ pub unsafe extern "C" fn sms_sim_step(
     let pad = pad.to_pad(camera_yaw);
     let ran = catch_unwind(AssertUnwindSafe(|| {
         let mut h = FfiHost(host, Vec::new());
-        s.sim.advance_observed(&mut h, &pad, camera_yaw, dt, |mario, h| {
+        let mut emits: Vec<WaterEmit> = Vec::new();
+        let n = s.sim.advance_observed(&mut h, &pad, camera_yaw, dt, |mario, h| {
             let events = std::mem::take(&mut h.1);
+            emits.extend(events.iter().filter_map(|e| match e {
+                Event::WaterEmit(w) => Some(*w),
+                _ => None,
+            }));
             // SAFETY: the caller promised `view` is null or live.
             unsafe {
                 view::with_view(view, (), |v| {
@@ -463,7 +490,27 @@ pub unsafe extern "C" fn sms_sim_step(
                     }
                 });
             }
-        })
+        });
+        // `TModelWaterManager`: emitted every tick, moved once a 30 Hz frame.
+        for e in &emits {
+            s.water.emit(e);
+        }
+        s.water_ticks += n;
+        while s.water_ticks >= 4 {
+            s.water_ticks -= 4;
+            s.water.step(&h, s.sim.mario.pos);
+            // SAFETY: as above.
+            unsafe {
+                view::with_view(view, (), |v| {
+                    v.water.step(&s.water.events);
+                    if let Some(a) = v.audio.as_mut() {
+                        a.water(&s.water.events);
+                    }
+                });
+            }
+            s.water.events.clear();
+        }
+        n
     }));
     match ran {
         Ok(n) => n,
@@ -542,12 +589,30 @@ pub unsafe extern "C" fn sms_sim_teleport(sim: *mut SmsSim, pos: *const SmsVec3)
         m.prev_pos = m.pos;
         m.vel = Vec3::ZERO;
         m.forward_vel = 0.0;
+        s.water.particles.clear();
+    }
+}
+
+/// Sets host tuning (see [`SmsTuning`]); a new sim has the game's.
+///
+/// # Safety
+/// `sim` from [`sms_sim_new`]; `tuning` readable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_sim_set_tuning(sim: *mut SmsSim, tuning: *const SmsTuning) {
+    // SAFETY: the caller promised valid pointers.
+    if let (Some(s), Some(t)) = (unsafe { sim.as_mut() }, unsafe { tuning.as_ref() }) {
+        let ticks = |secs: f32| (secs.max(0.0) * TICK_HZ as f32).round().min(1.0e4) as u32;
+        let o = &mut s.sim.mario.options;
+        o.jump_height = if t.jump_height.is_finite() { t.jump_height.clamp(0.1, 10.0) } else { 1.0 };
+        o.jump_buffer_ticks = ticks(t.jump_buffer);
+        o.chain_grace_ticks = ticks(t.chain_grace);
     }
 }
 
 /// Sizes of the ABI's structs, for hosts to check their copies against: `SmsVec3`,
 /// `SmsGroundHit`, `SmsRoofHit`, `SmsWallHit`, `SmsEvent`, `SmsHost`, `SmsPad`, `SmsState`,
-/// `SmsModelInfo`, `SmsBatch`, `SmsTexture`, `SmsDraw`, `SmsViewFrame`. Writes up to `max`;
+/// `SmsModelInfo`, `SmsBatch`, `SmsTexture`, `SmsDraw`, `SmsViewFrame`, `SmsTuning`,
+/// `SmsWaterVertex`, `SmsWaterInfo`. Writes up to `max`;
 /// returns how many there are.
 ///
 /// # Safety
@@ -569,6 +634,9 @@ pub unsafe extern "C" fn sms_struct_sizes(out: *mut u32, max: u32) -> u32 {
         size_of::<view::SmsTexture>(),
         size_of::<view::SmsDraw>(),
         size_of::<view::SmsViewFrame>(),
+        size_of::<SmsTuning>(),
+        size_of::<view::SmsWaterVertex>(),
+        size_of::<view::SmsWaterInfo>(),
     ];
     if !out.is_null() {
         for (i, s) in sizes.iter().take(max as usize).enumerate() {
@@ -674,7 +742,7 @@ mod tests {
         let mut sizes = [0u32; 16];
         let n = unsafe { sms_struct_sizes(sizes.as_mut_ptr(), 16) } as usize;
         // ror2-mario's Native.cs and ror2-common's view structs check these at load.
-        assert_eq!(&sizes[..n], &[12, 20, 8, 16, 32, 40, 24, 48, 40, 24, 12, 64, 44]);
+        assert_eq!(&sizes[..n], &[12, 20, 8, 16, 32, 40, 24, 48, 40, 24, 12, 64, 48, 12, 24, 24]);
     }
 
     #[test]
@@ -729,6 +797,25 @@ mod tests {
                 view::sms_view_texture(v, t as u32, &mut tex, px.as_mut_ptr(), px.len() as u32),
                 1
             );
+
+            // Spraying fills the water with drops, drawn as quads.
+            let spray = SmsPad {
+                r_analog: 150,
+                ..SmsPad::default()
+            };
+            let mut most = 0;
+            for _ in 0..120 {
+                sms_sim_step(sim, &host, &spray, 0, 1.0 / 60.0, v);
+                view::sms_view_update(v, sim, &frame);
+                let mut w = view::SmsWaterInfo::default();
+                assert_eq!(view::sms_view_water_info(v, &mut w), 1);
+                let mut corners = 0;
+                view::sms_view_water_vertices(v, &mut corners);
+                assert_eq!(corners, 4 * (w.drop_quads + w.splash_quads));
+                most = most.max(w.drop_quads);
+            }
+            assert!(most > 10, "{most} drops");
+            assert_eq!(view::sms_view_water_texture(v, 0, &mut tex, std::ptr::null_mut(), 0), 1);
             view::sms_view_free(v);
             sms_sim_free(sim);
         }

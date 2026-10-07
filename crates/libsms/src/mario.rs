@@ -166,8 +166,9 @@ pub enum UpperState {
     HoldingObject,
 }
 
-/// Build-time options for behaviours that need states this crate does not have yet.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+/// Build-time options for behaviours that need states this crate does not have yet, and host
+/// tuning that departs from the game on purpose. The defaults are the game.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Options {
     /// Literal reading of `TNozzleBase::movement` (WaterGun.cpp): the continuous nozzles' output
     /// is `(pressed - gate)` where the gate ramps up to the pressed level at `mTriggerRate`
@@ -175,6 +176,26 @@ pub struct Options {
     /// binary 99.8%, but it contradicts how the game plays as far as we know, so the default
     /// is a steady output set by trigger pressure. Needs in-game verification; see the spec.
     pub spray_pressure_fades: bool,
+    /// Jump heights times this (1: the game's), for hosts whose worlds are built bigger. The
+    /// take-off speed scales by its square root, so arcs keep their shape and last longer.
+    pub jump_height: f32,
+    /// Ticks an A press that did nothing in the air is remembered, so pressing just before
+    /// landing still jumps (and chains). 0: the game's (no buffer).
+    pub jump_buffer_ticks: u32,
+    /// Ticks after a landing window (`*JumpSlip`, 0x10 ticks) in which a jump still chains
+    /// into the double or triple jump. 0: the game's.
+    pub chain_grace_ticks: u32,
+}
+
+impl Default for Options {
+    fn default() -> Options {
+        Options {
+            spray_pressure_fades: false,
+            jump_height: 1.0,
+            jump_buffer_ticks: 0,
+            chain_grace_ticks: 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -260,6 +281,12 @@ pub struct Mario {
     pub coins: u32,
 
     pub ticks: u64,
+
+    /// Ticks left on a buffered A press ([`Options::jump_buffer_ticks`]).
+    pub(crate) jump_buffer: u32,
+    /// The chained jump still on offer after a landing window closed, and ticks left
+    /// ([`Options::chain_grace_ticks`]).
+    pub(crate) chain_grace: Option<(Status, u32)>,
 }
 
 impl Mario {
@@ -332,6 +359,8 @@ impl Mario {
             invincible: 0,
             coins: 0,
             ticks: 0,
+            jump_buffer: 0,
+            chain_grace: None,
         }
     }
 
@@ -433,9 +462,24 @@ impl Mario {
         let l_edge = pad.l && !prev.l;
         let r_edge = pad.r && !prev.r;
 
+        // Host tuning: a press in the air waits for the landing; a closed chain window lingers.
+        self.jump_buffer = if a_edge {
+            self.options.jump_buffer_ticks
+        } else {
+            self.jump_buffer.saturating_sub(1)
+        };
+        if let Some((_, t)) = &mut self.chain_grace {
+            *t = t.saturating_sub(1);
+            if *t == 0 || self.status.is_jumping() {
+                self.chain_grace = None;
+            }
+        }
+        let buffered = self.jump_buffer > 0
+            && matches!(self.status.kind(), Kind::Waiting | Kind::Running);
+
         let i = &mut self.input;
         i.stick = self.intended_mag > 0.0;
-        i.jump = a_edge;
+        i.jump = a_edge || buffered;
         i.jump_held = pad.a;
         // Riding Yoshi, B is his tongue (`checkController`: `!onYoshi()`).
         let on_yoshi = self.yoshi.state == crate::yoshi::YoshiState::Mounted;
@@ -640,6 +684,22 @@ impl Mario {
     fn set_status_to_jumping(&mut self, st: Status, _arg: u32) -> Status {
         self.fall_start_y = self.pos.y;
         let j = self.params.jump.clone();
+        self.jump_buffer = 0;
+        // A plain jump just after a landing window still chains, at the window's speeds
+        // (`jumpSlipEvents`), when the host asked for grace.
+        let st = match (st, self.chain_grace.take()) {
+            (Status::Jump, Some((Status::SecondJump, _)))
+                if self.forward_vel >= j.sec_jump_enable_sp =>
+            {
+                Status::SecondJump
+            }
+            (Status::Jump, Some((Status::UltraJump, _)))
+                if self.forward_vel >= j.tri_jump_enable_sp =>
+            {
+                Status::UltraJump
+            }
+            _ => st,
+        };
         let mut event = None;
         match st {
             Status::Jump | Status::YoshiThrown => {
@@ -711,6 +771,12 @@ impl Mario {
                 event = Some(JumpKind::Forced);
             }
             _ => {}
+        }
+        if self.options.jump_height != 1.0
+            && self.vel.y > 0.0
+            && event.is_some_and(|k| !matches!(k, JumpKind::Forced | JumpKind::Dive))
+        {
+            self.vel.y *= self.options.jump_height.max(0.0).sqrt();
         }
         if self.on_yoshi() {
             self.vel.y *= self.params.yoshi.jump_yoshi_mult;

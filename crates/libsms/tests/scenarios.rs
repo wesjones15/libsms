@@ -308,6 +308,82 @@ fn missing_the_chain_window_lands_normally() {
     assert_ne!(s.mario().status, Status::SecondJump);
 }
 
+/// Runs, jumps holding A, and stops a few ticks before the landing.
+fn about_to_land(s: &mut Scene<FlatHost>) {
+    s.run_forward();
+    s.secs(1.0);
+    s.press_a();
+    s.pad.a = true;
+    assert!(s.until(600, |m| m.vel.y < 0.0 && m.pos.y < 25.0), "never came down");
+    s.pad.a = false;
+    s.step(1);
+}
+
+#[test]
+fn an_early_press_waits_for_the_landing_with_a_buffer() {
+    if need_disc() {
+        return;
+    }
+    // The game: a press in the air is lost.
+    let mut s = Scene::flat();
+    about_to_land(&mut s);
+    assert!(s.mario().status.is_jumping());
+    s.press_a();
+    assert!(!s.until(40, |m| m.status == Status::SecondJump));
+
+    let mut s = Scene::flat();
+    s.sim.mario.options.jump_buffer_ticks = 12;
+    about_to_land(&mut s);
+    s.press_a();
+    assert!(
+        s.until(40, |m| m.status == Status::SecondJump),
+        "got {:?}",
+        s.mario().status
+    );
+}
+
+#[test]
+fn chain_grace_keeps_the_double_jump_after_the_window() {
+    if need_disc() {
+        return;
+    }
+    let late = |grace: u32| {
+        let mut s = Scene::flat();
+        s.sim.mario.options.chain_grace_ticks = grace;
+        s.run_forward();
+        s.secs(1.0);
+        s.press_a();
+        s.pad.a = true;
+        assert!(s.until(600, |m| m.status == Status::JumpSlip));
+        s.pad.a = false;
+        // Past the 0x10-tick window.
+        assert!(s.until(40, |m| m.status != Status::JumpSlip));
+        s.step(4);
+        s.press_a();
+        s.step(2);
+        s.mario().status
+    };
+    assert_eq!(late(0), Status::Jump);
+    assert_eq!(late(12), Status::SecondJump);
+}
+
+#[test]
+fn jump_height_option_scales_the_apex() {
+    let apex = |h: f32| {
+        let mut s = Scene::flat();
+        s.sim.mario.options.jump_height = h;
+        s.pad.a = true;
+        let mut apex = 0.0f32;
+        for _ in 0..600 {
+            s.step(1);
+            apex = apex.max(s.mario().pos.y);
+        }
+        apex
+    };
+    let (one, two) = (apex(1.0), apex(2.0));
+    assert!((two / one - 2.0).abs() < 0.15, "{one} -> {two}");
+}
+
 #[test]
 fn dive_then_belly_slide() {
     let mut s = Scene::flat();

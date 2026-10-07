@@ -125,6 +125,12 @@ starts the next jump: JumpSlip -> Second (needs speed >= `mSecJumpEnableSp`, dis
 Triple (speed >= `mTriJumpEnableSp`, disc 25), anything else -> a plain Jump. Missing the window
 runs the `*End` clip then `Wait`. (ported: `air.rs`, `ground.rs jump_slip*`)
 
+Host tuning (not the game; all off by default, `Options`): `jump_height` multiplies take-off
+`vel.y` by its square root (every jump but dives and forced ones), `jump_buffer_ticks` keeps an A
+press that did nothing in the air and fires it on the first grounded tick, and
+`chain_grace_ticks` keeps the Second/Triple on offer for that long after a window closes. For hosts
+whose worlds are built bigger than Delfino and whose players aren't on a GameCube pad.
+
 Air control (`doJumping`): `forward *= mJumpSpeedBrake` (0.999); with the stick, `forward +=
 mag * cos(d) * mJumpAccelControl (0.008)`, sideways `mag * sin(d) * mJumpSlideControl (0.3)`;
 `> 32` decays by 0.2, `< -16` by 0.4.

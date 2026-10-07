@@ -652,8 +652,8 @@ mod tests {
             let x = ((vx.uv[0].x.rem_euclid(1.0) * t.width as f32) as u32).min(t.width - 1);
             let y = ((vx.uv[0].y.rem_euclid(1.0) * t.height as f32) as u32).min(t.height - 1);
             let o = ((y * t.width + x) * 4) as usize;
-            for c in 0..4 {
-                s[c] += t.rgba[o + c] as f32 / 255.0;
+            for (sc, px) in s.iter_mut().zip(&t.rgba[o..o + 4]) {
+                *sc += *px as f32 / 255.0;
             }
         }
         s.map(|c| c / verts.len().max(1) as f32)

@@ -56,7 +56,10 @@ Workspace:
 - `crates/libsms-ffi/`: C ABI (`sms.dll`): `SmsHost` callbacks (ground/roof/walls/events),
   `sms_sim_new/step/state/teleport/free`, and `sms_view_*` (models, bakes, per-frame draws;
   its structs match libpikmin's `pik_view_*` so `../ror2-common/` serves both). Pads may carry
-  a world-space move direction instead of a stick. Bump `SMS_ABI_VERSION` on any layout change
+  a world-space move direction instead of a stick. The sim handle also runs FLUDD's water
+  (`libsms::water`, through the same callbacks) and takes host tuning (`sms_sim_set_tuning`:
+  jump height, A buffer, chain grace; `Options`); the view builds the water's quads
+  (`libsms_present::water`, `sms_view_water_*`). Bump `SMS_ABI_VERSION` on any layout change
   and keep `sms_struct_sizes`' test in step; `../ror2-mario/MarioTest/Native.cs` mirrors it.
 - `crates/libsms-audio/`: device-independent PCM engine (`Engine`), JAI game layer
   (`SoundSystem`) and `.bas` cue playback (`animation::AnimationPlayer`).
