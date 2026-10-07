@@ -1,7 +1,8 @@
 # libsms
 
 Goal: reimplement Super Mario Sunshine's Mario locomotion and FLUDD as a game-agnostic Rust
-library, so any host (Elden Ring first, like libpikmin) can drive the Sunshine character.
+library, so any host can drive the Sunshine character. First host: Risk of Rain 2 (2023 build),
+in `../ror2-mario/` (BepInEx plugin over `libsms-ffi`).
 Sibling of `../libpikmin`; same shape and rules.
 
 ## Layout
@@ -44,7 +45,10 @@ Workspace:
   mouth goes back via `Mario::set_yoshi_mouth`).
   miniquad disables the depth *test* for pipelines without depth writes; `j3d.rs` masks writes
   with raw GL instead.
-- `crates/libsms-ffi/`: C ABI stub (cbindgen header later).
+- `crates/libsms-ffi/`: C ABI (`sms.dll`): `SmsHost` callbacks (ground/roof/walls/events),
+  `sms_sim_new/step/state/teleport/free`. Pads may carry a world-space move direction instead
+  of a stick. Bump `SMS_ABI_VERSION` on any layout change; `../ror2-mario/MarioTest/Native.cs`
+  mirrors it.
 - `crates/libsms-audio/`: device-independent PCM engine (`Engine`), JAI game layer
   (`SoundSystem`) and `.bas` cue playback (`animation::AnimationPlayer`).
   `libsms-assets::sound` loads banks, waves, sequences, streams, names and animation tables.

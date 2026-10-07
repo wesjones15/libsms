@@ -365,18 +365,22 @@ fn jump_index(k: JumpKind) -> i32 {
     }
 }
 
-/// Creates a Mario with FLUDD at `pos` facing `yaw`, tuned and animated from the extracted
+/// Creates a Mario with FLUDD at `*pos` facing `yaw`, tuned and animated from the extracted
 /// disc files in `assets_dir` (UTF-8, the folder holding `params_mario/`). Returns null if that
 /// folder has no `params_mario/`. Free with [`sms_sim_free`].
 ///
 /// # Safety
-/// `assets_dir` must be a valid nul-terminated string.
+/// `assets_dir` must be a valid nul-terminated string and `pos` readable.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_sim_new(
     assets_dir: *const c_char,
-    pos: SmsVec3,
+    pos: *const SmsVec3,
     yaw: i16,
 ) -> *mut SmsSim {
+    // SAFETY: the caller promised a readable pointer.
+    let Some(pos) = (unsafe { pos.as_ref() }).copied() else {
+        return std::ptr::null_mut();
+    };
     if assets_dir.is_null() {
         return std::ptr::null_mut();
     }
@@ -505,16 +509,16 @@ pub unsafe extern "C" fn sms_sim_clip_name(sim: *mut SmsSim) -> *const c_char {
     s.clip.as_ptr()
 }
 
-/// Moves Mario to `pos` at rest, for when the host relocates him (teleports, respawns).
+/// Moves Mario to `*pos` at rest, for when the host relocates him (teleports, respawns).
 ///
 /// # Safety
-/// `sim` from [`sms_sim_new`].
+/// `sim` from [`sms_sim_new`]; `pos` readable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sms_sim_teleport(sim: *mut SmsSim, pos: SmsVec3) {
-    // SAFETY: the caller promised a valid pointer.
-    if let Some(s) = unsafe { sim.as_mut() } {
+pub unsafe extern "C" fn sms_sim_teleport(sim: *mut SmsSim, pos: *const SmsVec3) {
+    // SAFETY: the caller promised valid pointers.
+    if let (Some(s), Some(pos)) = (unsafe { sim.as_mut() }, unsafe { pos.as_ref() }) {
         let m = &mut s.sim.mario;
-        m.pos = pos.into();
+        m.pos = (*pos).into();
         m.prev_pos = m.pos;
         m.vel = Vec3::ZERO;
         m.forward_vel = 0.0;
@@ -583,7 +587,7 @@ mod tests {
             event: Some(count),
         };
         unsafe {
-            let sim = sms_sim_new(dir.as_ptr(), SmsVec3::default(), 0);
+            let sim = sms_sim_new(dir.as_ptr(), &SmsVec3::default(), 0);
             assert!(!sim.is_null());
             let run = SmsPad {
                 move_x: 1.0,
