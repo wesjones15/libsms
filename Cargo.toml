@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
-members = ["crates/libsms", "crates/libsms-assets", "crates/libsms-audio", "crates/libsms-ffi", "crates/viewer"]
-default-members = ["crates/libsms", "crates/libsms-assets", "crates/libsms-audio", "crates/libsms-ffi"]
+members = ["crates/libsms", "crates/libsms-assets", "crates/libsms-audio", "crates/libsms-present", "crates/libsms-ffi", "crates/viewer"]
+default-members = ["crates/libsms", "crates/libsms-assets", "crates/libsms-audio", "crates/libsms-present", "crates/libsms-ffi"]
 
 [workspace.package]
 version = "0.1.0"
@@ -12,4 +12,5 @@ publish = false
 libsms = { path = "crates/libsms" }
 libsms-assets = { path = "crates/libsms-assets" }
 libsms-audio = { path = "crates/libsms-audio" }
+libsms-present = { path = "crates/libsms-present" }
 glam = "0.30"

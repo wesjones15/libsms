@@ -1,5 +1,8 @@
-//! Sample host audio. CPAL owns the device; the game thread posts animation clocks and
-//! events to `libsms-audio`. All positions and the listener matrix use decomp units.
+//! The game's sounds for the sim, on the default output device. CPAL owns the device; the
+//! game thread posts animation clocks and events to `libsms-audio` after each 120 Hz tick
+//! (`Sim::advance_observed`). All positions and the listener matrix use decomp units.
+//!
+//! Hosts with their own soundtrack start it without music.
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use glam::{Mat4, Vec3};
@@ -9,7 +12,10 @@ use libsms_audio::{SoundHandle, SoundSystem, animation::AnimationPlayer};
 use std::{
     collections::HashMap,
     path::Path,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU32, Ordering},
+    },
 };
 
 const MARIO: u64 = 0x4D41_5249;
@@ -20,7 +26,11 @@ const YOSHI: u64 = 0x594F_5348;
 pub struct Audio {
     scene: SceneAudio,
     sys: Arc<Mutex<SoundSystem>>,
+    /// Output gain 0..1, as `f32` bits.
+    volume: Arc<AtomicU32>,
     _stream: cpal::Stream,
+    pub rate: u32,
+    pub channels: u16,
 }
 
 /// Kept separate from the device so integration tests can render the same cues headlessly.
@@ -262,9 +272,10 @@ impl SceneAudio {
 }
 
 impl Audio {
-    /// Failure leaves a usable silent viewer, with a diagnostic.
-    pub fn start(dir: &Path) -> Option<Self> {
-        match Self::open(dir) {
+    /// Failure leaves a usable silent host, with a diagnostic. `music` starts Delfino Plaza's
+    /// theme (hosts with their own soundtrack leave it off).
+    pub fn start(dir: &Path, music: bool) -> Option<Self> {
+        match Self::open(dir, music) {
             Ok(audio) => Some(audio),
             Err(e) => {
                 eprintln!("sound disabled: {e}");
@@ -273,35 +284,51 @@ impl Audio {
         }
     }
 
-    fn open(dir: &Path) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn open(dir: &Path, music: bool) -> Result<Self, Box<dyn std::error::Error>> {
         let mut sys = SoundSystem::new(Arc::new(SoundData::load(dir)?));
         let mut scene = SceneAudio::load(dir, &sys);
-        if let Some(i) = scene.tracks.iter().position(|(n, _)| n == "MSD_BGM_DOLPIC")
+        if music
+            && let Some(i) = scene.tracks.iter().position(|(n, _)| n == "MSD_BGM_DOLPIC")
             && sys.play_bgm(scene.tracks[i].1)
         {
             scene.track = Some(i);
         }
         let sys = Arc::new(Mutex::new(sys));
+        let volume = Arc::new(AtomicU32::new(1.0f32.to_bits()));
         let device = cpal::default_host()
             .default_output_device()
             .ok_or("no output device")?;
         let config = device.default_output_config()?;
+        let (rate, channels) = (config.sample_rate().0, config.channels());
+        let v = volume.clone();
         let stream = match config.sample_format() {
-            cpal::SampleFormat::F32 => output::<f32>(&device, &config.into(), sys.clone())?,
-            cpal::SampleFormat::I16 => output::<i16>(&device, &config.into(), sys.clone())?,
-            cpal::SampleFormat::U16 => output::<u16>(&device, &config.into(), sys.clone())?,
+            cpal::SampleFormat::F32 => output::<f32>(&device, &config.into(), sys.clone(), v)?,
+            cpal::SampleFormat::I16 => output::<i16>(&device, &config.into(), sys.clone(), v)?,
+            cpal::SampleFormat::U16 => output::<u16>(&device, &config.into(), sys.clone(), v)?,
             format => return Err(format!("unsupported output sample format {format}").into()),
         };
         stream.play()?;
-        println!(
-            "sound: device active, {} Mario animation tables",
-            scene.tables.len()
-        );
         Ok(Self {
             scene,
             sys,
+            volume,
             _stream: stream,
+            rate,
+            channels,
         })
+    }
+
+    /// Output gain, 0..1.
+    pub fn set_volume(&self, v: f32) {
+        self.volume
+            .store(v.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
+    }
+
+    /// The listener as a world-to-camera matrix (camera looking down -Z) and its position.
+    pub fn set_listener(&self, view: Mat4, eye: Vec3) {
+        if let Ok(mut sys) = self.sys.lock() {
+            sys.set_listener(view, eye);
+        }
     }
 
     pub fn tick(&mut self, mario: &Mario) {
@@ -363,6 +390,7 @@ fn output<T: cpal::SizedSample + cpal::FromSample<f32>>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
     sys: Arc<Mutex<SoundSystem>>,
+    volume: Arc<AtomicU32>,
 ) -> Result<cpal::Stream, cpal::BuildStreamError> {
     let channels = config.channels as usize;
     let rate = config.sample_rate.0 as f32;
@@ -375,6 +403,7 @@ fn output<T: cpal::SizedSample + cpal::FromSample<f32>>(
             if let Ok(mut sys) = sys.lock() {
                 sys.render(&mut scratch, rate);
             }
+            let gain = f32::from_bits(volume.load(Ordering::Relaxed));
             for (stereo, frame) in scratch
                 .as_chunks::<2>()
                 .0
@@ -389,7 +418,7 @@ fn output<T: cpal::SizedSample + cpal::FromSample<f32>>(
                     } else {
                         0.0
                     };
-                    *sample = T::from_sample(value.clamp(-1.0, 1.0));
+                    *sample = T::from_sample((value * gain).clamp(-1.0, 1.0));
                 }
             }
         },
@@ -406,7 +435,7 @@ mod tests {
     #[ignore = "requires an output device and plays a short sound"]
     fn output_device_smoke() {
         let assets = libsms::Assets::discover(None).expect("assets required");
-        let audio = Audio::open(&assets.dir).expect("open output device");
+        let audio = Audio::open(&assets.dir, true).expect("open output device");
         {
             let mut sys = audio.sys.lock().unwrap();
             let id = audio.scene.tables["jump"].sounds[0].id;

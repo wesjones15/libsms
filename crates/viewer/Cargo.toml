@@ -14,4 +14,4 @@ macroquad = "0.4"
 libsms-assets.workspace = true
 glam.workspace = true
 libsms-audio.workspace = true
-cpal = "0.15"
+libsms-present.workspace = true

@@ -45,15 +45,24 @@ Workspace:
   mouth goes back via `Mario::set_yoshi_mouth`).
   miniquad disables the depth *test* for pipelines without depth writes; `j3d.rs` masks writes
   with raw GL instead.
+- `crates/libsms-present/`: presentation for hosts that draw Mario themselves: `view` (the
+  disc's body, hands, cap, FLUDD and nozzles posed from the sim like the viewer's
+  `mario_model.rs`, CPU-skinned into one vertex buffer in Mario's model space), `tev` (each
+  material's TEV run on the CPU per texel and baked into one RGBA texture, at full diffuse
+  light with no specular: Mario's materials light themselves in TEV with a toon ramp read at
+  the lit colour (`GX_TG_SRTG`) plus a highlight; env-only materials bake over the env map's
+  space), and `audio` (the viewer's old `sound.rs`: the game's sounds on cpal, music optional).
+  `cargo run -p libsms-present --example bakes -- <dir>` writes every bake to PNG.
 - `crates/libsms-ffi/`: C ABI (`sms.dll`): `SmsHost` callbacks (ground/roof/walls/events),
-  `sms_sim_new/step/state/teleport/free`. Pads may carry a world-space move direction instead
-  of a stick. Bump `SMS_ABI_VERSION` on any layout change; `../ror2-mario/MarioTest/Native.cs`
-  mirrors it.
+  `sms_sim_new/step/state/teleport/free`, and `sms_view_*` (models, bakes, per-frame draws;
+  its structs match libpikmin's `pik_view_*` so `../ror2-common/` serves both). Pads may carry
+  a world-space move direction instead of a stick. Bump `SMS_ABI_VERSION` on any layout change
+  and keep `sms_struct_sizes`' test in step; `../ror2-mario/MarioTest/Native.cs` mirrors it.
 - `crates/libsms-audio/`: device-independent PCM engine (`Engine`), JAI game layer
   (`SoundSystem`) and `.bas` cue playback (`animation::AnimationPlayer`).
   `libsms-assets::sound` loads banks, waves, sequences, streams, names and animation tables.
   See `docs/audio.md` for the host contract, tests and remaining fidelity gaps.
-- Viewer audio (`crates/viewer/src/sound.rs`) uses CPAL, samples animation/events after each
+- Viewer audio (`libsms_present::audio`) uses CPAL, samples animation/events after each
   120 Hz tick with `Sim::advance_observed`, and runs JAI frames at 30 Hz.
   It starts Delfino Plaza music; **M** cycles extracted BGM tracks, including off.
   Missing sound data or an unavailable output device leaves a silent, usable viewer.

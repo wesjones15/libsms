@@ -509,7 +509,20 @@ dependencies = [
 name = "libsms-ffi"
 version = "0.1.0"
 dependencies = [
+ "glam 0.30.10",
  "libsms",
+ "libsms-present",
+]
+
+[[package]]
+name = "libsms-present"
+version = "0.1.0"
+dependencies = [
+ "cpal",
+ "glam 0.30.10",
+ "libsms",
+ "libsms-assets",
+ "libsms-audio",
 ]
 
 [[package]]
@@ -983,11 +996,11 @@ checksum = "d245f478577f809a851594d02313b640fb437e0bb33866753cff937863096954"
 name = "viewer"
 version = "0.1.0"
 dependencies = [
- "cpal",
  "glam 0.30.10",
  "libsms",
  "libsms-assets",
  "libsms-audio",
+ "libsms-present",
  "macroquad",
 ]
 

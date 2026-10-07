@@ -8,19 +8,24 @@
 //!
 //! The shape: fill an [`SmsHost`] with collision callbacks, create a sim with
 //! [`sms_sim_new`], call [`sms_sim_step`] once per host frame with the pad and camera, then read
-//! [`sms_sim_state`].
+//! [`sms_sim_state`]. Hosts that draw Mario themselves add a view ([`view`]: the disc's models
+//! posed and skinned, and the game's sounds). [`sms_struct_sizes`] lets a host check its copies
+//! of these structs.
+
+pub mod view;
 
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;
 
 use libsms::event::{Event, JumpKind};
+use view::SmsView;
 use libsms::{
     Assets, GroundHit, Host, Pad, RoofHit, Sim, SurfaceFlags, Vec2, Vec3, WallHit, math,
 };
 
 /// ABI version, bumped when the C interface changes.
-pub const SMS_ABI_VERSION: u32 = 1;
+pub const SMS_ABI_VERSION: u32 = 2;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sms_abi_version() -> u32 {
@@ -231,13 +236,14 @@ pub struct SmsState {
 
 /// An opaque sim handle.
 pub struct SmsSim {
-    sim: Sim,
+    pub(crate) sim: Sim,
     status: CString,
     clip: CString,
-    poisoned: bool,
+    pub(crate) poisoned: bool,
 }
 
-struct FfiHost<'a>(&'a SmsHost);
+/// The host's callbacks, plus this tick's events for the view's sounds.
+struct FfiHost<'a>(&'a SmsHost, Vec<Event>);
 
 impl Host for FfiHost<'_> {
     fn ground(&self, pos: Vec3) -> Option<GroundHit> {
@@ -294,6 +300,7 @@ impl Host for FfiHost<'_> {
     }
 
     fn event(&mut self, event: Event) {
+        self.1.push(event);
         let Some(f) = self.0.event else {
             return;
         };
@@ -418,11 +425,12 @@ pub unsafe extern "C" fn sms_sim_free(sim: *mut SmsSim) {
 }
 
 /// Advances by `dt` seconds of host time: as many 120 Hz ticks as are due, each with `pad`.
-/// `camera_yaw` is the facing angle from Mario toward the camera. Returns the ticks run.
+/// `camera_yaw` is the facing angle from Mario toward the camera. With a `view` (may be null),
+/// its sounds follow each tick's animation and events. Returns the ticks run.
 ///
 /// # Safety
-/// `sim` from [`sms_sim_new`]; `host` and `pad` valid for the call; the host's callbacks
-/// must be safe to call with their documented arguments.
+/// `sim` from [`sms_sim_new`]; `host` and `pad` valid for the call; `view` null or from
+/// `sms_view_new`; the host's callbacks must be safe to call with their documented arguments.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_sim_step(
     sim: *mut SmsSim,
@@ -430,6 +438,7 @@ pub unsafe extern "C" fn sms_sim_step(
     pad: *const SmsPad,
     camera_yaw: i16,
     dt: f32,
+    view: *mut SmsView,
 ) -> u32 {
     // SAFETY: the caller promised valid pointers.
     let (Some(s), Some(host), Some(pad)) =
@@ -442,8 +451,19 @@ pub unsafe extern "C" fn sms_sim_step(
     }
     let pad = pad.to_pad(camera_yaw);
     let ran = catch_unwind(AssertUnwindSafe(|| {
-        let mut h = FfiHost(host);
-        s.sim.advance(&mut h, &pad, camera_yaw, dt)
+        let mut h = FfiHost(host, Vec::new());
+        s.sim.advance_observed(&mut h, &pad, camera_yaw, dt, |mario, h| {
+            let events = std::mem::take(&mut h.1);
+            // SAFETY: the caller promised `view` is null or live.
+            unsafe {
+                view::with_view(view, (), |v| {
+                    if let Some(a) = v.audio.as_mut() {
+                        a.events(&events, mario);
+                        a.tick(mario);
+                    }
+                });
+            }
+        })
     }));
     match ran {
         Ok(n) => n,
@@ -525,6 +545,40 @@ pub unsafe extern "C" fn sms_sim_teleport(sim: *mut SmsSim, pos: *const SmsVec3)
     }
 }
 
+/// Sizes of the ABI's structs, for hosts to check their copies against: `SmsVec3`,
+/// `SmsGroundHit`, `SmsRoofHit`, `SmsWallHit`, `SmsEvent`, `SmsHost`, `SmsPad`, `SmsState`,
+/// `SmsModelInfo`, `SmsBatch`, `SmsTexture`, `SmsDraw`, `SmsViewFrame`. Writes up to `max`;
+/// returns how many there are.
+///
+/// # Safety
+/// `out` null or writable for `max`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_struct_sizes(out: *mut u32, max: u32) -> u32 {
+    use std::mem::size_of;
+    let sizes = [
+        size_of::<SmsVec3>(),
+        size_of::<SmsGroundHit>(),
+        size_of::<SmsRoofHit>(),
+        size_of::<SmsWallHit>(),
+        size_of::<SmsEvent>(),
+        size_of::<SmsHost>(),
+        size_of::<SmsPad>(),
+        size_of::<SmsState>(),
+        size_of::<view::SmsModelInfo>(),
+        size_of::<view::SmsBatch>(),
+        size_of::<view::SmsTexture>(),
+        size_of::<view::SmsDraw>(),
+        size_of::<view::SmsViewFrame>(),
+    ];
+    if !out.is_null() {
+        for (i, s) in sizes.iter().take(max as usize).enumerate() {
+            // SAFETY: as documented.
+            unsafe { out.add(i).write(*s as u32) };
+        }
+    }
+    sizes.len() as u32
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -595,7 +649,7 @@ mod tests {
                 ..SmsPad::default()
             };
             for _ in 0..60 {
-                sms_sim_step(sim, &host, &run, 0, 1.0 / 60.0);
+                sms_sim_step(sim, &host, &run, 0, 1.0 / 60.0, std::ptr::null_mut());
             }
             let mut st = SmsState::default();
             assert_eq!(sms_sim_state(sim, &mut st), 1);
@@ -604,13 +658,78 @@ mod tests {
             assert_eq!(st.has_fludd, 1);
             let jump = SmsPad { a: 1, ..run };
             for _ in 0..3 {
-                sms_sim_step(sim, &host, &jump, 0, 1.0 / 60.0);
+                sms_sim_step(sim, &host, &jump, 0, 1.0 / 60.0, std::ptr::null_mut());
             }
             sms_sim_state(sim, &mut st);
             assert!(st.pos.y > 0.0 && st.on_ground == 0, "{:?}", st);
             assert_eq!(jumps, 1);
             let name = CStr::from_ptr(sms_sim_status_name(sim)).to_str().unwrap();
             assert!(name.contains("Jump"), "{name}");
+            sms_sim_free(sim);
+        }
+    }
+
+    #[test]
+    fn struct_sizes_are_what_hosts_mirror() {
+        let mut sizes = [0u32; 16];
+        let n = unsafe { sms_struct_sizes(sizes.as_mut_ptr(), 16) } as usize;
+        // ror2-mario's Native.cs and ror2-common's view structs check these at load.
+        assert_eq!(&sizes[..n], &[12, 20, 8, 16, 32, 40, 24, 48, 40, 24, 12, 64, 44]);
+    }
+
+    #[test]
+    fn a_view_poses_the_sim_through_the_c_abi() {
+        let Some(dir) = libsms::assets::find(None) else {
+            eprintln!("skipping: no assets/");
+            return;
+        };
+        let dir = CString::new(dir.to_string_lossy().as_bytes()).unwrap();
+        let host = SmsHost {
+            user: std::ptr::null_mut(),
+            ground: Some(flat),
+            roof: None,
+            walls: None,
+            event: None,
+        };
+        unsafe {
+            let sim = sms_sim_new(dir.as_ptr(), &SmsVec3::default(), 0);
+            let v = view::sms_view_new(dir.as_ptr(), 0);
+            assert!(!sim.is_null() && !v.is_null());
+            let frame = view::SmsViewFrame {
+                dt: 1.0 / 60.0,
+                forward: SmsVec3 { x: 0.0, y: 0.0, z: 1.0 },
+                up: SmsVec3 { x: 0.0, y: 1.0, z: 0.0 },
+                volume: 1.0,
+                ..Default::default()
+            };
+            for _ in 0..10 {
+                sms_sim_step(sim, &host, &SmsPad::default(), 0, 1.0 / 60.0, v);
+                view::sms_view_update(v, sim, &frame);
+            }
+            let n = view::sms_view_draws(v, std::ptr::null_mut(), 0);
+            assert!(n >= 3, "{n} draws");
+            let mut draws = vec![view::SmsDraw::default(); n as usize];
+            view::sms_view_draws(v, draws.as_mut_ptr(), n);
+            let mut count = 0;
+            let pos = view::sms_view_positions(v, &mut count);
+            assert!(!pos.is_null() && count > 1000, "{count} vertices");
+            let mut info = view::SmsModelInfo::default();
+            assert_eq!(view::sms_view_model(v, 0, &mut info), 1);
+            let mut batches = vec![view::SmsBatch::default(); info.batch_count as usize];
+            assert_eq!(
+                view::sms_view_batches(v, 0, batches.as_mut_ptr(), info.batch_count),
+                info.batch_count
+            );
+            let t = batches[0].texture;
+            assert!(t >= 0);
+            let mut tex = view::SmsTexture::default();
+            assert_eq!(view::sms_view_texture(v, t as u32, &mut tex, std::ptr::null_mut(), 0), 1);
+            let mut px = vec![0u8; (tex.width * tex.height * 4) as usize];
+            assert_eq!(
+                view::sms_view_texture(v, t as u32, &mut tex, px.as_mut_ptr(), px.len() as u32),
+                1
+            );
+            view::sms_view_free(v);
             sms_sim_free(sim);
         }
     }

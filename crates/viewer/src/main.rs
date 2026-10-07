@@ -22,7 +22,6 @@ mod j3d;
 mod mario_model;
 mod props;
 mod coin;
-mod sound;
 mod stu;
 mod water;
 mod yoshi_model;
@@ -827,7 +826,7 @@ async fn main() {
         &mut |m| println!("{m}"),
     );
     let rig = assets.as_ref().and_then(Rig::from_assets);
-    let mut audio = assets.as_ref().and_then(|a| sound::Audio::start(&a.dir));
+    let mut audio = assets.as_ref().and_then(|a| libsms_present::Audio::start(&a.dir, true));
     // The disc's Mario: body, hands, cap, FLUDD and nozzles with their materials.
     let mut mario_model = assets.as_ref().and_then(|a| {
         mario_model::MarioModel::load(&a.dir)

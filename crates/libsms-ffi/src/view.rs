@@ -1,0 +1,557 @@
+//! Drawing and sound for hosts with their own engine: `libsms-present`'s [`View`] (the disc's
+//! Mario, posed and skinned every frame) and [`Audio`] (the game's sounds for the sim) behind a
+//! C ABI.
+//!
+//! The model structs match libpikmin's `pik_view_*` field for field, so one host-side model
+//! uploader serves both: models are loaded once, and a host builds a mesh per model from
+//! [`sms_view_model`], [`sms_view_batches`] (one submesh each), [`sms_view_indices`] and
+//! [`sms_view_uvs`]. Each frame [`sms_view_update`] poses the sim; [`sms_view_draws`] lists
+//! the instances (Mario's parts, all in his model space at his feet), each with its vertices
+//! in [`sms_view_positions`] / [`sms_view_normals`] (sim units) and per batch a colour in
+//! [`sms_view_colors`] and a texture in [`sms_view_texture_ids`]. Textures are each material's
+//! TEV baked into one RGBA image ([`sms_view_texture`]); new ones (blink frames) can appear in
+//! any frame. Sound plays for the ticks a sim runs with this view passed to `sms_sim_step`.
+
+use std::ffi::{CString, c_char};
+use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::path::PathBuf;
+
+use glam::{Mat4, Vec3, Vec4};
+use libsms_present::{Audio, View};
+
+use crate::{SmsSim, SmsVec3};
+
+/// One model's sizes.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SmsModelInfo {
+    pub vertex_count: u32,
+    pub index_count: u32,
+    pub batch_count: u32,
+    /// Textures baked so far, every model's ([`sms_view_texture`] ids are below this).
+    pub texture_count: u32,
+    /// Bind-pose bounds.
+    pub lo: SmsVec3,
+    pub hi: SmsVec3,
+}
+
+/// One batch (a submesh with one material).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SmsBatch {
+    pub first_index: u32,
+    pub index_count: u32,
+    pub first_vertex: u32,
+    pub vertex_count: u32,
+    /// Its texture with no per-draw changes ([`sms_view_texture`]), or -1. A draw's own is in
+    /// [`sms_view_texture_ids`].
+    pub texture: i32,
+    /// `libsms_present::view::blend`: 0 opaque, 1 cutout, 2 translucent, 3 additive.
+    pub blend: u8,
+    /// Lit in the game: 1 its colour, 2 its alpha. 0: unlit.
+    pub lit: u8,
+    /// 0 back, 1 front, 2 none (GX faces are front when clockwise on screen).
+    pub cull: u8,
+    /// 1: environment mapped: its texture coordinates change every frame
+    /// ([`sms_view_frame_uvs`]).
+    pub env: u8,
+}
+
+/// A texture's size and wrap modes (0 repeat, 1 clamp, 2 mirror).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SmsTexture {
+    pub width: u32,
+    pub height: u32,
+    pub wrap_s: u8,
+    pub wrap_t: u8,
+    pub _pad: [u8; 2],
+}
+
+/// One posed instance: an object of model `model` at `pos` rotated by `rot` (x, y, z, w),
+/// with the vertices and colours at the offsets. Mirror it across its own X in a left-handed
+/// engine.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SmsDraw {
+    /// Stable while the part is shown (the part in the top byte).
+    pub key: u64,
+    pub model: u32,
+    /// `libsms_present::view::models`: 0 body, 1-2 open hands, 3-4 fists, 5 cap, 6 FLUDD,
+    /// 7-11 nozzles (Spray, Hover, Rocket, Turbo, Yoshi).
+    pub kind: u8,
+    /// 1: flashing from a hit.
+    pub flags: u8,
+    pub _pad: [u8; 2],
+    /// Mario's feet (render-interpolated), sim units.
+    pub pos: SmsVec3,
+    pub rot: [f32; 4],
+    pub first_vertex: u32,
+    pub first_color: u32,
+    /// 1 opaque .. 0 gone.
+    pub alpha: f32,
+    /// Which Mario (0).
+    pub id: u32,
+}
+
+/// The frame's camera and listening for [`sms_view_update`].
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SmsViewFrame {
+    /// Seconds since the last update (0 while paused).
+    pub dt: f32,
+    /// Camera position and facing, sim units and axes.
+    pub eye: SmsVec3,
+    pub forward: SmsVec3,
+    pub up: SmsVec3,
+    /// Sound volume 0..1.
+    pub volume: f32,
+}
+
+/// An opaque view handle.
+pub struct SmsView {
+    pub(crate) view: View,
+    pub(crate) audio: Option<Audio>,
+    status: CString,
+    poisoned: bool,
+}
+
+/// Loads Mario's models (and with `sound` non-zero, opens the default output device for the
+/// game's sounds, without music) from `assets_dir`. Null if the models can't be loaded. Free
+/// with [`sms_view_free`].
+///
+/// # Safety
+/// `assets_dir` a nul-terminated UTF-8 path.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_new(assets_dir: *const c_char, sound: u8) -> *mut SmsView {
+    if assets_dir.is_null() {
+        return std::ptr::null_mut();
+    }
+    // SAFETY: as documented.
+    let dir = unsafe { std::ffi::CStr::from_ptr(assets_dir) }
+        .to_string_lossy()
+        .into_owned();
+    let made = catch_unwind(|| {
+        let dir = PathBuf::from(dir);
+        let view = View::load(&dir).ok()?;
+        let (audio, sound_status) = if sound != 0 {
+            match Audio::open(&dir, false) {
+                Ok(a) => {
+                    let s = format!("sound {} Hz, {} channels", a.rate, a.channels);
+                    (Some(a), s)
+                }
+                Err(e) => (None, format!("no sound ({e})")),
+            }
+        } else {
+            (None, "sound off".to_string())
+        };
+        let status = format!(
+            "{} models, {} textures; {sound_status}",
+            view.models.len(),
+            view.textures.list.len()
+        );
+        Some(SmsView {
+            view,
+            audio,
+            status: CString::new(status).unwrap_or_default(),
+            poisoned: false,
+        })
+    });
+    match made {
+        Ok(Some(v)) => Box::into_raw(Box::new(v)),
+        _ => std::ptr::null_mut(),
+    }
+}
+
+/// # Safety
+/// `view` from [`sms_view_new`] and not used afterwards. Null is ignored.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_free(view: *mut SmsView) {
+    if !view.is_null() {
+        // SAFETY: the caller hands back ownership.
+        let v = unsafe { Box::from_raw(view) };
+        // Stopping the stream joins its thread; never let a panic out.
+        let _ = catch_unwind(AssertUnwindSafe(move || drop(v)));
+    }
+}
+
+/// What loaded ("12 models, 26 textures; sound 48000 Hz, 2 channels"). Valid until the view
+/// is freed.
+///
+/// # Safety
+/// `view` from [`sms_view_new`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_status(view: *const SmsView) -> *const c_char {
+    // SAFETY: as documented.
+    match unsafe { view.as_ref() } {
+        Some(v) => v.status.as_ptr(),
+        None => std::ptr::null(),
+    }
+}
+
+/// Runs `f` on a live view, poisoning it if `f` panics.
+///
+/// # Safety
+/// `view` null or from [`sms_view_new`], not aliased for the call.
+pub(crate) unsafe fn with_view<R>(
+    view: *mut SmsView,
+    fallback: R,
+    f: impl FnOnce(&mut SmsView) -> R,
+) -> R {
+    // SAFETY: as documented.
+    let Some(v) = (unsafe { view.as_mut() }) else {
+        return fallback;
+    };
+    if v.poisoned {
+        return fallback;
+    }
+    match catch_unwind(AssertUnwindSafe(|| f(v))) {
+        Ok(r) => r,
+        Err(_) => {
+            v.poisoned = true;
+            fallback
+        }
+    }
+}
+
+/// Number of models (see [`SmsDraw::kind`]).
+///
+/// # Safety
+/// `view` from [`sms_view_new`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_model_count(view: *mut SmsView) -> u32 {
+    // SAFETY: as documented.
+    unsafe { with_view(view, 0, |v| v.view.models.len() as u32) }
+}
+
+/// # Safety
+/// `view` from [`sms_view_new`]; `out` writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_model(view: *mut SmsView, model: u32, out: *mut SmsModelInfo) -> u8 {
+    // SAFETY: as documented.
+    unsafe {
+        with_view(view, 0, |v| {
+            let (Some(m), Some(out)) = (v.view.models.get(model as usize), out.as_mut()) else {
+                return 0;
+            };
+            *out = SmsModelInfo {
+                vertex_count: m.vertex_count as u32,
+                index_count: m.batches.iter().map(|b| b.indices.len() as u32).sum(),
+                batch_count: m.batches.len() as u32,
+                texture_count: v.view.textures.list.len() as u32,
+                lo: m.lo.into(),
+                hi: m.hi.into(),
+            };
+            1
+        })
+    }
+}
+
+/// Writes up to `max` of the model's batches; returns how many.
+///
+/// # Safety
+/// `view` from [`sms_view_new`]; `out` writable for `max`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_batches(view: *mut SmsView, model: u32, out: *mut SmsBatch, max: u32) -> u32 {
+    // SAFETY: as documented.
+    unsafe {
+        with_view(view, 0, |v| {
+            let Some(m) = v.view.models.get(model as usize) else {
+                return 0;
+            };
+            let (mut index, mut vertex) = (0u32, 0u32);
+            let mut n = 0;
+            for (i, b) in m.batches.iter().enumerate() {
+                if n >= max as usize || out.is_null() {
+                    break;
+                }
+                out.add(n).write(SmsBatch {
+                    first_index: index,
+                    index_count: b.indices.len() as u32,
+                    first_vertex: vertex,
+                    vertex_count: b.vertices.len() as u32,
+                    texture: m.batch_texture[i],
+                    blend: m.batch_blend[i],
+                    lit: m.batch_lit[i],
+                    cull: m.batch_cull[i],
+                    env: m.batch_env[i].is_some() as u8,
+                });
+                index += b.indices.len() as u32;
+                vertex += b.vertices.len() as u32;
+                n += 1;
+            }
+            n as u32
+        })
+    }
+}
+
+/// The model's triangle indices, batch after batch, into the model's whole vertex list (batch
+/// `b`'s are `first_index .. first_index + index_count`). Returns how many were written.
+///
+/// # Safety
+/// `view` from [`sms_view_new`]; `out` writable for `max`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_indices(view: *mut SmsView, model: u32, out: *mut u32, max: u32) -> u32 {
+    // SAFETY: as documented.
+    unsafe {
+        with_view(view, 0, |v| {
+            let Some(m) = v.view.models.get(model as usize) else {
+                return 0;
+            };
+            if out.is_null() {
+                return 0;
+            }
+            let (mut n, mut base) = (0usize, 0u32);
+            for b in &m.batches {
+                for &i in &b.indices {
+                    if n >= max as usize {
+                        return n as u32;
+                    }
+                    out.add(n).write(base + i);
+                    n += 1;
+                }
+                base += b.vertices.len() as u32;
+            }
+            n as u32
+        })
+    }
+}
+
+/// The model's texture coordinates (its first set), one per vertex in vertex order. Returns
+/// how many.
+///
+/// # Safety
+/// `view` from [`sms_view_new`]; `out` writable for `max` pairs of floats.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_uvs(view: *mut SmsView, model: u32, out: *mut [f32; 2], max: u32) -> u32 {
+    // SAFETY: as documented.
+    unsafe {
+        with_view(view, 0, |v| {
+            let Some(m) = v.view.models.get(model as usize) else {
+                return 0;
+            };
+            if out.is_null() {
+                return 0;
+            }
+            let mut n = 0usize;
+            for vtx in m.batches.iter().flat_map(|b| &b.vertices) {
+                if n >= max as usize {
+                    break;
+                }
+                out.add(n).write([vtx.uv[0].x, vtx.uv[0].y]);
+                n += 1;
+            }
+            n as u32
+        })
+    }
+}
+
+/// Baked texture `id`: its size and wrap modes in `info`, and if `rgba` isn't null, its pixels
+/// (RGBA8, rows top first, `width * height * 4` bytes; `len` is the room). The colour is all
+/// there: a host multiplies it by its lighting and the draw's colour. Returns 0 for an unknown
+/// id or too little room.
+///
+/// # Safety
+/// `view` from [`sms_view_new`]; `info` null or writable; `rgba` null or writable for `len`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_texture(
+    view: *mut SmsView,
+    id: u32,
+    info: *mut SmsTexture,
+    rgba: *mut u8,
+    len: u32,
+) -> u8 {
+    // SAFETY: as documented.
+    unsafe {
+        with_view(view, 0, |v| {
+            let Some(t) = v.view.textures.list.get(id as usize) else {
+                return 0;
+            };
+            if let Some(info) = info.as_mut() {
+                *info = SmsTexture {
+                    width: t.width,
+                    height: t.height,
+                    wrap_s: t.wrap[0],
+                    wrap_t: t.wrap[1],
+                    _pad: [0; 2],
+                };
+            }
+            if rgba.is_null() {
+                return 1;
+            }
+            if t.rgba.len() > len as usize {
+                return 0;
+            }
+            std::ptr::copy_nonoverlapping(t.rgba.as_ptr(), rgba, t.rgba.len());
+            1
+        })
+    }
+}
+
+/// World-to-camera for the sound system: camera looking down -Z with +X to its right. Hosts
+/// pass Unity-style axes (left-handed: right = up x forward), which is what the sim's numbers
+/// are in a host that copies its coordinates straight across.
+fn listener_view(eye: Vec3, forward: Vec3, up: Vec3) -> Mat4 {
+    let f = forward.normalize_or(Vec3::Z);
+    let r = up.cross(f).normalize_or(Vec3::X);
+    let u = f.cross(r);
+    let rot = Mat4::from_cols(r.extend(0.0), u.extend(0.0), (-f).extend(0.0), Vec4::W).transpose();
+    rot * Mat4::from_translation(-eye)
+}
+
+/// Poses `sim` for this frame (and points FLUDD's water at the drawn nozzle), and sets the
+/// listener and volume for its sounds.
+///
+/// # Safety
+/// `view` from [`sms_view_new`]; `sim` from `sms_sim_new`; `frame` readable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_update(view: *mut SmsView, sim: *mut SmsSim, frame: *const SmsViewFrame) {
+    // SAFETY: as documented.
+    let (Some(s), Some(f)) = (unsafe { sim.as_mut() }, unsafe { frame.as_ref() }) else {
+        return;
+    };
+    if s.poisoned {
+        return;
+    }
+    let f = *f;
+    // SAFETY: as documented.
+    unsafe {
+        with_view(view, (), |v| {
+            let fwd = Vec3::from(f.forward).normalize_or(Vec3::Z);
+            let right = Vec3::from(f.up).cross(fwd).normalize_or(Vec3::X);
+            let up = fwd.cross(right);
+            v.view.set_camera(right, up);
+            v.view.update(&mut s.sim, f.dt.clamp(0.0, 0.25));
+            if let Some(a) = &v.audio {
+                a.set_volume(f.volume);
+                a.set_listener(listener_view(f.eye.into(), fwd, up), f.eye.into());
+            }
+        })
+    }
+}
+
+/// Writes up to `max` of this frame's instances; returns how many (with `out` null, how many
+/// there are).
+///
+/// # Safety
+/// `view` from [`sms_view_new`]; `out` null or writable for `max`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_draws(view: *mut SmsView, out: *mut SmsDraw, max: u32) -> u32 {
+    // SAFETY: as documented.
+    unsafe {
+        with_view(view, 0, |v| {
+            if out.is_null() {
+                return v.view.draws.len() as u32;
+            }
+            let n = v.view.draws.len().min(max as usize);
+            for (i, d) in v.view.draws.iter().take(n).enumerate() {
+                out.add(i).write(SmsDraw {
+                    key: d.key,
+                    model: d.model,
+                    kind: d.kind,
+                    flags: d.flags,
+                    _pad: [0; 2],
+                    pos: d.pos.into(),
+                    rot: d.rot.to_array(),
+                    first_vertex: d.first_vertex,
+                    first_color: d.first_color,
+                    alpha: d.alpha,
+                    id: (d.key & 0xFFFF_FFFF) as u32,
+                });
+            }
+            n as u32
+        })
+    }
+}
+
+/// This frame's skinned positions for every instance (each in its model space, sim units);
+/// `count` gets how many. Valid until the next [`sms_view_update`] or [`sms_view_free`].
+///
+/// # Safety
+/// `view` from [`sms_view_new`]; `count` null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_positions(view: *mut SmsView, count: *mut u32) -> *const SmsVec3 {
+    // SAFETY: as documented. `SmsVec3` and glam's `Vec3` are both three packed f32s.
+    unsafe {
+        with_view(view, std::ptr::null(), |v| {
+            if let Some(c) = count.as_mut() {
+                *c = v.view.positions.len() as u32;
+            }
+            v.view.positions.as_ptr().cast()
+        })
+    }
+}
+
+/// Like [`sms_view_positions`], the normals.
+///
+/// # Safety
+/// As [`sms_view_positions`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_normals(view: *mut SmsView, count: *mut u32) -> *const SmsVec3 {
+    // SAFETY: as above.
+    unsafe {
+        with_view(view, std::ptr::null(), |v| {
+            if let Some(c) = count.as_mut() {
+                *c = v.view.normals.len() as u32;
+            }
+            v.view.normals.as_ptr().cast()
+        })
+    }
+}
+
+/// This frame's batch colours (RGBA 0..1, one per batch of every instance: what its texture is
+/// multiplied by, or its whole colour if it has none). Valid as [`sms_view_positions`].
+///
+/// # Safety
+/// As [`sms_view_positions`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_colors(view: *mut SmsView, count: *mut u32) -> *const [f32; 4] {
+    // SAFETY: as above.
+    unsafe {
+        with_view(view, std::ptr::null(), |v| {
+            if let Some(c) = count.as_mut() {
+                *c = v.view.colors.len() as u32;
+            }
+            v.view.colors.as_ptr()
+        })
+    }
+}
+
+/// This frame's batch textures (alongside [`sms_view_colors`]): a [`sms_view_texture`] id or
+/// -1. Valid as [`sms_view_positions`].
+///
+/// # Safety
+/// As [`sms_view_positions`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_texture_ids(view: *mut SmsView, count: *mut u32) -> *const i32 {
+    // SAFETY: as above.
+    unsafe {
+        with_view(view, std::ptr::null(), |v| {
+            if let Some(c) = count.as_mut() {
+                *c = v.view.texture_ids.len() as u32;
+            }
+            v.view.texture_ids.as_ptr()
+        })
+    }
+}
+
+/// This frame's texture coordinates for every instance, alongside [`sms_view_positions`]: the
+/// model's own, except environment-mapped batches' ([`SmsBatch::env`]), which follow the
+/// camera. Valid as [`sms_view_positions`].
+///
+/// # Safety
+/// As [`sms_view_positions`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_frame_uvs(view: *mut SmsView, count: *mut u32) -> *const [f32; 2] {
+    // SAFETY: as above.
+    unsafe {
+        with_view(view, std::ptr::null(), |v| {
+            if let Some(c) = count.as_mut() {
+                *c = v.view.uvs.len() as u32;
+            }
+            v.view.uvs.as_ptr()
+        })
+    }
+}
+
+const _: () = assert!(std::mem::size_of::<SmsVec3>() == std::mem::size_of::<Vec3>());

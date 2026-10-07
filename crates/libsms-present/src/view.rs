@@ -1,0 +1,722 @@
+//! Mario as the game draws him, for engines that draw themselves: the disc's body, hands, cap,
+//! FLUDD and nozzles, posed from the sim every frame and CPU-skinned into one vertex buffer,
+//! with each material's TEV baked into one texture ([`crate::tev`]).
+//!
+//! What's drawn follows the viewer (`viewer/src/mario_model.rs`), which follows the game:
+//! the body clip with the pumping arm layered on `jnt_chest` (`M3UModelMario`), the hand
+//! models `changeHand` picks per clip, the cap on `M_head` (`TMarioCap`), FLUDD on
+//! `jnt_chest` and the fitted nozzle on FLUDD's `nozzle_center` with the game's aiming
+//! callbacks (`TWaterGun::init`, WaterGun.cpp), and the eyes' blink pattern (`ma_wink_tx`).
+//!
+//! Every part is posed in Mario's model space (sim units, +Z forward, +Y up), so all of a
+//! frame's draws share Mario's position and facing. Models are right-handed: a left-handed
+//! host mirrors each instance across its own X.
+
+use std::collections::HashMap;
+use std::path::Path;
+
+use glam::{Mat4, Quat, Vec3};
+use libsms::{Clip, ClipLibrary, NozzleKind, Sim, Skeleton};
+use libsms_assets::bmd::{Blend, Cull};
+use libsms_assets::btp::TexPattern;
+use libsms_assets::mario::{BODY_HAND_SHAPES, HIDDEN_SHAPE, Hands, SHIRT_SHAPE, hands_for_clip};
+use libsms_assets::{Batch, Bmd, Pose, paths};
+
+use crate::tev::{Baked, C4, Inputs, Source, Tex, env_uv};
+
+/// Model indices.
+pub mod models {
+    pub const BODY: u32 = 0;
+    /// Open hands, right then left (`mHandModels[0]`).
+    pub const HAND_OPEN: [u32; 2] = [1, 2];
+    /// Fists, right then left (`mHandModels[1]`).
+    pub const FIST: [u32; 2] = [3, 4];
+    pub const CAP: u32 = 5;
+    pub const FLUDD: u32 = 6;
+    /// Spray, Hover, Rocket, Turbo, Yoshi (`dummy_wg`).
+    pub const NOZZLES: [u32; 5] = [7, 8, 9, 10, 11];
+    pub const COUNT: usize = 12;
+}
+
+/// Largest baked texture side.
+const MAX_BAKE: u32 = 512;
+/// Most texture variants (blink frames and the like) baked before reusing the plain one.
+const MAX_TEXTURES: usize = 256;
+
+/// Batch blend classes for hosts.
+pub mod blend {
+    pub const OPAQUE: u8 = 0;
+    /// Alpha tested: a cutout at alpha one half.
+    pub const CUTOUT: u8 = 1;
+    /// Alpha blended.
+    pub const TRANSLUCENT: u8 = 2;
+    /// Added to the screen.
+    pub const ADDITIVE: u8 = 3;
+}
+
+pub struct Model {
+    pub bmd: Bmd,
+    pub batches: Vec<Batch>,
+    pub vertex_count: usize,
+    /// Bind-pose bounds, model space.
+    pub lo: Vec3,
+    pub hi: Vec3,
+    pub bind: Vec<Mat4>,
+    textures: Vec<Option<Tex>>,
+    channels: Vec<[C4; 2]>,
+    /// Per batch: plain texture id or -1, blend class, lit bits (1 colour, 2 alpha), cull
+    /// (0 back, 1 front, 2 none), environment map matrix if env mapped.
+    pub batch_texture: Vec<i32>,
+    pub batch_blend: Vec<u8>,
+    pub batch_lit: Vec<u8>,
+    pub batch_cull: Vec<u8>,
+    pub batch_env: Vec<Option<Option<[[f32; 3]; 2]>>>,
+    /// Colour for untextured batches (white for textured ones).
+    batch_color: Vec<C4>,
+}
+
+impl Model {
+    /// The colour an untextured batch is drawn with (white for textured ones).
+    pub fn batch_color_of(&self, batch: usize) -> C4 {
+        self.batch_color.get(batch).copied().unwrap_or([1.0; 4])
+    }
+
+    fn source(&self) -> Source<'_> {
+        Source {
+            bmd: &self.bmd,
+            textures: &self.textures,
+            channels: &self.channels,
+        }
+    }
+}
+
+/// Baked textures, every model's.
+#[derive(Default)]
+pub struct Textures {
+    pub list: Vec<Baked>,
+    by_key: HashMap<(u32, usize, Inputs), i32>,
+}
+
+/// One posed instance.
+#[derive(Debug, Clone, Copy)]
+pub struct Draw {
+    /// Stable while the part is shown (the part's kind in the top byte).
+    pub key: u64,
+    pub model: u32,
+    /// Which part: the model index.
+    pub kind: u8,
+    /// 1: flashing from a hit (`addDamageFog`).
+    pub flags: u8,
+    /// Mario's feet, sim units (render-interpolated).
+    pub pos: Vec3,
+    pub rot: Quat,
+    pub first_vertex: u32,
+    pub first_color: u32,
+    pub alpha: f32,
+}
+
+pub struct View {
+    pub models: Vec<Model>,
+    pub textures: Textures,
+    skeleton: Skeleton,
+    clips: ClipLibrary,
+    fludd_clips: HashMap<String, Clip>,
+    wink: Option<TexPattern>,
+    eye_materials: Vec<usize>,
+    hand_joints: [Option<usize>; 2],
+    head: Option<usize>,
+    chest: Option<usize>,
+    /// Wearing the Shine Shirt (off at the start of the game).
+    pub shirt: bool,
+    time: f32,
+    blink_at: f32,
+    /// Camera right and up, sim axes, for environment maps.
+    right: Vec3,
+    up: Vec3,
+
+    pub draws: Vec<Draw>,
+    pub positions: Vec<Vec3>,
+    pub normals: Vec<Vec3>,
+    pub uvs: Vec<[f32; 2]>,
+    pub colors: Vec<C4>,
+    pub texture_ids: Vec<i32>,
+}
+
+fn load_bmd(dir: &Path, rel: &str) -> Result<Bmd, String> {
+    let data = std::fs::read(dir.join(rel)).map_err(|e| format!("{rel}: {e}"))?;
+    Bmd::parse(&data).map_err(|e| format!("{rel}: {e}"))
+}
+
+/// Builds a model: its batches, texture images (`replace` swaps some first: the caps' and
+/// hands' texture 0 is the body's, `TMarioCap`; the nozzles' env-map stand-in is FLUDD's),
+/// unlit channel colours and plain bakes.
+fn build(
+    bmd: Bmd,
+    replace: &dyn Fn(usize, &str) -> Option<Tex>,
+    index: u32,
+    textures: &mut Textures,
+) -> Result<Model, String> {
+    let inputs = base_inputs(index);
+    let batches: Vec<Batch> = bmd
+        .batches()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .filter(|b| !b.indices.is_empty())
+        .collect();
+    let images: Vec<Option<Tex>> = bmd
+        .textures
+        .iter()
+        .enumerate()
+        .map(|(i, t)| {
+            replace(i, &t.name).or_else(|| Some(Tex::new(t.image.clone(), t.wrap_s, t.wrap_t)))
+        })
+        .collect();
+    // The colour each channel feeds TEV as baked: the material colour (or the average of the
+    // vertex colours, where the channel takes them from the vertices) fully lit, and nothing
+    // from a specular channel (`GX_AF_SPEC`), whose highlight depends on the view. Mario's
+    // materials add their own lighting in TEV (a toon ramp read at the lit colour, then the
+    // highlight), so fully lit is where they show their plain colours.
+    let unit = |c: [u8; 4]| c.map(|v| v as f32 / 255.0);
+    let channels: Vec<[C4; 2]> = bmd
+        .materials
+        .iter()
+        .enumerate()
+        .map(|(mi, m)| {
+            let avg = |set: usize| -> C4 {
+                let mut s = [0.0f32; 4];
+                let mut n = 0.0f32;
+                for b in batches.iter().filter(|b| b.material == mi) {
+                    for v in &b.vertices {
+                        for (acc, &c) in s.iter_mut().zip(&v.colors[set]) {
+                            *acc += c as f32 / 255.0;
+                        }
+                        n += 1.0;
+                    }
+                }
+                if n > 0.0 { s.map(|v| v / n) } else { [1.0; 4] }
+            };
+            let chan = |i: usize| -> C4 {
+                let (c, a) = (&m.chans[2 * i], &m.chans[2 * i + 1]);
+                let mat = unit(m.mat_colors[i]);
+                let spec = |ch: &libsms_assets::bmd::ColorChan| ch.lighting && ch.attn_fn == 0;
+                let rgb = if spec(c) {
+                    [0.0; 4]
+                } else if c.mat_from_vertex {
+                    avg(i)
+                } else {
+                    mat
+                };
+                let al = if spec(a) {
+                    0.0
+                } else if a.mat_from_vertex {
+                    avg(i)[3]
+                } else {
+                    mat[3]
+                };
+                [rgb[0], rgb[1], rgb[2], al]
+            };
+            [chan(0), chan(1)]
+        })
+        .collect();
+    let mut lo = Vec3::splat(f32::MAX);
+    let mut hi = Vec3::splat(f32::MIN);
+    let bind = bmd.bind_world();
+    let pose = Pose::new(&bmd, Mat4::IDENTITY, &bind);
+    for v in batches.iter().flat_map(|b| &b.vertices) {
+        let (p, _) = pose.skin(v);
+        lo = lo.min(p);
+        hi = hi.max(p);
+    }
+    if lo.x > hi.x {
+        (lo, hi) = (Vec3::ZERO, Vec3::ZERO);
+    }
+    let mut model = Model {
+        vertex_count: batches.iter().map(|b| b.vertices.len()).sum(),
+        lo,
+        hi,
+        bind,
+        textures: images,
+        channels,
+        batch_texture: Vec::new(),
+        batch_blend: Vec::new(),
+        batch_lit: Vec::new(),
+        batch_cull: Vec::new(),
+        batch_env: Vec::new(),
+        batch_color: Vec::new(),
+        batches,
+        bmd,
+    };
+    for bi in 0..model.batches.len() {
+        let mi = model.batches[bi].material;
+        let m = &model.bmd.materials[mi];
+        let tex = textures.get(&model, index, mi, &inputs);
+        let baked = usize::try_from(tex).ok().map(|i| &textures.list[i]);
+        let blend = match m.blend() {
+            Blend::Opaque => blend::OPAQUE,
+            Blend::AlphaTest => blend::CUTOUT,
+            // Nearly opaque blending reads as opaque; the deferred shader can't blend.
+            Blend::AlphaBlend if baked.is_some_and(|b| b.min_alpha() >= 0.7) => blend::OPAQUE,
+            Blend::AlphaBlend => blend::TRANSLUCENT,
+            Blend::Additive => blend::ADDITIVE,
+        };
+        let lit = (m.chans[0].lighting as u8) | ((m.chans[1].lighting as u8) << 1);
+        let cull = match m.cull {
+            Cull::Back => 0,
+            Cull::Front => 1,
+            _ => 2,
+        };
+        let env = baked.and_then(|b| b.env);
+        let color = if tex >= 0 {
+            [1.0; 4]
+        } else {
+            model.source().flat_color(mi, &inputs)
+        };
+        model.batch_texture.push(tex);
+        model.batch_blend.push(blend);
+        model.batch_lit.push(lit);
+        model.batch_cull.push(cull);
+        model.batch_env.push(env);
+        model.batch_color.push(color);
+    }
+    Ok(model)
+}
+
+/// A model's material inputs before per-draw changes: Mario's body, cap and hands are clean
+/// (konst 0's alpha is the dirt level, `TMario::addDirty`).
+fn base_inputs(model: u32) -> Inputs {
+    Inputs {
+        k0_alpha: matches!(model, models::BODY | models::CAP | 1..=4).then_some(0),
+        ..Inputs::default()
+    }
+}
+
+impl Textures {
+    /// The texture for material `mi` of `model` with `inputs`, baking it the first time; -1
+    /// for an untextured material. Past [`MAX_TEXTURES`], new variants fall back to the plain
+    /// one.
+    fn get(&mut self, model: &Model, index: u32, mi: usize, inputs: &Inputs) -> i32 {
+        if let Some(&id) = self.by_key.get(&(index, mi, *inputs)) {
+            return id;
+        }
+        let base = base_inputs(index);
+        if self.list.len() >= MAX_TEXTURES && *inputs != base {
+            return self.get(model, index, mi, &base);
+        }
+        let src = model.source();
+        let id = if src.textured(mi, inputs) {
+            match src.bake(mi, inputs, MAX_BAKE) {
+                Some(b) => {
+                    self.list.push(b);
+                    self.list.len() as i32 - 1
+                }
+                None => -1,
+            }
+        } else {
+            -1
+        };
+        self.by_key.insert((index, mi, *inputs), id);
+        id
+    }
+}
+
+impl View {
+    /// Loads Mario's models, rig and clips from the extracted `assets/` folder.
+    pub fn load(dir: &Path) -> Result<View, String> {
+        let assets = libsms::Assets::load(dir);
+        let skeleton = assets
+            .skeleton
+            .clone()
+            .ok_or("no rig (bmd/ma_mdl1.bmd)")?;
+        let mut textures = Textures::default();
+        let none = |_: usize, _: &str| None;
+        let body = build(load_bmd(dir, paths::BODY)?, &none, models::BODY, &mut textures)?;
+        let body_tex0 = body.bmd.textures.first().map(|t| Tex::new(t.image.clone(), t.wrap_s, t.wrap_t));
+        let fludd_bmd = load_bmd(dir, paths::FLUDD_BODY)?;
+        let fludd_tex1 = fludd_bmd
+            .textures
+            .get(1)
+            .map(|t| Tex::new(t.image.clone(), t.wrap_s, t.wrap_t));
+        let body_first = |i: usize, _: &str| if i == 0 { body_tex0.clone() } else { None };
+        // The nozzles ship an 8x8 stand-in for FLUDD's env-map texture; the game points it at
+        // FLUDD's own (`SMS_ChangeTextureAll(.., "H_watergun_main_dummy", ..)`, `TWaterGun::init`).
+        let fludd_env = |_: usize, name: &str| {
+            if name == "H_watergun_main_dummy" { fludd_tex1.clone() } else { None }
+        };
+        let mut list = vec![body];
+        for (i, rel) in [
+            paths::HANDS_OPEN[0],
+            paths::HANDS_OPEN[1],
+            paths::HANDS_FIST[0],
+            paths::HANDS_FIST[1],
+            paths::CAPS[0],
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            list.push(build(load_bmd(dir, rel)?, &body_first, i as u32 + 1, &mut textures)?);
+        }
+        list.push(build(fludd_bmd, &none, models::FLUDD, &mut textures)?);
+        for (i, rel) in [
+            paths::NOZZLE_SPRAY,
+            paths::NOZZLE_HOVER,
+            paths::NOZZLE_ROCKET,
+            paths::NOZZLE_TURBO,
+            paths::NOZZLE_YOSHI,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            list.push(build(load_bmd(dir, rel)?, &fludd_env, models::NOZZLES[i], &mut textures)?);
+        }
+
+        let mut fludd_clips = HashMap::new();
+        for folder in std::fs::read_dir(dir.join("watergun2")).into_iter().flatten().flatten() {
+            for f in std::fs::read_dir(folder.path()).into_iter().flatten().flatten() {
+                let path = f.path();
+                if path.extension().and_then(|e| e.to_str()) != Some("bck") {
+                    continue;
+                }
+                let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+                if let Some(c) = std::fs::read(&path).ok().and_then(|d| Clip::parse(&d)) {
+                    fludd_clips.insert(stem.to_owned(), c);
+                }
+            }
+        }
+        let wink = std::fs::read(dir.join(paths::WINK))
+            .ok()
+            .and_then(|d| TexPattern::parse(&d).ok());
+        let b = &list[0].bmd;
+        let eye_materials = wink
+            .as_ref()
+            .map(|w| {
+                w.tracks
+                    .iter()
+                    .map(|t| b.material(&t.material).unwrap_or(usize::MAX))
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(View {
+            hand_joints: [b.joint("jnt_hand_R"), b.joint("jnt_hand_L")],
+            head: b.joint("M_head"),
+            chest: b.joint("jnt_chest"),
+            models: list,
+            textures,
+            skeleton,
+            clips: assets.clips,
+            fludd_clips,
+            wink,
+            eye_materials,
+            shirt: false,
+            time: 0.0,
+            blink_at: 2.0,
+            right: Vec3::X,
+            up: Vec3::Y,
+            draws: Vec::new(),
+            positions: Vec::new(),
+            normals: Vec::new(),
+            uvs: Vec::new(),
+            colors: Vec::new(),
+            texture_ids: Vec::new(),
+        })
+    }
+
+    /// The camera's right and up (sim axes, as the host's world), for environment maps.
+    pub fn set_camera(&mut self, right: Vec3, up: Vec3) {
+        self.right = right.normalize_or(Vec3::X);
+        self.up = up.normalize_or(Vec3::Y);
+    }
+
+    /// Poses Mario for this frame, `dt` seconds after the last, and hands FLUDD's posed
+    /// muzzles back to the sim (`Mario::set_emitters`) so its water leaves the drawn nozzle.
+    pub fn update(&mut self, sim: &mut Sim, dt: f32) {
+        self.time += dt.max(0.0);
+        self.draws.clear();
+        self.positions.clear();
+        self.normals.clear();
+        self.uvs.clear();
+        self.colors.clear();
+        self.texture_ids.clear();
+
+        let alpha = sim.alpha();
+        let m = &sim.mario;
+        let pos = m.prev_pos.lerp(m.pos, alpha);
+        let yaw = m.model_yaw as f32 * std::f32::consts::PI / 32768.0;
+        let rot = Quat::from_rotation_y(yaw);
+        // `addDamageFog` while invincible; hosts flash instead.
+        let flags = (m.invincible > 0) as u8;
+
+        // The body clip, with the pumping arm over the chest while pumping.
+        let upper = m.upper_layer().and_then(|(c, f)| {
+            Some((self.clips.get(c)?, f, self.skeleton.find("jnt_chest")?))
+        });
+        let joints = self
+            .skeleton
+            .pose_layered(self.clips.get(m.anim.clip).map(|c| (c, m.anim.frame)), upper);
+
+        // Blink every few seconds (the game runs `ma_wink_tx` on idle; 30 frames a second).
+        if self.time > self.blink_at + 2.0 {
+            self.blink_at = self.time + 2.0 + (self.time * 7.13).fract() * 2.5;
+        }
+        let mut body_inputs: HashMap<usize, Inputs> = HashMap::new();
+        if let Some(w) = &self.wink {
+            let frame = (self.time - self.blink_at) * 30.0;
+            if frame >= 0.0 {
+                for (i, t) in w.tracks.iter().enumerate() {
+                    if let (Some(&mat), Some(tex)) = (self.eye_materials.get(i), w.tex_no(i, frame)) {
+                        let e = body_inputs.entry(mat).or_default();
+                        if (t.tex_map as usize) < 8 {
+                            e.tex[t.tex_map as usize] = Some(tex);
+                        }
+                    }
+                }
+            }
+        }
+        let mut hidden = vec![HIDDEN_SHAPE];
+        if !self.shirt {
+            hidden.push(SHIRT_SHAPE);
+        }
+        let hands = hands_for_clip(m.anim.clip);
+        if hands != Hands::Body {
+            hidden.extend(BODY_HAND_SHAPES);
+        }
+
+        // FLUDD on the chest, tilted back as the chest leans (`TWaterGun::setBaseTRMtx`:
+        // `|m[1][0]| * (unk1D04 - unk1D06) + unk1D06`, 0 and -0x1800), posed by the sim's clip;
+        // the nozzle on `nozzle_center` with its own clip and the aiming callbacks.
+        let look = m.fludd_look();
+        let deg = |a: f32| a * std::f32::consts::PI / 32768.0;
+        let fludd_base = look.and(self.chest).and_then(|c| joints.get(c)).map(|chest| {
+            let lean = chest.x_axis.truncate().normalize_or_zero().y.abs();
+            *chest * Mat4::from_rotation_z(deg(lean * 6144.0 - 6144.0))
+        });
+        let fludd = &self.models[models::FLUDD as usize].bmd;
+        let fludd_joints = fludd.pose(
+            |j| {
+                look.and_then(|l| self.fludd_clips.get(l.body_clip))
+                    .and_then(|c| c.sample(j, look.map_or(0.0, |l| l.body_frame)))
+            },
+            |_| None,
+        );
+        let slot = look.map(|l| match l.nozzle {
+            NozzleKind::Spray => 0,
+            NozzleKind::Hover | NozzleKind::Underwater => 1,
+            NozzleKind::Rocket => 2,
+            NozzleKind::Turbo => 3,
+            // The water leaves Yoshi's mouth; FLUDD shows `dummy_wg`.
+            NozzleKind::Yoshi => 4,
+        });
+        let nozzle_at = fludd_base
+            .zip(fludd.joint("nozzle_center"))
+            .map(|(base, c)| base * fludd_joints[c]);
+        let mut muzzles = Vec::new();
+        let nozzle = match (look, slot) {
+            (Some(l), Some(i)) => {
+                let model = models::NOZZLES[i];
+                let bmd = &self.models[model as usize].bmd;
+                let extra = |name: &str| match name {
+                    // `NozzleCtrl`: the neck dips with the aim, never above level.
+                    "chn_muzzle_1" | "jnt_back_nozzle_neck" if l.gun_angle < 0.0 => {
+                        Some(Mat4::from_rotation_z(deg(l.gun_angle)))
+                    }
+                    // `WaterGunDivingCtrlL/R`: the hover jets lean with the steering.
+                    "jnt_nozzle_L" => Some(Mat4::from_rotation_z(deg(-l.tilt[0]))),
+                    "jnt_nozzle_R" => Some(Mat4::from_rotation_z(deg(-l.tilt[1]))),
+                    // `RotateCtrl`: the Turbo propeller.
+                    "chn_back_nozzle_prop" => Some(Mat4::from_rotation_x(deg(l.prop_angle))),
+                    _ => None,
+                };
+                let clip = l.nozzle_clip.and_then(|c| self.fludd_clips.get(c));
+                let js = bmd.pose(
+                    |j| clip.and_then(|c| c.sample(j, l.nozzle_frame)),
+                    |j| extra(&bmd.joints[j].name),
+                );
+                if let Some(at) = nozzle_at.filter(|_| l.nozzle != NozzleKind::Yoshi) {
+                    for name in ["null_G_muzzle", "null_G_muzzle2"] {
+                        if let Some(j) = bmd.joint(name) {
+                            let mm = at * js[j];
+                            muzzles.push((mm.w_axis.truncate(), mm.x_axis.truncate()));
+                        }
+                    }
+                }
+                nozzle_at.map(|at| (model, at, js))
+            }
+            _ => None,
+        };
+
+        // (model, its root in Mario's model space, its joints)
+        let mut parts: Vec<(u32, Mat4, Vec<Mat4>)> = vec![(models::BODY, Mat4::IDENTITY, joints.clone())];
+        if let Some(h) = self.head.and_then(|h| joints.get(h)) {
+            parts.push((models::CAP, *h, self.models[models::CAP as usize].bind.clone()));
+        }
+        let set = match hands {
+            Hands::Open => Some(models::HAND_OPEN),
+            Hands::Fists => Some(models::FIST),
+            Hands::Body => None,
+        };
+        if let Some(set) = set {
+            for (model, joint) in set.into_iter().zip(self.hand_joints) {
+                if let Some(at) = joint.and_then(|j| joints.get(j)) {
+                    parts.push((model, *at, self.models[model as usize].bind.clone()));
+                }
+            }
+        }
+        if let Some(base) = fludd_base {
+            parts.push((models::FLUDD, base, fludd_joints));
+        }
+        if let Some((model, at, js)) = nozzle {
+            parts.push((model, at, js));
+        }
+
+        for (model, root, js) in parts {
+            let first_vertex = self.positions.len() as u32;
+            let first_color = self.colors.len() as u32;
+            let mi = model as usize;
+            let mdl = &self.models[mi];
+            let pose = Pose::new(&mdl.bmd, root, &js);
+            let mirror_rot = |n: Vec3| rot * Vec3::new(-n.x, n.y, n.z);
+            for (bi, b) in mdl.batches.iter().enumerate() {
+                let hide = (model == models::BODY && hidden.contains(&b.shape))
+                    || mdl.bmd.materials[b.material].cull == Cull::All;
+                let env = mdl.batch_env[bi];
+                for v in &b.vertices {
+                    let (p, n) = pose.skin(v);
+                    let n = n.normalize_or_zero();
+                    // A hidden shape collapses to a point.
+                    self.positions.push(if hide { Vec3::ZERO } else { p });
+                    self.normals.push(n);
+                    self.uvs.push(match env {
+                        Some(mtx) => {
+                            let w = mirror_rot(n);
+                            env_uv(w.dot(self.right), w.dot(self.up), mtx)
+                        }
+                        None => [v.uv[0].x, v.uv[0].y],
+                    });
+                }
+                // The material's texture for this draw (the eyes' blink frame), and colour.
+                let mut inputs = base_inputs(model);
+                if model == models::BODY
+                    && let Some(i) = body_inputs.get(&b.material)
+                {
+                    inputs.tex = i.tex;
+                }
+                let tex = if inputs == base_inputs(model) {
+                    mdl.batch_texture[bi]
+                } else {
+                    self.textures.get(mdl, model, b.material, &inputs)
+                };
+                self.texture_ids.push(tex);
+                self.colors.push(mdl.batch_color[bi]);
+            }
+            self.draws.push(Draw {
+                key: (model as u64) << 56,
+                model,
+                kind: model as u8,
+                flags,
+                pos,
+                rot,
+                first_vertex,
+                first_color,
+                alpha: 1.0,
+            });
+        }
+        if let Some(f) = &sim.mario.fludd {
+            let kind = f.nozzle;
+            sim.mario.set_emitters(kind, &muzzles);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn view() -> Option<View> {
+        let dir = libsms::assets::find(None)?;
+        match View::load(&dir) {
+            Ok(v) => Some(v),
+            Err(e) => panic!("loading Mario's models: {e}"),
+        }
+    }
+
+    /// The average colour a model's batch shows: its bake read at each of its vertices'
+    /// texture coordinates.
+    fn shown(v: &View, model: u32, batch: usize) -> C4 {
+        let m = &v.models[model as usize];
+        let Ok(t) = usize::try_from(m.batch_texture[batch]) else {
+            return m.batch_color_of(batch);
+        };
+        let t = &v.textures.list[t];
+        let mut s = [0.0f32; 4];
+        let verts = &m.batches[batch].vertices;
+        for vx in verts {
+            let x = ((vx.uv[0].x.rem_euclid(1.0) * t.width as f32) as u32).min(t.width - 1);
+            let y = ((vx.uv[0].y.rem_euclid(1.0) * t.height as f32) as u32).min(t.height - 1);
+            let o = ((y * t.width + x) * 4) as usize;
+            for c in 0..4 {
+                s[c] += t.rgba[o + c] as f32 / 255.0;
+            }
+        }
+        s.map(|c| c / verts.len().max(1) as f32)
+    }
+
+    /// The bakes come out the colours Mario is: a red cap, the body's atlas with every colour
+    /// in it, and not washed out by the materials' own lighting terms.
+    #[test]
+    fn bakes_are_marios_colours() {
+        let Some(v) = view() else {
+            eprintln!("skipping: no assets/");
+            return;
+        };
+        let cap = shown(&v, models::CAP, 0);
+        assert!(cap[0] > 0.45 && cap[0] > 2.0 * cap[1] && cap[0] > 2.0 * cap[2], "cap {cap:?}");
+        // The overalls (the body's biggest batch by vertices) are blue somewhere: the body
+        // has a batch whose colour is mostly blue.
+        let body = &v.models[models::BODY as usize];
+        let blue = (0..body.batches.len())
+            .map(|b| shown(&v, models::BODY, b))
+            .any(|c| c[2] > 0.4 && c[2] > 1.5 * c[0]);
+        assert!(blue, "no blue batch on the body");
+        for t in &v.textures.list {
+            assert_eq!(t.rgba.len(), (t.width * t.height * 4) as usize);
+        }
+    }
+
+    #[test]
+    fn a_running_mario_poses_every_part_once() {
+        let Some(mut v) = view() else {
+            eprintln!("skipping: no assets/");
+            return;
+        };
+        let a = libsms::Assets::discover(None).unwrap();
+        let mut sim = Sim::new(a.params, a.anim_table, Vec3::ZERO, 0);
+        sim.mario.give_fludd();
+        let mut host = libsms::FlatHost::default();
+        let pad = libsms::Pad {
+            stick: libsms::Vec2::new(0.0, 1.0),
+            ..Default::default()
+        };
+        for _ in 0..30 {
+            sim.advance(&mut host, &pad, i16::MIN, 1.0 / 60.0);
+            v.update(&mut sim, 1.0 / 60.0);
+        }
+        let kinds: Vec<u8> = v.draws.iter().map(|d| d.kind).collect();
+        assert!(kinds.contains(&(models::BODY as u8)), "{kinds:?}");
+        assert!(kinds.contains(&(models::CAP as u8)), "{kinds:?}");
+        assert!(kinds.contains(&(models::FLUDD as u8)), "{kinds:?}");
+        let total: usize = v.draws.iter().map(|d| v.models[d.model as usize].vertex_count).sum();
+        assert_eq!(v.positions.len(), total);
+        assert_eq!(v.uvs.len(), total);
+        let batches: usize = v.draws.iter().map(|d| v.models[d.model as usize].batches.len()).sum();
+        assert_eq!(v.colors.len(), batches);
+        assert_eq!(v.texture_ids.len(), batches);
+        // Mario stands about 160 tall: the body's vertices reach well above his feet.
+        let body = &v.draws[0];
+        let n = v.models[0].vertex_count;
+        let top = v.positions[body.first_vertex as usize..][..n]
+            .iter()
+            .map(|p| p.y)
+            .fold(f32::MIN, f32::max);
+        assert!((120.0..220.0).contains(&top), "top of Mario at {top}");
+        assert!(v.positions.iter().all(|p| p.is_finite()));
+    }
+}

@@ -1,0 +1,12 @@
+[package]
+name = "libsms-present"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+libsms.workspace = true
+libsms-assets.workspace = true
+libsms-audio.workspace = true
+glam.workspace = true
+cpal = "0.15"
