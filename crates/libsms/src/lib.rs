@@ -45,7 +45,7 @@ pub use yoshi::{YoshiLook, YoshiState};
 pub use input::{Input, Pad};
 pub use mario::{Mario, Options, Status, UpperState};
 pub use params::{NozzleKind, Params};
-pub use skeleton::{Clip, ClipLibrary, Skeleton};
+pub use skeleton::{Clip, ClipLibrary, MtxCalc, Skeleton, Srt, calc_joints};
 
 /// A Mario plus the fixed-step clock that drives him.
 #[derive(Debug, Clone)]

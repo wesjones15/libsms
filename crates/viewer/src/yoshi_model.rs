@@ -15,10 +15,9 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use glam::{Mat4, Vec3, Vec4};
-use libsms::{Clip, EggLook, YoshiLook};
+use libsms::{Clip, EggLook, Srt, YoshiLook};
 use libsms_assets::Pose;
 use libsms_assets::btp::TexPattern;
-use libsms_assets::pose::srt_matrix;
 
 use crate::j3d::{Lights, Look, Pass, Renderer};
 use crate::mario_model::{Part, root_matrix};
@@ -89,12 +88,23 @@ fn pattern(model: &libsms_assets::Bmd, p: &TexPattern, frame: f32) -> Vec<(usize
         .collect()
 }
 
-/// Blends two joint transforms (`J3DMtxCalcBlend`-style: scale and translation lerp,
-/// rotation slerp), `t` of `b`.
-fn blend(a: Mat4, b: Mat4, t: f32) -> Mat4 {
-    let (sa, ra, ta) = a.to_scale_rotation_translation();
-    let (sb, rb, tb) = b.to_scale_rotation_translation();
-    Mat4::from_scale_rotation_translation(sa.lerp(sb, t), ra.slerp(rb, t), ta.lerp(tb, t))
+/// Blends two joint transforms, `t` of `b`: scale and translation lerp, each angle by its
+/// shortest way round (`J3DMtxCalcBlend` mixes the transform infos).
+fn blend(a: Srt, b: Srt, t: f32) -> Srt {
+    let tau = std::f32::consts::TAU;
+    let angle = |x: f32, y: f32| {
+        let d = (y - x + std::f32::consts::PI).rem_euclid(tau) - std::f32::consts::PI;
+        x + d * t
+    };
+    Srt {
+        scale: a.scale.lerp(b.scale, t),
+        rot: Vec3::new(
+            angle(a.rot.x, b.rot.x),
+            angle(a.rot.y, b.rot.y),
+            angle(a.rot.z, b.rot.z),
+        ),
+        trans: a.trans.lerp(b.trans, t),
+    }
 }
 
 impl YoshiModel {
@@ -143,7 +153,8 @@ impl YoshiModel {
         })
     }
 
-    /// Yoshi's model-space joints for `look`.
+    /// Yoshi's model-space joints for `look`. His model chains Softimage-style
+    /// ([`libsms::MtxCalc`]): the riding clips stretch `jnt_neck_2` and shrink `chn_head` back.
     fn pose(&self, look: &YoshiLook) -> Vec<Mat4> {
         let b = &self.body.model.bmd;
         let clip = self.clips.get(look.clip);
@@ -151,35 +162,37 @@ impl YoshiModel {
             .blend
             .and_then(|(c, w)| Some((self.clips.get(c)?, w)));
         let eat = look.eat.and_then(|(c, f)| Some((self.clips.get(c)?, f)));
-        let mut out: Vec<Mat4> = Vec::with_capacity(b.joints.len());
         let mut eating = vec![false; b.joints.len()];
         for (j, jt) in b.joints.iter().enumerate() {
             eating[j] = j == EAT_ROOT || jt.parent.is_some_and(|p| p < j && eating[p]);
-            let bind = srt_matrix(jt.scale, jt.rotation, jt.translation);
-            let sample = |c: &Clip, f: f32| {
-                c.sample(j, f)
-                    .map(|s| srt_matrix(s.scale, s.rot, s.trans))
-                    .unwrap_or(bind)
-            };
-            let mut local = match eat {
-                Some((c, f)) if eating[j] => sample(c, f),
-                _ => {
-                    let run = clip.map_or(bind, |c| sample(c, look.frame));
-                    match walk {
-                        Some((w, t)) => blend(run, sample(w, look.frame), t),
-                        None => run,
-                    }
-                }
-            };
-            if j == HEAD && look.head_angle != 0.0 {
-                local *= Mat4::from_rotation_z(look.head_angle * std::f32::consts::PI / 32768.0);
-            }
-            out.push(match jt.parent {
-                Some(p) if p < out.len() => out[p] * local,
-                _ => local,
-            });
         }
-        out
+        b.pose(
+            |j| {
+                let jt = &b.joints[j];
+                let bind = Srt {
+                    scale: jt.scale,
+                    rot: jt.rotation,
+                    trans: jt.translation,
+                };
+                let sample = |c: &Clip, f: f32| c.sample(j, f).unwrap_or(bind);
+                Some(match eat {
+                    Some((c, f)) if eating[j] => sample(c, f),
+                    _ => {
+                        let run = clip.map_or(bind, |c| sample(c, look.frame));
+                        match walk {
+                            Some((w, t)) => blend(run, sample(w, look.frame), t),
+                            None => run,
+                        }
+                    }
+                })
+            },
+            // `YoshiHeadCtrl` on joint 21.
+            |j| {
+                (j == HEAD && look.head_angle != 0.0).then(|| {
+                    Mat4::from_rotation_z(look.head_angle * std::f32::consts::PI / 32768.0)
+                })
+            },
+        )
     }
 
     /// Draws Yoshi. `root` is Mario's while he rides (the scene from model space); returns the

@@ -293,6 +293,13 @@ purpose, as is carrying the egg (`TEggYoshi` takes `HIT_MESSAGE_TAKE`).
 Not yet: coins and the other non-enemy extras on the tongue, sidewalk/pivot clips (no L/R
 strafing), `THROWN_DOWN` (the sim lands the throw in `BackDown`), swimming.
 
+Drawing: Yoshi's, Mario's and FLUDD's models chain their joints Softimage-style (`INF1`
+flags 1, `J3DMtxCalcSoftimage`): scales multiply down the hierarchy and are applied to each
+joint's own matrix, not passed through the chain. The riding clips scale `jnt_neck_2` by 1.26
+along X and `chn_head` by 1/1.26; chained the Basic way that stretches his head forward.
+Joint callbacks (`YoshiHeadCtrl`, `NozzleCtrl`) turn the joint's children only.
+`libsms::calc_joints` does all three modes.
+
 ## 7b. Damage, health and coins (MarioCollision.cpp, MarioReceiveMsg.cpp, Item.cpp)
 
 Mario starts with `mHPMax` (8 on disc) health. A host reports an enemy's touch with

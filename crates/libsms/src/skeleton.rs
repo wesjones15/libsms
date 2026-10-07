@@ -38,9 +38,98 @@ pub struct Srt {
 
 impl Srt {
     pub fn matrix(&self) -> Mat4 {
-        let q = Quat::from_euler(EulerRot::ZYX, self.rot.z, self.rot.y, self.rot.x);
-        Mat4::from_scale_rotation_translation(self.scale, q, self.trans)
+        Mat4::from_scale_rotation_translation(self.scale, self.quat(), self.trans)
     }
+
+    pub fn quat(&self) -> Quat {
+        Quat::from_euler(EulerRot::ZYX, self.rot.z, self.rot.y, self.rot.x)
+    }
+}
+
+/// How a model chains its joints (`INF1` flags & 0xF, `J3DModelLoader::readInformation`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MtxCalc {
+    /// `J3DMtxCalcBasic`: each joint's scale is part of the matrix its children build on.
+    #[default]
+    Basic,
+    /// `J3DMtxCalcSoftimage`: the chain carries rotation and translation only; scales multiply
+    /// down the hierarchy, scale the children's offsets, and are applied to each joint's own
+    /// matrix at the end. A child can undo its parent's stretch by scaling the other way, which
+    /// is how Yoshi's riding clips stretch his neck without his head (Mario, Yoshi and FLUDD
+    /// are Softimage models).
+    Softimage,
+    /// `J3DMtxCalcMaya`: like Basic, but a joint with `mScaleCompensate` divides out its
+    /// parent's scale.
+    Maya,
+}
+
+impl MtxCalc {
+    pub fn from_flags(flags: u32) -> MtxCalc {
+        match flags & 0xF {
+            1 => MtxCalc::Softimage,
+            2 => MtxCalc::Maya,
+            _ => MtxCalc::Basic,
+        }
+    }
+}
+
+/// Model-space joint matrices (`J3DMtxCalcBasic::recursiveCalc` with the model's
+/// `calcTransform`). `parents` must list parents before children. `compensate` is each joint's
+/// `mScaleCompensate` (Maya only; may be empty). `callback` is a joint callback's matrix
+/// (`J3DNode::getCallBack()(node, 0)`): it runs after the joint's own matrix is stored and
+/// concatenates onto the running one, so it turns the joint's children, not the joint.
+pub fn calc_joints(
+    calc: MtxCalc,
+    parents: &[Option<usize>],
+    locals: &[Srt],
+    compensate: &[bool],
+    callback: impl Fn(usize) -> Option<Mat4>,
+) -> Vec<Mat4> {
+    let n = locals.len().min(parents.len());
+    let mut out = Vec::with_capacity(n);
+    // Per joint: the running matrix its children start from (`J3DSys::mCurrentMtx`), the
+    // product of scales down to it (`mCurrentS`) and its own scale (`mParentS`).
+    let mut current: Vec<Mat4> = Vec::with_capacity(n);
+    let mut acc: Vec<Vec3> = Vec::with_capacity(n);
+    for j in 0..n {
+        let l = &locals[j];
+        let p = parents[j].filter(|&p| p < j);
+        let (pm, ps, pscale) = match p {
+            Some(p) => (current[p], acc[p], locals[p].scale),
+            None => (Mat4::IDENTITY, Vec3::ONE, Vec3::ONE),
+        };
+        let one = |s: Vec3| (s - Vec3::ONE).abs().max_element() < 1.0e-6;
+        let s = ps * l.scale;
+        let (run, own) = match calc {
+            MtxCalc::Basic => {
+                let m = pm * l.matrix();
+                (m, m)
+            }
+            MtxCalc::Softimage => {
+                let m = pm * Mat4::from_rotation_translation(l.quat(), l.trans * ps);
+                let own = if one(s) { m } else { m * Mat4::from_scale(s) };
+                (m, own)
+            }
+            MtxCalc::Maya => {
+                let mut local = l.matrix();
+                if compensate.get(j).copied().unwrap_or(false) && p.is_some() {
+                    let inv = Mat4::from_scale(Vec3::ONE / pscale);
+                    let t = local.w_axis;
+                    local = inv * local;
+                    local.w_axis = t;
+                }
+                let m = pm * local;
+                (m, m)
+            }
+        };
+        out.push(own);
+        current.push(match callback(j) {
+            Some(c) => run * c,
+            None => run,
+        });
+        acc.push(s);
+    }
+    out
 }
 
 #[derive(Debug, Clone)]
@@ -49,6 +138,9 @@ pub struct Skeleton {
     /// Parent joint index, `None` for the root.
     pub parents: Vec<Option<usize>>,
     pub bind: Vec<Srt>,
+    pub calc: MtxCalc,
+    /// `mScaleCompensate` per joint.
+    pub compensate: Vec<bool>,
 }
 
 impl Skeleton {
@@ -88,8 +180,10 @@ impl Skeleton {
 
         let rot_scale = PI / 32768.0;
         let mut bind = Vec::with_capacity(count);
+        let mut compensate = Vec::with_capacity(count);
         for j in 0..count {
             let e = entries + j * 0x40;
+            compensate.push(*d.get(e + 2)? == 1);
             bind.push(Srt {
                 scale: Vec3::new(be_f32(d, e + 4)?, be_f32(d, e + 8)?, be_f32(d, e + 12)?),
                 rot: Vec3::new(
@@ -128,6 +222,8 @@ impl Skeleton {
             names,
             parents,
             bind,
+            calc: MtxCalc::from_flags(be_u16(d, inf1 + 8)? as u32),
+            compensate,
         })
     }
 
@@ -145,16 +241,7 @@ impl Skeleton {
 
     /// Model-space matrix of every joint, from per-joint local transforms.
     pub fn world(&self, locals: &[Srt]) -> Vec<Mat4> {
-        let mut out: Vec<Mat4> = Vec::with_capacity(self.len());
-        for (j, srt) in locals.iter().enumerate().take(self.len()) {
-            // Parents always precede children in J3D joint order.
-            let m = match self.parents[j] {
-                Some(p) if p < j => out[p] * srt.matrix(),
-                _ => srt.matrix(),
-            };
-            out.push(m);
-        }
-        out
+        calc_joints(self.calc, &self.parents, locals, &self.compensate, |_| None)
     }
 
     /// Bind pose in model space.

@@ -392,6 +392,8 @@ pub struct Shape {
 
 #[derive(Debug, Clone)]
 pub struct Bmd {
+    /// How the joints chain (`INF1` flags).
+    pub calc: libsms::MtxCalc,
     pub joints: Vec<Joint>,
     pub draw_mtx: Vec<DrawMtx>,
     pub envelopes: Vec<Vec<(u16, f32)>>,
@@ -451,7 +453,10 @@ impl Bmd {
         let textures = read_textures(d)?;
         let materials = read_materials(d)?;
         let draws = read_hierarchy(d)?;
+        let (b, r) = chunk(d, b"INF1")?;
+        let calc = libsms::MtxCalc::from_flags(r.u16(b + 8)? as u32);
         Ok(Bmd {
+            calc,
             joints,
             draw_mtx,
             envelopes,
@@ -472,17 +477,34 @@ impl Bmd {
         self.materials.iter().position(|m| m.name == name)
     }
 
-    /// Bind-pose world matrices (`J3DMtxCalcBasic` with no animation).
+    /// Bind-pose world matrices (no animation).
     pub fn bind_world(&self) -> Vec<Mat4> {
-        let mut out: Vec<Mat4> = Vec::with_capacity(self.joints.len());
-        for j in &self.joints {
-            let local = crate::pose::srt_matrix(j.scale, j.rotation, j.translation);
-            out.push(match j.parent {
-                Some(p) if p < out.len() => out[p] * local,
-                _ => local,
-            });
-        }
-        out
+        self.pose(|_| None, |_| None)
+    }
+
+    /// Model-space joint matrices with the model's chaining (`calc`): `local` gives a joint's
+    /// animated transform (`None` keeps the bind transform), `callback` a joint callback's
+    /// matrix, which turns the joint's children ([`libsms::calc_joints`]).
+    pub fn pose(
+        &self,
+        local: impl Fn(usize) -> Option<libsms::Srt>,
+        callback: impl Fn(usize) -> Option<Mat4>,
+    ) -> Vec<Mat4> {
+        let parents: Vec<Option<usize>> = self.joints.iter().map(|j| j.parent).collect();
+        let compensate: Vec<bool> = self.joints.iter().map(|j| j.scale_compensate).collect();
+        let locals: Vec<libsms::Srt> = self
+            .joints
+            .iter()
+            .enumerate()
+            .map(|(i, j)| {
+                local(i).unwrap_or(libsms::Srt {
+                    scale: j.scale,
+                    rot: j.rotation,
+                    trans: j.translation,
+                })
+            })
+            .collect();
+        libsms::calc_joints(self.calc, &parents, &locals, &compensate, callback)
     }
 
     /// Every (material, shape) pair as a triangle list, in scene-graph order.

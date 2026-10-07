@@ -31,8 +31,8 @@ impl Part {
     }
 
     /// Model-space joint matrices with `clip` at `frame`; joints it doesn't animate keep
-    /// their bind transform. `extra` adds a joint callback's rotation after the local
-    /// transform (`MTXConcat(J3DSys::mCurrentMtx, rot)`).
+    /// their bind transform. `extra` is a joint callback's rotation
+    /// (`MTXConcat(J3DSys::mCurrentMtx, rot)`), which turns the joint's children.
     pub(crate) fn posed(
         &self,
         clip: Option<&Clip>,
@@ -40,21 +40,10 @@ impl Part {
         extra: impl Fn(&str) -> Option<Mat4>,
     ) -> Vec<Mat4> {
         let b = &self.model.bmd;
-        let mut out: Vec<Mat4> = Vec::with_capacity(b.joints.len());
-        for (j, jt) in b.joints.iter().enumerate() {
-            let mut local = match clip.and_then(|c| c.sample(j, frame)) {
-                Some(s) => libsms_assets::pose::srt_matrix(s.scale, s.rot, s.trans),
-                None => libsms_assets::pose::srt_matrix(jt.scale, jt.rotation, jt.translation),
-            };
-            if let Some(r) = extra(&jt.name) {
-                local *= r;
-            }
-            out.push(match jt.parent {
-                Some(p) if p < out.len() => out[p] * local,
-                _ => local,
-            });
-        }
-        out
+        b.pose(
+            |j| clip.and_then(|c| c.sample(j, frame)),
+            |j| extra(&b.joints[j].name),
+        )
     }
 }
 
