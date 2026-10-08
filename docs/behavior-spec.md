@@ -134,7 +134,11 @@ press that did nothing in the air and fires it on the first grounded tick, and
 whose worlds are built bigger than Delfino and whose players aren't on a GameCube pad.
 `move_speed` multiplies the ground covered per tick in `walkProcess` and `jumpProcess` (speeds,
 and so the run animation, stay the game's), for a host's speed buffs. `enemy_push` and
-`cycle_nozzles`: see sections 7c and 6. The Spray's reach is the water manager's (`reach`).
+`cycle_nozzles`: see sections 7c and 6. The Spray's reach is the water manager's (`reach`). `stomp_bounce`
+multiplies a stomp's (`Trample`) take-off `vel.y` by its square root, on top of `jump_height`.
+`rocket_thrust` multiplies the Rocket nozzle's vertical recoil (`mReactionY`); the apex grows
+about as its 1.9th power (`examples/report.rs`: x1.25 flies 1.52 times as high, x1.5 2.16, x2
+3.76), and `sms_sim_set_tuning` takes a height multiplier and converts.
 
 Air control (`doJumping`): `forward *= mJumpSpeedBrake` (0.999); with the stick, `forward +=
 mag * cos(d) * mJumpAccelControl (0.008)`, sideways `mag * sin(d) * mJumpSlideControl (0.3)`;

@@ -200,35 +200,38 @@ fn main() {
         s.mario.fludd.as_ref().unwrap().level(&s.mario.params) * 100.0
     );
 
-    // Rocket
-    let (mut s, mut h) = (sim(), Log(vec![]));
-    s.mario.give_fludd();
-    let p = s.mario.params.clone();
-    s.mario
-        .fludd
-        .as_mut()
-        .unwrap()
-        .change_nozzle(NozzleKind::Rocket, false, &p);
-    s.mario.fludd.as_mut().unwrap().refill(&p);
-    let rock = Pad {
-        r: true,
-        r_analog: 255,
-        ..Pad::default()
-    };
-    let (mut max_y, mut fired_at) = (0.0f32, None);
-    for t in 0..(8 * TICK_HZ) {
-        step(&mut s, &mut h, &rock, 1);
-        max_y = max_y.max(s.mario.pos.y);
-        if fired_at.is_none() && h.0.iter().any(|e| matches!(e, Event::TriggerFired(_))) {
-            fired_at = Some(t);
+    // Rocket, at the game's lift and with Options::rocket_thrust.
+    for thrust in [1.0f32, 1.25, 1.5, 2.0] {
+        let (mut s, mut h) = (sim(), Log(vec![]));
+        s.mario.options.rocket_thrust = thrust;
+        s.mario.give_fludd();
+        let p = s.mario.params.clone();
+        s.mario
+            .fludd
+            .as_mut()
+            .unwrap()
+            .change_nozzle(NozzleKind::Rocket, false, &p);
+        s.mario.fludd.as_mut().unwrap().refill(&p);
+        let rock = Pad {
+            r: true,
+            r_analog: 255,
+            ..Pad::default()
+        };
+        let (mut max_y, mut fired_at) = (0.0f32, None);
+        for t in 0..(8 * TICK_HZ) {
+            step(&mut s, &mut h, &rock, 1);
+            max_y = max_y.max(s.mario.pos.y);
+            if fired_at.is_none() && h.0.iter().any(|e| matches!(e, Event::TriggerFired(_))) {
+                fired_at = Some(t);
+            }
         }
+        println!(
+            "rocket x{thrust}: charge {:.2}s, apex {max_y:.0} units ({:.1} heights), tank {:.0}%",
+            fired_at.unwrap_or(0) as f32 / hz,
+            max_y / 160.0,
+            s.mario.fludd.as_ref().unwrap().level(&s.mario.params) * 100.0
+        );
     }
-    println!(
-        "rocket: charge {:.2}s, apex {max_y:.0} units ({:.1} heights), tank {:.0}%",
-        fired_at.unwrap_or(0) as f32 / hz,
-        max_y / 160.0,
-        s.mario.fludd.as_ref().unwrap().level(&s.mario.params) * 100.0
-    );
 
     // Turbo
     let (mut s, mut h) = (sim(), Log(vec![]));

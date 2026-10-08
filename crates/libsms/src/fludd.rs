@@ -803,6 +803,11 @@ impl Mario {
         } else {
             (reaction * dir_scale, -dir.y * power * np.reaction_y)
         };
+        let reaction_y = if kind == NozzleKind::Rocket {
+            reaction_y * self.options.rocket_thrust
+        } else {
+            reaction_y
+        };
         self.add_velocity(reaction_pow);
         self.vel.y += reaction_y;
         if !(kind.is_trigger() || kind == NozzleKind::Spray) {

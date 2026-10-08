@@ -1506,6 +1506,36 @@ fn landing_on_an_enemy_stomps_it_higher_each_time() {
     assert!(apexes[0] < apexes[1] && apexes[1] < apexes[2], "{apexes:?}");
 }
 
+/// How far the first three stomps on an enemy carry Mario above where each bounce began.
+fn stomp_rises(bounce: f32) -> Vec<f32> {
+    let mut s = Scene::new(Enemies(vec![(Vec3::ZERO, 60.0, 100.0)]));
+    s.sim.mario.options.stomp_bounce = bounce;
+    s.pad.a = true;
+    s.step(1);
+    (0..3)
+        .map(|_| {
+            assert!(s.until(600, |m| m.status == Status::Trample && m.vel.y > 0.0));
+            let from = s.mario().pos.y;
+            let mut apex = from;
+            while s.mario().vel.y > 0.0 {
+                s.step(1);
+                apex = apex.max(s.mario().pos.y);
+            }
+            apex - from
+        })
+        .collect()
+}
+
+#[test]
+fn stomp_bounce_option_bounces_higher() {
+    let (game, bouncy) = (stomp_rises(1.0), stomp_rises(2.5));
+    println!("stomp rises (units): game {game:?}, x2.5 {bouncy:?}");
+    for (g, b) in game.iter().zip(&bouncy) {
+        let ratio = b / g;
+        assert!((2.2..2.8).contains(&ratio), "{game:?} {bouncy:?}");
+    }
+}
+
 #[test]
 fn a_ground_pound_onto_an_enemy_hits_it_once() {
     let mut s = Scene::new(Enemies(vec![(Vec3::ZERO, 60.0, 100.0)]));

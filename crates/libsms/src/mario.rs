@@ -198,6 +198,11 @@ pub struct Options {
     /// Ground covered per tick, walking and in the air, times this (a host's speed buffs).
     /// Speeds, and so animation, stay the game's. 1: the game's.
     pub move_speed: f32,
+    /// Stomp bounces (`mTramplePowStep1..3`) times this high, on top of `jump_height`, for a
+    /// bouncier feel. 1: the game's.
+    pub stomp_bounce: f32,
+    /// The Rocket nozzle's lift (its recoil, `mReactionY`) times this. 1: the game's.
+    pub rocket_thrust: f32,
 }
 
 impl Default for Options {
@@ -210,6 +215,8 @@ impl Default for Options {
             enemy_push: false,
             cycle_nozzles: false,
             move_speed: 1.0,
+            stomp_bounce: 1.0,
+            rocket_thrust: 1.0,
         }
     }
 }
@@ -801,6 +808,10 @@ impl Mario {
                     _ => (self.params.mario.trample_pow_step3, JumpKind::Triple),
                 };
                 self.set_player_jump_speed(0.25, pow);
+                if self.options.stomp_bounce != 1.0 && self.vel.y > 0.0 {
+                    // A height multiplier: the take-off speed by its square root.
+                    self.vel.y *= self.options.stomp_bounce.max(0.0).sqrt();
+                }
                 self.forward_vel *= 0.8;
                 event = Some(kind);
             }

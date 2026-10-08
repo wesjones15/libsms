@@ -27,7 +27,7 @@ use libsms::{
 use view::SmsView;
 
 /// ABI version, bumped when the C interface changes.
-pub const SMS_ABI_VERSION: u32 = 4;
+pub const SMS_ABI_VERSION: u32 = 5;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sms_abi_version() -> u32 {
@@ -273,6 +273,10 @@ pub struct SmsTuning {
     pub move_speed: f32,
     /// The Spray nozzle's water reaches about this many times as far (1: the game's).
     pub spray_reach: f32,
+    /// Stomp bounces times this high, on top of `jump_height` (1: the game's).
+    pub stomp_bounce: f32,
+    /// The Rocket nozzle flies about this many times as high (1: the game's).
+    pub rocket_height: f32,
     /// 1: enemies are solid to Mario (`keepDistance`); 0: the game's (most aren't).
     pub enemy_push: u8,
     /// 1: X steps through Spray, Hover, Rocket and Turbo; 0: the game's (Spray and one).
@@ -711,6 +715,10 @@ pub unsafe extern "C" fn sms_sim_set_tuning(sim: *mut SmsSim, tuning: *const Sms
         o.enemy_push = t.enemy_push != 0;
         o.cycle_nozzles = t.cycle_nozzles != 0;
         s.water.reach = factor(t.spray_reach);
+        o.stomp_bounce = factor(t.stomp_bounce);
+        // The rocket's apex grows about as its lift to the power 1.9 (examples/report.rs:
+        // x1.25 lift 1.52 times as high, x1.5 2.16, x2 3.76).
+        o.rocket_thrust = factor(t.rocket_height).powf(1.0 / 1.9);
     }
 }
 
@@ -940,7 +948,7 @@ mod tests {
         assert_eq!(
             &sizes[..n],
             &[
-                12, 20, 8, 16, 32, 48, 24, 48, 40, 24, 12, 64, 48, 24, 24, 24, 24
+                12, 20, 8, 16, 32, 48, 24, 48, 40, 24, 12, 64, 48, 32, 24, 24, 24
             ]
         );
     }
