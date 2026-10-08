@@ -22,6 +22,7 @@ use libsms_assets::btp::TexPattern;
 use libsms_assets::mario::{BODY_HAND_SHAPES, HIDDEN_SHAPE, Hands, SHIRT_SHAPE, hands_for_clip};
 use libsms_assets::{Batch, Bmd, Pose, paths};
 
+use crate::particles::Particles;
 use crate::tev::{Baked, C4, Inputs, Source, Tex, env_uv};
 
 /// Model indices.
@@ -126,6 +127,9 @@ pub struct View {
     hand_joints: [Option<usize>; 2],
     head: Option<usize>,
     chest: Option<usize>,
+    center: Option<usize>,
+    /// The game's particle effects on Mario: the super ground pound's flames.
+    pub fx: Particles,
     /// Wearing the Shine Shirt (off at the start of the game).
     pub shirt: bool,
     time: f32,
@@ -147,6 +151,10 @@ pub struct View {
     pub colors: Vec<C4>,
     pub texture_ids: Vec<i32>,
 }
+
+/// `PARTICLE_MS_M_SPHIPD_A..D` (`TMario::emitBlurHipDropSuper`).
+pub const SUPER_POUND_FLAMES: [&str; 4] =
+    ["ms_m_sphipd_a", "ms_m_sphipd_b", "ms_m_sphipd_c", "ms_m_sphipd_d"];
 
 fn load_bmd(dir: &Path, rel: &str) -> Result<Bmd, String> {
     let data = std::fs::read(dir.join(rel)).map_err(|e| format!("{rel}: {e}"))?;
@@ -433,6 +441,8 @@ impl View {
             hand_joints: [b.joint("jnt_hand_R"), b.joint("jnt_hand_L")],
             head: b.joint("M_head"),
             chest: b.joint("jnt_chest"),
+            center: b.joint("center"),
+            fx: Particles::load(dir, &SUPER_POUND_FLAMES),
             models: list,
             textures,
             skeleton,
@@ -598,6 +608,21 @@ impl View {
             }
             _ => None,
         };
+
+        // The super ground pound's flames (`emitBlurHipDropSuper`, every tick of the flaming
+        // fall), bound to Mario's middle (`getCenterAnmMtx`) as drawn.
+        if let Some(c) = self.center.and_then(|c| joints.get(c)) {
+            let center = Mat4::from_translation(pos) * Mat4::from_quat(rot) * *c;
+            for (slot, name) in SUPER_POUND_FLAMES.iter().enumerate() {
+                if m.pounding() == 2 {
+                    self.fx.request(slot as u32, name, center);
+                } else {
+                    self.fx.rebind(slot as u32, center);
+                }
+            }
+        }
+        self.fx.advance(m.ticks);
+        self.fx.build(self.right, self.up);
 
         // (model, its root in Mario's model space, its joints)
         let mut parts: Vec<(u32, Mat4, Vec<Mat4>)> =

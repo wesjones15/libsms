@@ -5,6 +5,7 @@
 //! a cpal stream).
 
 pub mod audio;
+pub mod particles;
 pub mod tev;
 pub mod view;
 pub mod water;

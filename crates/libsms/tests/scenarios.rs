@@ -1788,3 +1788,85 @@ fn a_spin_jump_calls_out_and_whooshes() {
     assert_eq!(cue("MSD_SE_MV24_JUMP_SPECIAL_01"), 1);
     assert_eq!(cue("MSD_SE_MA_ROLL_JUMP"), 1);
 }
+
+#[test]
+fn a_wet_belly_slide_holds_the_slide_pose() {
+    if need_disc() {
+        return;
+    }
+    let mut s = Scene::flat();
+    s.run_forward();
+    s.secs(1.0);
+    s.press_a();
+    s.step(10);
+    s.pad.b = true;
+    s.step(1);
+    s.pad.b = false;
+    s.pad.stick = Vec2::ZERO;
+    assert!(s.until(600, |m| m.status == Status::Catch));
+    s.sim.mario.water_underfoot = true;
+    // `catching` stops the dive clip at frame 50 for the whole slide, instead of letting it
+    // run on (and loop the dive's spin).
+    let mut ticks = 0;
+    while s.mario().status == Status::Catch && ticks < 4000 {
+        // (The tick's own playback steps it half a frame on before the next clamp.)
+        assert!(s.mario().anim.frame <= 50.5, "frame {}", s.mario().anim.frame);
+        s.step(1);
+        ticks += 1;
+    }
+    assert!(ticks > 120, "slid {ticks} ticks");
+}
+
+#[test]
+fn a_long_fall_cries_out_once() {
+    struct Cliff;
+    impl Host for Cliff {
+        fn ground(&self, p: Vec3) -> Option<libsms::GroundHit> {
+            let h = if p.z < 200.0 { 0.0 } else { -100_000.0 };
+            (p.y >= h).then_some(libsms::GroundHit {
+                height: h,
+                normal: Vec3::Y,
+                flags: libsms::SurfaceFlags::NONE,
+            })
+        }
+    }
+    let mut s = Scene::new(Cliff);
+    s.run_forward();
+    assert!(s.until(600, |m| m.status == Status::Landing));
+    let cry = |s: &Scene<Cliff>| {
+        s.event_count(|e| matches!(e, Event::Sound(c) if c.name == "MSD_SE_MV10B_CRY_JUMP_01"))
+    };
+    // `landing`: two seconds into the fall, the cry and the flailing pose.
+    s.step(200);
+    assert_eq!(cry(&s), 0);
+    s.step(100);
+    assert_eq!(cry(&s), 1);
+    assert_eq!(s.mario().anim.clip, "thrown");
+    s.step(200);
+    assert_eq!(cry(&s), 1);
+}
+
+#[test]
+fn short_hop_option_keeps_a_tapped_jump_high() {
+    fn apex(short_hop: f32, hold_ticks: u32) -> f32 {
+        let mut s = Scene::flat();
+        s.sim.mario.options.short_hop = short_hop;
+        let mut apex = 0.0f32;
+        s.pad.a = true;
+        for t in 0..400 {
+            if t == hold_ticks {
+                s.pad.a = false;
+            }
+            s.step(1);
+            apex = apex.max(s.mario().pos.y);
+        }
+        apex
+    }
+    let full = apex(0.0, 200);
+    let (game, raised) = (apex(0.0, 3), apex(0.5, 3));
+    println!("tap: game {game:.0}, short_hop 0.5 {raised:.0}, full {full:.0}");
+    assert!(raised >= 0.5 * full - 1.0, "{raised} vs {full}");
+    assert!(raised > game + 20.0, "{raised} vs {game}");
+    // Held, it changes nothing.
+    assert!((apex(0.5, 200) - full).abs() < 1.0);
+}

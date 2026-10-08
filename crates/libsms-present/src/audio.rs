@@ -505,7 +505,7 @@ mod tests {
     }
 
     #[test]
-    fn pound_spin_and_turbo_sounds_are_audible() {
+    fn pound_and_spin_sounds_are_audible() {
         let Some((assets, _)) = fixture() else {
             return;
         };
@@ -528,7 +528,6 @@ mod tests {
             ),
             ("spin voice", cue("MSD_SE_MV24_JUMP_SPECIAL_01", None)),
             ("spin whoosh", cue("MSD_SE_MA_ROLL_JUMP", None)),
-            ("turbo jet", cue("MSD_SE_PO_WATER_HI", Some(1.0))),
         ];
         for (what, event) in cases {
             let mut sys = SoundSystem::new(data.clone());
@@ -537,8 +536,7 @@ mod tests {
             let mut peak = 0.0f32;
             let mut buffer = [0.0; 1600];
             for i in 0..30 {
-                // Held sounds (the jet) are re-requested every frame.
-                if i == 0 || what == "turbo jet" {
+                if i == 0 {
                     scene.events(&mut sys, &[event], &mario);
                 }
                 sys.frame();

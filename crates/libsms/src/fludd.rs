@@ -671,14 +671,6 @@ impl Mario {
         }
         let s = &f.slots[kind as usize];
         let (amount, pressure, emitted) = (s.amount, s.pressure, f.emitted);
-        // The game passes Turbo the nozzle's output (`unk378`), which a trigger nozzle never
-        // sets, so the jet's pitch curve gates it silent. Ours: the trigger's pressure while
-        // it fires, so the Turbo is heard.
-        let jet = if s.state == TriggerState::Active {
-            (s.fill / p.nozzle(kind).inside_pressure_max).clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
         // The held sounds `TWaterGun::emit` starts after the nozzle emits.
         match kind {
             NozzleKind::Spray => {
@@ -686,8 +678,7 @@ impl Mario {
                 self.sound("MSD_SE_PO_NORMAL_NOZZLE_IMI", Some(pressure));
                 self.sound("MSD_SE_PO_WATER_HI", Some(amount));
             }
-            NozzleKind::Turbo => self.sound("MSD_SE_PO_WATER_HI", Some(jet)),
-            NozzleKind::Yoshi => self.sound("MSD_SE_PO_WATER_HI", Some(amount)),
+            NozzleKind::Turbo | NozzleKind::Yoshi => self.sound("MSD_SE_PO_WATER_HI", Some(amount)),
             NozzleKind::Underwater => self.sound("MSD_SE_PO_HOVER", None),
             NozzleKind::Hover if emitted > 0 => self.sound("MSD_SE_PO_HOVER", None),
             _ => {}

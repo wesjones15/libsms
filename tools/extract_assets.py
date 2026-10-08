@@ -38,6 +38,7 @@ EXTRACTS = [
     ("mario.szs", "", ""),
     ("nintendo.szs", "audi/msound.aaf", "AudioRes/msound.aaf"),
     ("yoshi.szs", "", "yoshi"),
+    ("particle.szs", "", "particle"),
 ]
 
 # Disc folders copied as they are.
@@ -72,6 +73,7 @@ REQUIRED = [
     "enemy/hamukuri/default.bmd",
     "scene/mapobj/coin.bmd",
     "params_mario/dmghamukuri.prm",
+    "particle/ms_m_sphipd_a.jpa",
 ]
 
 # Folders gathered from every stage archive into one: (prefix, destination). Matches

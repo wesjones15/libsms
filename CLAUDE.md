@@ -20,7 +20,8 @@ This folder is the repo root. Sibling folders are read-only references:
   from every stage archive, `params_npc/` the NPC tuning (`params.szs:npc/`), `scene/mapobj/fruit*`
   the fruit models and `scene/mapobj/eggyoshi*` Yoshi's egg (stage archives), `yoshi/` Yoshi
   (`yoshi.szs`), `enemy/hamukuri*` the Strollin' Stu and `scene/mapobj/coin*` the coins (stage
-  archives) and `params_enemy/` the enemies' tuning (`params.szs:enemy/`). Never commit it. Hosts call `Assets::discover_or_extract`, which finds a
+  archives), `params_enemy/` the enemies' tuning (`params.szs:enemy/`) and `particle/` the
+  common particle effects (`particle.szs`, `.jpa`). Never commit it. Hosts call `Assets::discover_or_extract`, which finds a
   complete folder or extracts from the disc (`SMS_DISC`, or an image in the given folders) on first
   run, and redoes an older partial one. The older copy at `../extracted/sms` is not used.
 - `../libpikmin/`: the pattern to follow (Host trait, fixed step, events, disc-parsed params).
@@ -51,7 +52,9 @@ Workspace:
   material's TEV run on the CPU per texel and baked into one RGBA texture, at full diffuse
   light with no specular: Mario's materials light themselves in TEV with a toon ramp read at
   the lit colour (`GX_TG_SRTG`) plus a highlight; env-only materials bake over the env map's
-  space), and `audio` (the viewer's old `sound.rs`: the game's sounds on cpal, music optional).
+  space), `particles` (the disc's `.jpa` effects run as JParticle runs them and handed out as
+  quads: the super ground pound's flames) and `audio` (the viewer's old `sound.rs`: the game's
+  sounds on cpal, music optional).
   `cargo run -p libsms-present --example bakes -- <dir>` writes every bake to PNG.
 - `crates/libsms-ffi/`: C ABI (`sms.dll`): `SmsHost` callbacks (ground/roof/walls/events/enemies),
   `sms_sim_new/step/state/teleport/free`, and `sms_view_*` (models, bakes, per-frame draws;
@@ -59,11 +62,12 @@ Workspace:
   a world-space move direction instead of a stick. The sim handle also runs FLUDD's water
   (`libsms::water`, through the same callbacks; its enemy hits come back as `WaterHit` events)
   and takes host tuning (`sms_sim_set_tuning`: jump height, A buffer, chain grace, move speed,
-  spray reach, solid enemies, nozzle cycling, stomp bounce, rocket height, pound jump, stomp jump;
+  spray reach, solid enemies, nozzle cycling, stomp bounce, rocket height, pound jump, stomp jump,
+  short hop;
   `Options`). `SmsState::pounding` says when to draw the super pound's flames; a `GroundPound`
   event's value is the drop. Each step the FFI tells Mario about water on the ground for the
   wet belly slide; the view builds the water's quads
-  (`libsms_present::water`, `sms_view_water_*`). Bump `SMS_ABI_VERSION` on any layout change
+  (`libsms_present::water`, `sms_view_water_*`) and the particles' (`sms_view_fx_*`). Bump `SMS_ABI_VERSION` on any layout change
   and keep `sms_struct_sizes`' test in step; `../ror2-mario/MarioTest/Native.cs` mirrors it.
 - `crates/libsms-audio/`: device-independent PCM engine (`Engine`), JAI game layer
   (`SoundSystem`) and `.bas` cue playback (`animation::AnimationPlayer`).

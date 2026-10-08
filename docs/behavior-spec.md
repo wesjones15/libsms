@@ -144,7 +144,9 @@ at `max(triple, sqrt(8 g h))`, `h` being that share of the pound's fall: the ape
 `v`, moving `v/4` a tick under `g` a tick, is about `v^2/8g`. `stomp_jump`: an A press within 15
 ticks of a stomp, before it or after, makes its take-off `vel.y` that factor's square root as
 fast; a late press sets the boosted speed less the gravity since (so letting go of A before
-pressing, which cuts the bounce short as the game does, costs nothing).
+pressing, which cuts the bounce short as the game does, costs nothing). `short_hop`: `isFallCancel`
+only cuts once the jump has risen that share of its full apex (`v^2/8g` from take-off), so a tap
+rises further (disc tuning: a 3-tick tap is 89 of 226 in the game, 145 at 0.4, 160 at 0.5).
 
 Air control (`doJumping`): `forward *= mJumpSpeedBrake` (0.999); with the stick, `forward +=
 mag * cos(d) * mJumpAccelControl (0.008)`, sideways `mag * sin(d) * mJumpSlideControl (0.3)`;
@@ -155,11 +157,28 @@ A head-on wall hit at speed > `mClashSpeed` bumps; > 16 reflects and starts a wa
 (`WallSlide`, jump to kick off; slides at `-timer/2` after 20 ticks); else stops dead.
 
 Dive (`JumpCatch`) lands into `Catch` (belly slide), which jumps out (`CatchStop`) or gets up
-(`CatchLost`). Ground pound (`HipDrop`): 60 ticks of hover, then falls at `mHipAttackSpeedY` (-80);
+(`CatchLost`); the slide holds the dive clip at frame 50, its belly pose, and plays `MA_SLIP`
+every tick (`catching`). Ground pound (`HipDrop`): 60 ticks of hover, then falls at `mHipAttackSpeedY` (-80);
 becomes "super" after `mSuperHipAttackCt` (80) ticks, falling at `mSuperHipAttackSpeedY` in flames
 (`emitBlurHipDropSuper`, `MS_M_SPHIPD_A..D`; `Mario::pounding` 2 for hosts to draw), and lands
 with the super hit (`HIT_MESSAGE_SUPER_HIP_DROP`, `MS_M_SPHIPD_HIT_*`). `Event::GroundPound`
 carries the drop from the top of the hover (`unk104`) to the floor.
+
+**Long falls** (`landing`, MarioJump.cpp; the `Landing` status is a plain fall, e.g. off a ledge):
+after 240 ticks falling (2 s) Mario flails (`ANIM_THROWN`) and cries out (`MV10B_CRY_JUMP`; the
+game requests it every tick from then, libsms once). Jumps falling as far don't.
+
+**Particle effects** (`libsms_present::particles`, from the disc's `particle.szs` `.jpa` files):
+`JPABaseEmitter` and its particles run once per game frame (4 ticks): emission over the volume
+(`createParticle`), gravity and air fields, air resistance and weight, the `ESP1` scale, alpha and
+spin over life and the `BSP1` colour tables, drawn as `JPADrawExec*` builds billboards,
+directional quads and (crossed) stripes. A persistent request per frame keeps an emitter making
+particles; a frame without lets it go (`TMarioParticleManager::perform`,
+`becomeInvalidEmitter`). TEV (`JPADrawSetupTev`): stage 0's colour is `d + a(1 - c) + b c` over
+the texture colour and the prm/env registers, its alpha texture alpha times prm alpha; additive
+effects are split into basis textures and vertex colours that sum to it. Ported for the super
+pound's flames (`MS_M_SPHIPD_A..D`, bound to the `center` joint as drawn). Not ported: children
+(`SSP1`), `KFA1` key frames, indirect textures, the other field kinds.
 
 **Wet belly slide** (`checkCurrentPlane` → `askHitWaterParticleOnGround`, `catching`,
 `doSliding`). Touching ground (`isTouchGround4cm`) within 300 (summed over the axes) of a FLUDD
@@ -247,9 +266,8 @@ Slots: 0 Spray (`NozzleDeform.prm`), 1 Rocket, 2 Underwater, 3 Yoshi, 4 Hover, 5
   by trigger pressure) and `PO_WATER_HI` (pitch by output; JALModSe curves), Turbo
   `PO_WATER_HI`, Hover/Underwater `PO_HOVER`, trigger charge `SY_NEWP_AIR_TAME`, Rocket/Turbo
   firing `PO_ROCKET_TRIGGER`/`PO_SNIPER_TRIGGER`, refilling `PO_SUCK_WATER_B`, X
-  `SY_SELECT_POMP(_BACK)`. **Not the game:** the game gives Turbo's `PO_WATER_HI` the nozzle's
-  output (`unk378`), which `TNozzleTrigger::movement` never sets, so the jet's pitch curve gates
-  it silent; libsms passes the trigger's pressure (`unk388 / mInsidePressureMax`) while it fires.
+  `SY_SELECT_POMP(_BACK)`. As in the game, Turbo's `PO_WATER_HI` gets the nozzle's output
+  (`unk378`), which `TNozzleTrigger::movement` never sets, so its pitch curve gates it silent.
 
 **Water particles** (`TModelWaterManager`, ModelWaterManager.cpp; ported: `water.rs`, stepped by
 the host once per 30 Hz frame). 256 slots. `makeEmit` adds the trembles to direction, power and

@@ -80,6 +80,12 @@ impl Mario {
                     self.status_timer += 1;
                     if self.status_timer > 240 {
                         self.status_timer = 240;
+                        // `landing`: two seconds into a fall Mario flails (`ANIM_THROWN`) and
+                        // cries out. The game requests the cry every tick from then on; the
+                        // one that starts it is enough here.
+                        if self.status_arg != 3 {
+                            self.sound("MSD_SE_MV10B_CRY_JUMP_01", None);
+                        }
                         self.status_arg = 3;
                     }
                 }

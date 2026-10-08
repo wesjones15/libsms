@@ -15,12 +15,18 @@
 //! FLUDD's water is separate geometry in world space: [`sms_view_water_vertices`] (quads, the
 //! drops then the splashes, counted in [`sms_view_water_info`]) over the two textures from
 //! [`sms_view_water_texture`].
+//!
+//! So are the game's particle effects on Mario (`libsms_present::particles`: the super ground
+//! pound's flames): [`sms_view_fx_batches`] are runs of quads in [`sms_view_fx_vertices`], each
+//! over one of the textures counted in [`sms_view_fx_info`] ([`sms_view_fx_texture`]; a
+//! texture whose [`sms_view_fx_texture_version`] changed has new pixels).
 
 use std::ffi::{CString, c_char};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
 
 use glam::{Mat4, Vec3, Vec4};
+use libsms_present::particles::{FxBatch, FxVertex};
 use libsms_present::water::WaterVertex;
 use libsms_present::{Audio, View, WaterLook};
 
@@ -135,6 +141,37 @@ pub struct SmsWaterInfo {
     pub drop_quads: u32,
     pub splash_quads: u32,
     pub tint: [f32; 4],
+}
+
+/// A corner of a particle quad: world position (sim units), texture coordinates and colour
+/// (0..1). Quads are 4 corners in order.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SmsFxVertex {
+    pub pos: SmsVec3,
+    pub uv: [f32; 2],
+    pub color: [f32; 4],
+}
+
+/// A run of particle quads over one texture. `blend` 0: added (`src * src.a + dst`, the
+/// colours carry the effect's alpha); 1: see-through (`src * src.a + dst * (1 - src.a)`).
+/// Draw the texture times the vertex colour, unlit, without writing depth.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SmsFxBatch {
+    pub texture: u32,
+    pub first_vertex: u32,
+    pub vertex_count: u32,
+    pub blend: u32,
+}
+
+/// This frame's particle counts.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SmsFxInfo {
+    pub batches: u32,
+    pub vertices: u32,
+    pub textures: u32,
 }
 
 /// An opaque view handle.
@@ -712,3 +749,123 @@ pub unsafe extern "C" fn sms_view_water_texture(
 }
 
 const _: () = assert!(std::mem::size_of::<SmsWaterVertex>() == std::mem::size_of::<WaterVertex>());
+const _: () = assert!(std::mem::size_of::<SmsFxVertex>() == std::mem::size_of::<FxVertex>());
+const _: () = assert!(std::mem::size_of::<SmsFxBatch>() == std::mem::size_of::<FxBatch>());
+
+/// This frame's particle counts (after [`sms_view_update`]).
+///
+/// # Safety
+/// `view` from [`sms_view_new`]; `out` writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_fx_info(view: *mut SmsView, out: *mut SmsFxInfo) -> u8 {
+    // SAFETY: as documented.
+    unsafe {
+        with_view(view, 0, |v| {
+            let Some(out) = out.as_mut() else {
+                return 0;
+            };
+            *out = SmsFxInfo {
+                batches: v.view.fx.batches.len() as u32,
+                vertices: v.view.fx.vertices.len() as u32,
+                textures: v.view.fx.textures.len() as u32,
+            };
+            1
+        })
+    }
+}
+
+/// This frame's particle quads; `count` gets how many corners. Valid as
+/// [`sms_view_positions`].
+///
+/// # Safety
+/// As [`sms_view_positions`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_fx_vertices(
+    view: *mut SmsView,
+    count: *mut u32,
+) -> *const SmsFxVertex {
+    // SAFETY: as above; the layouts match (checked above).
+    unsafe {
+        with_view(view, std::ptr::null(), |v| {
+            if let Some(c) = count.as_mut() {
+                *c = v.view.fx.vertices.len() as u32;
+            }
+            v.view.fx.vertices.as_ptr().cast()
+        })
+    }
+}
+
+/// This frame's particle batches; `count` gets how many. Valid as [`sms_view_positions`].
+///
+/// # Safety
+/// As [`sms_view_positions`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_fx_batches(
+    view: *mut SmsView,
+    count: *mut u32,
+) -> *const SmsFxBatch {
+    // SAFETY: as above; the layouts match (checked above).
+    unsafe {
+        with_view(view, std::ptr::null(), |v| {
+            if let Some(c) = count.as_mut() {
+                *c = v.view.fx.batches.len() as u32;
+            }
+            v.view.fx.batches.as_ptr().cast()
+        })
+    }
+}
+
+/// Bumped whenever particle texture `which`'s pixels change (0 before it has any).
+///
+/// # Safety
+/// `view` from [`sms_view_new`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_fx_texture_version(view: *mut SmsView, which: u32) -> u32 {
+    // SAFETY: as documented.
+    unsafe {
+        with_view(view, 0, |v| {
+            v.view.fx.textures.get(which as usize).map_or(0, |t| t.version)
+        })
+    }
+}
+
+/// Particle texture `which`, like [`sms_view_water_texture`] (wrap: repeat or clamp both
+/// ways, as `info` says). Returns 0 if there's no such texture or `len` is short.
+///
+/// # Safety
+/// As [`sms_view_texture`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_fx_texture(
+    view: *mut SmsView,
+    which: u32,
+    info: *mut SmsTexture,
+    rgba: *mut u8,
+    len: u32,
+) -> u8 {
+    // SAFETY: as documented.
+    unsafe {
+        with_view(view, 0, |v| {
+            let Some(t) = v.view.fx.textures.get(which as usize) else {
+                return 0;
+            };
+            if let Some(info) = info.as_mut() {
+                let wrap = if t.repeat { 0 } else { 1 };
+                *info = SmsTexture {
+                    width: t.width,
+                    height: t.height,
+                    wrap_s: wrap,
+                    wrap_t: wrap,
+                    _pad: [0; 2],
+                };
+            }
+            if rgba.is_null() {
+                return 1;
+            }
+            if t.rgba.len() > len as usize {
+                return 0;
+            }
+            std::ptr::copy_nonoverlapping(t.rgba.as_ptr(), rgba, t.rgba.len());
+            1
+        })
+    }
+}

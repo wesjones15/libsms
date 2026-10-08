@@ -209,6 +209,9 @@ pub struct Options {
     /// A pressed within [`STOMP_JUMP_WINDOW`] ticks of a stomp, before or after, makes the
     /// bounce this many times as high. 1: the game's (A does nothing).
     pub stomp_jump: f32,
+    /// Letting go of A early (`isFallCancel`) cuts a jump short only once it has risen this
+    /// share of its full height, so a tap still hops this high or a little more. 0: the game's.
+    pub short_hop: f32,
 }
 
 /// Ticks either side of a stomp in which A counts for [`Options::stomp_jump`].
@@ -228,6 +231,7 @@ impl Default for Options {
             rocket_thrust: 1.0,
             pound_jump: 0.0,
             stomp_jump: 1.0,
+            short_hop: 0.0,
         }
     }
 }
@@ -282,6 +286,8 @@ pub struct Mario {
     spin_voice_due: bool,
     spin_ticks: u16,
     pub(crate) short_hop: bool,
+    /// Height a jump rises before letting go of A cuts it ([`Options::short_hop`]).
+    pub(crate) hop_floor_y: f32,
 
     pub anim: AnimState,
 
@@ -390,6 +396,7 @@ impl Mario {
             spin_voice_due: true,
             spin_ticks: 0,
             short_hop: false,
+            hop_floor_y: 0.0,
             anim,
             fludd: None,
             upper: UpperState::Idle,
@@ -961,6 +968,10 @@ impl Mario {
         self.jump_peak_y = self.pos.y;
         // A pound jump always goes full height.
         self.short_hop = st.allows_short_hop() && pound.is_none();
+        // Host tuning: the cut waits until the jump has risen a share of its full apex
+        // (`v^2 / 8g`, as above).
+        let full = self.vel.y.max(0.0).powi(2) / (8.0 * self.params.jump.gravity);
+        self.hop_floor_y = self.pos.y + full * self.options.short_hop.clamp(0.0, 1.0);
         if let Some(k) = event {
             self.events.push(Event::Jump(k));
         }

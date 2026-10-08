@@ -27,7 +27,7 @@ use libsms::{
 use view::SmsView;
 
 /// ABI version, bumped when the C interface changes.
-pub const SMS_ABI_VERSION: u32 = 6;
+pub const SMS_ABI_VERSION: u32 = 7;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sms_abi_version() -> u32 {
@@ -287,6 +287,9 @@ pub struct SmsTuning {
     /// A timed within a few ticks of a stomp makes the bounce this many times as high (0 or 1:
     /// the game's).
     pub stomp_jump: f32,
+    /// A tapped jump still rises this share of a full one before letting go of A cuts it
+    /// (0: the game's).
+    pub short_hop: f32,
     /// 1: enemies are solid to Mario (`keepDistance`); 0: the game's (most aren't).
     pub enemy_push: u8,
     /// 1: X steps through Spray, Hover, Rocket and Turbo; 0: the game's (Spray and one).
@@ -747,6 +750,11 @@ pub unsafe extern "C" fn sms_sim_set_tuning(sim: *mut SmsSim, tuning: *const Sms
         } else {
             1.0
         };
+        o.short_hop = if t.short_hop.is_finite() {
+            t.short_hop.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
     }
 }
 
@@ -779,6 +787,9 @@ pub unsafe extern "C" fn sms_struct_sizes(out: *mut u32, max: u32) -> u32 {
         size_of::<view::SmsWaterVertex>(),
         size_of::<view::SmsWaterInfo>(),
         size_of::<SmsEnemy>(),
+        size_of::<view::SmsFxVertex>(),
+        size_of::<view::SmsFxBatch>(),
+        size_of::<view::SmsFxInfo>(),
     ];
     if !out.is_null() {
         for (i, s) in sizes.iter().take(max as usize).enumerate() {
@@ -970,13 +981,13 @@ mod tests {
 
     #[test]
     fn struct_sizes_are_what_hosts_mirror() {
-        let mut sizes = [0u32; 17];
-        let n = unsafe { sms_struct_sizes(sizes.as_mut_ptr(), 17) } as usize;
+        let mut sizes = [0u32; 20];
+        let n = unsafe { sms_struct_sizes(sizes.as_mut_ptr(), 20) } as usize;
         // ror2-mario's Native.cs and ror2-common's view structs check these at load.
         assert_eq!(
             &sizes[..n],
             &[
-                12, 20, 8, 16, 32, 48, 24, 52, 40, 24, 12, 64, 48, 40, 24, 24, 24
+                12, 20, 8, 16, 32, 48, 24, 52, 40, 24, 12, 64, 48, 44, 24, 24, 24, 36, 16, 12
             ]
         );
     }

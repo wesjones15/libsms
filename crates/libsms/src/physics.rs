@@ -293,9 +293,10 @@ impl Mario {
         0
     }
 
-    /// `isFallCancel`: letting go of jump while rising fast cuts the jump short.
+    /// `isFallCancel`: letting go of jump while rising fast cuts the jump short (host tuning:
+    /// not below `hop_floor_y`, [`crate::Options::short_hop`]).
     fn is_fall_cancel(&self) -> bool {
-        self.short_hop && !self.input.jump_held && self.vel.y > 20.0
+        self.short_hop && !self.input.jump_held && self.vel.y > 20.0 && self.pos.y >= self.hop_floor_y
     }
 
     /// `fallProcess`: gravity and terminal velocity.

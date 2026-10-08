@@ -80,13 +80,18 @@ impl From<std::io::Error> for ExtractError {
 ///
 /// `yoshi.szs` is Yoshi's archive, mounted at `/yoshi/` (`TYoshi::init`, Yoshi.cpp): his
 /// model and hands, clips, eye textures (`*_tx.btp`) and per-clip sound keys (`bas/`).
-pub const EXTRACTS: [(&str, &str, &str); 6] = [
+///
+/// `particle.szs` holds the common particle effects (`.jpa`, JPA1) the game loads by bare name
+/// (`TMarDirector::loadParticleMario` and kin, MarDirectorLoadResource.cpp), Mario's among them:
+/// `ms_m_sphipd_a..d.jpa` are the super ground pound's flames.
+pub const EXTRACTS: [(&str, &str, &str); 7] = [
     ("params.szs", "mario/", "params_mario"),
     ("params.szs", "npc/", "params_npc"),
     ("params.szs", "enemy/", "params_enemy"),
     ("mario.szs", "", ""),
     ("nintendo.szs", "audi/msound.aaf", "AudioRes/msound.aaf"),
     ("yoshi.szs", "", "yoshi"),
+    ("particle.szs", "", "particle"),
 ];
 
 /// Folders gathered from every stage archive (`data/scene/*.szs`) into one folder under `out`:
@@ -117,7 +122,7 @@ pub const DISC_FOLDERS: [&str; 1] = ["AudioRes/"];
 
 /// Files that must exist for the library and viewer to work. Adding one here makes an older
 /// `assets/` incomplete, so hosts re-extract it on the next run.
-pub const REQUIRED: [&str; 27] = [
+pub const REQUIRED: [&str; 28] = [
     "params_mario/run.prm",
     "params_mario/jump.prm",
     "params_mario/mario.prm",
@@ -145,6 +150,7 @@ pub const REQUIRED: [&str; 27] = [
     "enemy/hamukuri/default.bmd",
     "scene/mapobj/coin.bmd",
     "params_mario/dmghamukuri.prm",
+    "particle/ms_m_sphipd_a.jpa",
 ];
 
 pub const GAME_IDS: [(&str, &str); 3] = [

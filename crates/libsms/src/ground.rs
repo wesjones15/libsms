@@ -876,6 +876,11 @@ impl Mario {
             return self.change_status(Status::CatchLost, 0, false);
         }
         self.slipping_basic(host, Status::CatchLost, Status::Landing, clip::DIVE);
+        self.sound("MSD_SE_MA_SLIP", None);
+        // The dive clip holds its belly-slide pose (frame 50) for as long as the slide lasts.
+        if self.anim.frame > 50.0 {
+            self.anim.frame = 50.0;
+        }
         false
     }
 
