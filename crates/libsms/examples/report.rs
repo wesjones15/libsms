@@ -127,6 +127,36 @@ fn main() {
     }
     println!();
 
+    // Spray reach: standing, full R, aimed level; where the water lands.
+    for reach in [1.0f32, 1.5, 2.0] {
+        let (mut s, mut h) = (sim(), Log(vec![]));
+        s.mario.give_fludd();
+        let mut water = libsms::water::WaterManager::new(&s.mario.params);
+        water.reach = reach;
+        let (mut far, mut ticks) = (0.0f32, 0u32);
+        for _ in 0..3 * TICK_HZ {
+            step(&mut s, &mut h, &spray, 1);
+            for e in h.0.drain(..) {
+                if let Event::WaterEmit(w) = e {
+                    water.emit(&w);
+                }
+            }
+            ticks += 1;
+            if ticks % 4 == 0 {
+                water.step(&FlatHost::default(), s.mario.pos);
+                for e in water.events.drain(..) {
+                    if let libsms::water::WaterEvent::SplashSound { pos, .. } = e {
+                        far = far.max(Vec2::new(pos.x, pos.z).length());
+                    }
+                }
+            }
+        }
+        println!(
+            "spray reach x{reach}: lands up to {far:.0} units ({:.1} heights)",
+            far / 160.0
+        );
+    }
+
     // Hover
     let (mut s, mut h) = (sim(), Log(vec![]));
     s.mario.give_fludd();

@@ -18,10 +18,10 @@
 //! argument or `SMS_ASSETS` overrides where it is looked for. Without it the decomp's
 //! code defaults and a plain capsule are used, and the HUD says so. `--demo` replays a script.
 
+mod coin;
 mod j3d;
 mod mario_model;
 mod props;
-mod coin;
 mod stu;
 mod water;
 mod yoshi_model;
@@ -143,8 +143,14 @@ impl World {
                         )
                     })
                     .collect();
-                c.push(coin::Coin::new(libsms::Coin::Red, V3::new(-450.0, 490.0, 550.0)));
-                c.push(coin::Coin::new(libsms::Coin::Blue, V3::new(0.0, 940.0, 1800.0)));
+                c.push(coin::Coin::new(
+                    libsms::Coin::Red,
+                    V3::new(-450.0, 490.0, 550.0),
+                ));
+                c.push(coin::Coin::new(
+                    libsms::Coin::Blue,
+                    V3::new(0.0, 940.0, 1800.0),
+                ));
                 c
             },
             sounds: Vec::new(),
@@ -166,7 +172,11 @@ impl World {
     /// touches are his (`TCoin::taken`), a Stu that walks into him hurts him
     /// (`HIT_MESSAGE_ATTACK` with `DmgHamukuri.prm`), unless he lands on top of it.
     fn touch(&mut self, m: &mut libsms::Mario) {
-        let (r, h) = if m.on_yoshi() { (80.0, 200.0) } else { (50.0, 160.0) };
+        let (r, h) = if m.on_yoshi() {
+            (80.0, 200.0)
+        } else {
+            (50.0, 160.0)
+        };
         for c in &mut self.coins {
             if c.touches(m.pos, r, h) {
                 c.take();
@@ -375,6 +385,15 @@ impl Host for World {
                 format!("hit: -{damage}, health {health}")
             }),
             Event::Down => self.note("Mario is down: R to start again".into()),
+            Event::EnemyHit { id, kind } => {
+                self.note(format!("enemy {id}: {kind:?}"));
+                // The stand-in Stu goes down to a stomp or a pound (and comes back later).
+                if kind != libsms::EnemyHitKind::Punch
+                    && let Some(s) = self.stus.get_mut(id as usize)
+                {
+                    s.eaten();
+                }
+            }
             Event::EnemyEaten { id } => {
                 if let Some(s) = self.stus.get_mut(id as usize) {
                     s.eaten();
@@ -826,7 +845,9 @@ async fn main() {
         &mut |m| println!("{m}"),
     );
     let rig = assets.as_ref().and_then(Rig::from_assets);
-    let mut audio = assets.as_ref().and_then(|a| libsms_present::Audio::start(&a.dir, true));
+    let mut audio = assets
+        .as_ref()
+        .and_then(|a| libsms_present::Audio::start(&a.dir, true));
     // The disc's Mario: body, hands, cap, FLUDD and nozzles with their materials.
     let mut mario_model = assets.as_ref().and_then(|a| {
         mario_model::MarioModel::load(&a.dir)
@@ -989,7 +1010,11 @@ async fn main() {
             pad.r_analog = r;
         }
         // `SMS_B=<frame>` presses B on that frame (for screenshots of the tongue).
-        if std::env::var("SMS_B").ok().and_then(|v| v.parse::<u32>().ok()) == Some(frame_no) {
+        if std::env::var("SMS_B")
+            .ok()
+            .and_then(|v| v.parse::<u32>().ok())
+            == Some(frame_no)
+        {
             pad.b = true;
         }
         if is_key_pressed(KeyCode::R) || sim.mario.pos.y < -2500.0 {

@@ -314,7 +314,10 @@ fn about_to_land(s: &mut Scene<FlatHost>) {
     s.secs(1.0);
     s.press_a();
     s.pad.a = true;
-    assert!(s.until(600, |m| m.vel.y < 0.0 && m.pos.y < 25.0), "never came down");
+    assert!(
+        s.until(600, |m| m.vel.y < 0.0 && m.pos.y < 25.0),
+        "never came down"
+    );
     s.pad.a = false;
     s.step(1);
 }
@@ -1051,6 +1054,7 @@ impl Host for YoshiHost {
                 out.push(libsms::Enemy {
                     id: i as u64,
                     pos: *p,
+                    radius: 60.0,
                     height: 100.0,
                 });
             }
@@ -1154,7 +1158,11 @@ fn landing_on_yoshi_rides_him_and_x_gets_off() {
     assert_eq!(m.yoshi.pos, m.pos);
     assert_eq!(sound_count(&s, "MSD_SE_YV_DELICIOUS"), 1);
     // Mario's clip follows Yoshi's.
-    assert!(s.mario().anim.clip.starts_with("yo_"), "{}", s.mario().anim.clip);
+    assert!(
+        s.mario().anim.clip.starts_with("yo_"),
+        "{}",
+        s.mario().anim.clip
+    );
     // B is the tongue, not a dive or a grab.
     s.pad.b = true;
     s.step(1);
@@ -1212,7 +1220,10 @@ fn yoshi_runs_faster_and_flutters() {
         n
     };
     let (plain, held) = (airtime(false), airtime(true));
-    assert!(held > plain + 60, "held {held} vs released at the top {plain}");
+    assert!(
+        held > plain + 60,
+        "held {held} vs released at the top {plain}"
+    );
 }
 
 #[test]
@@ -1285,11 +1296,15 @@ fn yoshi_tongues_and_eats_an_enemy_but_not_a_boo() {
     s.step(1);
     s.pad.b = false;
     assert!(
-        s.until(240, |m| m.yoshi.tongue.state == libsms::tongue::TongueState::Idle),
+        s.until(240, |m| m.yoshi.tongue.state
+            == libsms::tongue::TongueState::Idle),
         "{:?}",
         s.mario().yoshi.tongue
     );
-    assert_eq!(s.event_count(|e| matches!(e, Event::EnemyEaten { id: 0 })), 1);
+    assert_eq!(
+        s.event_count(|e| matches!(e, Event::EnemyEaten { id: 0 })),
+        1
+    );
     // Enemies don't change the juice.
     assert_eq!(s.mario().yoshi.color, 1);
 
@@ -1298,7 +1313,8 @@ fn yoshi_tongues_and_eats_an_enemy_but_not_a_boo() {
     s.pad.b = true;
     s.step(1);
     s.pad.b = false;
-    assert!(s.until(240, |m| m.yoshi.tongue.state == libsms::tongue::TongueState::Idle));
+    assert!(s.until(240, |m| m.yoshi.tongue.state
+        == libsms::tongue::TongueState::Idle));
     assert_eq!(s.event_count(|e| matches!(e, Event::EnemyEaten { .. })), 1);
     assert!(!s.host.world.enemies[0].2);
 
@@ -1320,7 +1336,11 @@ fn a_hit_knocks_mario_back_costs_health_and_he_flashes() {
     let max = s.mario().params.mario.hp_max;
     assert_eq!(s.mario().health, max);
     // An enemy straight ahead (+Z): he falls on his back, sliding away from it.
-    assert!(s.sim.mario.damage(Vec3::new(0.0, 0.0, 100.0), libsms::DamageKind::EnemyCommon));
+    assert!(
+        s.sim
+            .mario
+            .damage(Vec3::new(0.0, 0.0, 100.0), libsms::DamageKind::EnemyCommon)
+    );
     assert_eq!(s.mario().health, max - 1);
     assert!(s.mario().is_invincible());
     assert!(
@@ -1332,10 +1352,17 @@ fn a_hit_knocks_mario_back_costs_health_and_he_flashes() {
         s.mario().status
     );
     // While flashing, another hit does nothing.
-    assert!(!s.sim.mario.damage(Vec3::new(0.0, 0.0, 100.0), libsms::DamageKind::EnemyCommon));
+    assert!(
+        !s.sim
+            .mario
+            .damage(Vec3::new(0.0, 0.0, 100.0), libsms::DamageKind::EnemyCommon)
+    );
     s.step(30);
     assert!(s.mario().pos.z < -10.0, "{:?}", s.mario().pos);
-    assert_eq!(s.event_count(|e| matches!(e, Event::Damaged { damage: 1, .. })), 1);
+    assert_eq!(
+        s.event_count(|e| matches!(e, Event::Damaged { damage: 1, .. })),
+        1
+    );
     assert!(s.until(600, |m| m.status == Status::Wait));
     assert!(s.until(600, |m| !m.is_invincible()));
     // From behind he falls forward, away from it.
@@ -1360,7 +1387,11 @@ fn the_strollin_stu_only_trips_mario() {
     let mut s = Scene::flat();
     s.step(2);
     // `DmgHamukuri.prm`: down type 0, a stumble.
-    assert!(s.sim.mario.damage(Vec3::new(0.0, 0.0, 100.0), libsms::DamageKind::Hamukuri));
+    assert!(
+        s.sim
+            .mario
+            .damage(Vec3::new(0.0, 0.0, 100.0), libsms::DamageKind::Hamukuri)
+    );
     assert_eq!(s.mario().status, Status::SafeBackDown);
     assert_eq!(sound_count(&s, "MSD_SE_MV03_DAMAGE_LITLE_01"), 0);
     s.step(1);
@@ -1389,7 +1420,11 @@ fn on_yoshi_a_hit_throws_mario_off_and_costs_nothing() {
     let mut s = yoshi_scene(vec![]);
     mount(&mut s, Some(libsms::Fruit::Papaya));
     let max = s.mario().health;
-    assert!(s.sim.mario.damage(Vec3::new(0.0, 0.0, 100.0), libsms::DamageKind::EnemyCommon));
+    assert!(
+        s.sim
+            .mario
+            .damage(Vec3::new(0.0, 0.0, 100.0), libsms::DamageKind::EnemyCommon)
+    );
     assert!(!s.mario().on_yoshi());
     assert_eq!(s.mario().status, Status::YoshiThrown);
     assert_eq!(s.mario().health, max);
@@ -1407,7 +1442,9 @@ fn out_of_health_mario_lies_down_for_good() {
     s.step(2);
     for _ in 0..s.mario().params.mario.hp_max {
         s.sim.mario.invincible = 0;
-        s.sim.mario.damage(Vec3::new(0.0, 0.0, 100.0), libsms::DamageKind::EnemyCommon);
+        s.sim
+            .mario
+            .damage(Vec3::new(0.0, 0.0, 100.0), libsms::DamageKind::EnemyCommon);
     }
     assert_eq!(s.mario().health, 0);
     assert!(s.mario().is_down());
@@ -1416,5 +1453,119 @@ fn out_of_health_mario_lies_down_for_good() {
     assert_eq!(s.event_count(|e| matches!(e, Event::Down)), 1);
     assert_eq!(sound_count(&s, "MSD_SE_MV08B_DOWN_REACT_01"), 1);
     s.sim.mario.invincible = 0;
-    assert!(!s.sim.mario.damage(Vec3::ZERO, libsms::DamageKind::EnemyCommon));
+    assert!(
+        !s.sim
+            .mario
+            .damage(Vec3::ZERO, libsms::DamageKind::EnemyCommon)
+    );
+}
+
+/// A floor and some enemies that stay put: (feet, radius, height).
+struct Enemies(Vec<(Vec3, f32, f32)>);
+
+impl Host for Enemies {
+    fn ground(&self, p: Vec3) -> Option<libsms::GroundHit> {
+        FlatHost::default().ground(p)
+    }
+    fn enemies(&self, _pos: Vec3, _radius: f32, out: &mut Vec<libsms::Enemy>) {
+        for (i, &(pos, radius, height)) in self.0.iter().enumerate() {
+            out.push(libsms::Enemy {
+                id: i as u64,
+                pos,
+                radius,
+                height,
+            });
+        }
+    }
+}
+
+fn enemy_hits<H: Host>(s: &Scene<H>, kind: libsms::EnemyHitKind) -> usize {
+    s.event_count(|e| matches!(e, Event::EnemyHit { id: 0, kind: k } if *k == kind))
+}
+
+#[test]
+fn landing_on_an_enemy_stomps_it_higher_each_time() {
+    let mut s = Scene::new(Enemies(vec![(Vec3::ZERO, 60.0, 100.0)]));
+    s.pad.a = true;
+    s.step(1);
+    let mut apexes = Vec::new();
+    for n in 1..=3 {
+        assert!(
+            s.until(600, |m| m.status == Status::Trample && m.vel.y > 0.0),
+            "stomp {n}: {:?}",
+            s.mario().status
+        );
+        assert_eq!(enemy_hits(&s, libsms::EnemyHitKind::Trample), n);
+        let mut apex = 0.0f32;
+        while s.mario().vel.y > 0.0 {
+            s.step(1);
+            apex = apex.max(s.mario().pos.y);
+        }
+        apexes.push(apex);
+    }
+    assert!(apexes[0] < apexes[1] && apexes[1] < apexes[2], "{apexes:?}");
+}
+
+#[test]
+fn a_ground_pound_onto_an_enemy_hits_it_once() {
+    let mut s = Scene::new(Enemies(vec![(Vec3::ZERO, 60.0, 100.0)]));
+    // A held: a full jump, well above the enemy before pounding.
+    s.pad.a = true;
+    s.step(40);
+    s.pad.l = true;
+    s.step(1);
+    s.pad.l = false;
+    s.pad.a = false;
+    assert_eq!(s.mario().status, Status::HipDrop);
+    assert!(s.until(1500, |m| m.status == Status::HipAttackEnd
+        || m.status == Status::SlipEnd));
+    assert_eq!(enemy_hits(&s, libsms::EnemyHitKind::HipDrop), 1);
+    assert_eq!(enemy_hits(&s, libsms::EnemyHitKind::Trample), 0);
+}
+
+#[test]
+fn enemy_push_keeps_mario_out_of_enemies() {
+    let reach = |push: bool| {
+        let mut s = Scene::new(Enemies(vec![(Vec3::new(0.0, 0.0, 300.0), 60.0, 100.0)]));
+        s.sim.mario.options.enemy_push = push;
+        s.run_forward();
+        s.secs(2.0);
+        s.mario().pos.z
+    };
+    let (blocked, through) = (reach(true), reach(false));
+    // Out of the enemy's cylinder: its radius plus Mario's (50) short of it.
+    assert!(blocked < 300.0 - 100.0, "pushed: {blocked}");
+    assert!(through > 400.0, "not pushed: {through}");
+}
+
+#[test]
+fn cycling_nozzles_steps_through_all_four() {
+    let mut s = Scene::flat();
+    s.sim.mario.give_fludd();
+    s.sim.mario.options.cycle_nozzles = true;
+    let mut seen = vec![s.mario().fludd.as_ref().unwrap().nozzle];
+    for _ in 0..4 {
+        s.pad.x = true;
+        s.step(1);
+        s.pad.x = false;
+        s.secs(1.5);
+        let f = s.mario().fludd.as_ref().unwrap();
+        assert!(!f.is_switching(), "still switching");
+        seen.push(f.nozzle);
+    }
+    use NozzleKind::*;
+    assert_eq!(seen, vec![Spray, Hover, Rocket, Turbo, Spray]);
+}
+
+#[test]
+fn move_speed_option_covers_more_ground() {
+    let run = |k: f32| {
+        let mut s = Scene::flat();
+        s.sim.mario.options.move_speed = k;
+        s.run_forward();
+        s.secs(2.0);
+        s.mario().pos.z
+    };
+    let (one, fast) = (run(1.0), run(1.5));
+    assert!((fast / one - 1.5).abs() < 0.05, "{one} -> {fast}");
 }

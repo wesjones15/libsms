@@ -8,7 +8,9 @@
 pub mod anim;
 pub mod assets;
 pub mod clock;
+mod collide;
 pub mod damage;
+pub mod egg;
 pub mod event;
 pub mod extract;
 pub mod fludd;
@@ -23,7 +25,6 @@ pub mod skeleton;
 pub mod tongue;
 pub mod water;
 pub mod yoshi;
-pub mod egg;
 
 mod air;
 pub mod carry;
@@ -35,17 +36,17 @@ pub use anim::{AnimState, AnimTable, ClipInfo, LoopMode};
 pub use assets::Assets;
 pub use clock::{FixedClock, TICK_DT, TICK_HZ};
 pub use damage::{Coin, DamageKind};
-pub use event::{Event, JumpKind, SoundCue, WaterEmit};
+pub use egg::{Egg, EggLook, EggState};
+pub use event::{EnemyHitKind, Event, JumpKind, SoundCue, WaterEmit};
 pub use fludd::{Fludd, TriggerState};
 pub use fludd_anim::FluddLook;
 pub use glam::{Vec2, Vec3};
-pub use egg::{Egg, EggLook, EggState};
 pub use host::{Enemy, FlatHost, Fruit, GroundHit, Host, RoofHit, SurfaceFlags, WallHit};
-pub use yoshi::{YoshiLook, YoshiState};
 pub use input::{Input, Pad};
 pub use mario::{Mario, Options, Status, UpperState};
 pub use params::{NozzleKind, Params};
 pub use skeleton::{Clip, ClipLibrary, MtxCalc, Skeleton, Srt, calc_joints};
+pub use yoshi::{YoshiLook, YoshiState};
 
 /// A Mario plus the fixed-step clock that drives him.
 #[derive(Debug, Clone)]

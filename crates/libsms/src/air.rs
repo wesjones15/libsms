@@ -124,6 +124,15 @@ impl Mario {
             LeftRotateJump | RightRotateJump => self.rotate_jumping(host),
             JumpCatch => self.jump_catch(host),
             HipDrop => self.hip_attacking(host),
+            Trample => {
+                // `trample`.
+                if self.jumping_common_events() {
+                    return true;
+                }
+                let c = crate::collide::TRAMPLE_CLIPS[(self.status_arg as usize).min(2)];
+                self.jumping_basic(host, SecJumpSlip, c, 3);
+                false
+            }
             JumpShortBackDown => self.jump_down(host, ShortBackDown, "bkdwn", -16.0),
             JumpShortForeDown => self.jump_down(host, ShortForeDown, clip::FORE_DOWN, 16.0),
             JumpForeDown => self.jump_down(host, ForeDown, clip::FORE_DOWN, 16.0),

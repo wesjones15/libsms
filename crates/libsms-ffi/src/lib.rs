@@ -18,16 +18,16 @@ use std::ffi::{CStr, CString, c_char, c_void};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;
 
-use libsms::event::{Event, JumpKind};
-use libsms::water::WaterManager;
-use view::SmsView;
+use libsms::event::{EnemyHitKind, Event, JumpKind};
+use libsms::water::{WaterEvent, WaterManager};
 use libsms::{
-    Assets, GroundHit, Host, Pad, RoofHit, Sim, SurfaceFlags, TICK_HZ, Vec2, Vec3, WallHit,
+    Assets, Enemy, GroundHit, Host, Pad, RoofHit, Sim, SurfaceFlags, TICK_HZ, Vec2, Vec3, WallHit,
     WaterEmit, math,
 };
+use view::SmsView;
 
 /// ABI version, bumped when the C interface changes.
-pub const SMS_ABI_VERSION: u32 = 3;
+pub const SMS_ABI_VERSION: u32 = 4;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sms_abi_version() -> u32 {
@@ -99,9 +99,10 @@ pub struct SmsEvent {
     /// [`SmsEventKind`] as a number.
     pub kind: u32,
     /// Kind-specific: the [`JumpKind`] index for jumps, 1 for strong landings and super
-    /// pounds, damage for hits.
+    /// pounds, damage for hits, the enemy's id for enemy and water hits.
     pub arg: i32,
-    /// Kind-specific: the sound's info value, health left after a hit.
+    /// Kind-specific: the sound's info value, health left after a hit, how Mario hit an enemy
+    /// (0 stomp, 1 ground pound, 2 dive or slide), a water particle's attack.
     pub value: f32,
     /// Where it happened (sounds, water); otherwise zero.
     pub pos: SmsVec3,
@@ -125,6 +126,23 @@ pub enum SmsEventKind {
     Damaged = 9,
     Down = 10,
     Sound = 11,
+    /// Mario hit the enemy `arg` (`value`: 0 stomp, 1 ground pound, 2 dive or slide) from
+    /// `pos`. Once per enemy per move.
+    EnemyHit = 12,
+    /// A water particle hit the enemy `arg` at `pos` with attack `value`, and was spent.
+    WaterHit = 13,
+}
+
+/// An enemy the host reports ([`libsms::Enemy`]): a standing cylinder.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SmsEnemy {
+    /// The host's handle, passed back in [`SmsEventKind::EnemyHit`] / `WaterHit`.
+    pub id: u32,
+    /// Its feet.
+    pub pos: SmsVec3,
+    pub radius: f32,
+    pub height: f32,
 }
 
 /// The host's world, as callbacks. Any of them may be null: no ground means a void, no roof
@@ -135,8 +153,7 @@ pub struct SmsHost {
     pub user: *mut c_void,
     /// Highest floor at or below `pos.y` (`TMap::checkGround`). Fill `out` and return 1, or
     /// return 0 for a void.
-    pub ground:
-        Option<unsafe extern "C" fn(*mut c_void, *const SmsVec3, *mut SmsGroundHit) -> u8>,
+    pub ground: Option<unsafe extern "C" fn(*mut c_void, *const SmsVec3, *mut SmsGroundHit) -> u8>,
     /// Lowest ceiling at or above `pos.y` (`TMap::checkRoof`). Return 0 for open sky.
     pub roof: Option<unsafe extern "C" fn(*mut c_void, *const SmsVec3, *mut SmsRoofHit) -> u8>,
     /// Push a vertical cylinder at `center` with `radius` out of walls in XZ
@@ -153,6 +170,11 @@ pub struct SmsHost {
         ) -> u32,
     >,
     pub event: Option<unsafe extern "C" fn(*mut c_void, *const SmsEvent)>,
+    /// Enemies whose cylinders come within `radius` of `pos`: write up to `max` to `out` and
+    /// return how many (more than strictly in reach is fine; the sim tests the cylinders).
+    /// Mario stomps, pounds and is pushed by these, and FLUDD's water hits them.
+    pub enemies:
+        Option<unsafe extern "C" fn(*mut c_void, *const SmsVec3, f32, *mut SmsEnemy, u32) -> u32>,
 }
 
 /// One frame of controller input.
@@ -247,6 +269,15 @@ pub struct SmsTuning {
     pub jump_buffer: f32,
     /// Seconds past the landing window in which a jump still chains (0: the game's).
     pub chain_grace: f32,
+    /// Ground covered per tick times this (speed buffs; 1: the game's).
+    pub move_speed: f32,
+    /// The Spray nozzle's water reaches about this many times as far (1: the game's).
+    pub spray_reach: f32,
+    /// 1: enemies are solid to Mario (`keepDistance`); 0: the game's (most aren't).
+    pub enemy_push: u8,
+    /// 1: X steps through Spray, Hover, Rocket and Turbo; 0: the game's (Spray and one).
+    pub cycle_nozzles: u8,
+    pub _pad: [u8; 2],
 }
 
 /// An opaque sim handle.
@@ -318,6 +349,29 @@ impl Host for FfiHost<'_> {
         Vec3::new(moved.x, center.y, moved.z)
     }
 
+    fn enemies(&self, pos: Vec3, radius: f32, out: &mut Vec<Enemy>) {
+        let Some(f) = self.0.enemies else {
+            return;
+        };
+        let mut buf = [SmsEnemy::default(); 32];
+        // SAFETY: as above; `buf` has room for its length.
+        let n = unsafe {
+            f(
+                self.0.user,
+                &SmsVec3::from(pos),
+                radius,
+                buf.as_mut_ptr(),
+                buf.len() as u32,
+            )
+        } as usize;
+        out.extend(buf[..n.min(buf.len())].iter().map(|e| Enemy {
+            id: e.id as u64,
+            pos: e.pos.into(),
+            radius: e.radius,
+            height: e.height,
+        }));
+    }
+
     fn event(&mut self, event: Event) {
         self.1.push(event);
         let Some(f) = self.0.event else {
@@ -360,6 +414,15 @@ impl Host for FfiHost<'_> {
                 e.value = health as f32;
             }
             Event::Down => e.kind = SmsEventKind::Down as u32,
+            Event::EnemyHit { id, kind } => {
+                e.kind = SmsEventKind::EnemyHit as u32;
+                e.arg = id as i32;
+                e.value = match kind {
+                    EnemyHitKind::Trample => 0.0,
+                    EnemyHitKind::HipDrop => 1.0,
+                    EnemyHitKind::Punch => 2.0,
+                };
+            }
             Event::Sound(s) => {
                 e.kind = SmsEventKind::Sound as u32;
                 e.value = s.info.unwrap_or(0.0);
@@ -373,6 +436,26 @@ impl Host for FfiHost<'_> {
         }
         // SAFETY: as above; `name` outlives the call.
         unsafe { f(self.0.user, &e) };
+    }
+}
+
+/// The water's enemy hits, to the host's event callback.
+fn water_hits(host: &SmsHost, events: &[WaterEvent]) {
+    let Some(f) = host.event else {
+        return;
+    };
+    for ev in events {
+        if let WaterEvent::Hit { id, pos, attack } = *ev {
+            let e = SmsEvent {
+                kind: SmsEventKind::WaterHit as u32,
+                arg: id as i32,
+                value: attack as f32,
+                pos: pos.into(),
+                name: std::ptr::null(),
+            };
+            // SAFETY: the caller of `sms_sim_step` promised a valid callback.
+            unsafe { f(host.user, &e) };
+        }
     }
 }
 
@@ -411,7 +494,9 @@ pub unsafe extern "C" fn sms_sim_new(
         return std::ptr::null_mut();
     }
     // SAFETY: the caller promised a nul-terminated string.
-    let dir = unsafe { CStr::from_ptr(assets_dir) }.to_string_lossy().into_owned();
+    let dir = unsafe { CStr::from_ptr(assets_dir) }
+        .to_string_lossy()
+        .into_owned();
     let made = catch_unwind(|| {
         let dir = Path::new(&dir);
         if !dir.join("params_mario").is_dir() {
@@ -464,7 +549,9 @@ pub unsafe extern "C" fn sms_sim_step(
 ) -> u32 {
     // SAFETY: the caller promised valid pointers.
     let (Some(s), Some(host), Some(pad)) =
-        (unsafe { sim.as_mut() }, unsafe { host.as_ref() }, unsafe { pad.as_ref() })
+        (unsafe { sim.as_mut() }, unsafe { host.as_ref() }, unsafe {
+            pad.as_ref()
+        })
     else {
         return 0;
     };
@@ -475,22 +562,24 @@ pub unsafe extern "C" fn sms_sim_step(
     let ran = catch_unwind(AssertUnwindSafe(|| {
         let mut h = FfiHost(host, Vec::new());
         let mut emits: Vec<WaterEmit> = Vec::new();
-        let n = s.sim.advance_observed(&mut h, &pad, camera_yaw, dt, |mario, h| {
-            let events = std::mem::take(&mut h.1);
-            emits.extend(events.iter().filter_map(|e| match e {
-                Event::WaterEmit(w) => Some(*w),
-                _ => None,
-            }));
-            // SAFETY: the caller promised `view` is null or live.
-            unsafe {
-                view::with_view(view, (), |v| {
-                    if let Some(a) = v.audio.as_mut() {
-                        a.events(&events, mario);
-                        a.tick(mario);
-                    }
-                });
-            }
-        });
+        let n = s
+            .sim
+            .advance_observed(&mut h, &pad, camera_yaw, dt, |mario, h| {
+                let events = std::mem::take(&mut h.1);
+                emits.extend(events.iter().filter_map(|e| match e {
+                    Event::WaterEmit(w) => Some(*w),
+                    _ => None,
+                }));
+                // SAFETY: the caller promised `view` is null or live.
+                unsafe {
+                    view::with_view(view, (), |v| {
+                        if let Some(a) = v.audio.as_mut() {
+                            a.events(&events, mario);
+                            a.tick(mario);
+                        }
+                    });
+                }
+            });
         // `TModelWaterManager`: emitted every tick, moved once a 30 Hz frame.
         for e in &emits {
             s.water.emit(e);
@@ -499,6 +588,7 @@ pub unsafe extern "C" fn sms_sim_step(
         while s.water_ticks >= 4 {
             s.water_ticks -= 4;
             s.water.step(&h, s.sim.mario.pos);
+            water_hits(host, &s.water.events);
             // SAFETY: as above.
             unsafe {
                 view::with_view(view, (), |v| {
@@ -603,16 +693,31 @@ pub unsafe extern "C" fn sms_sim_set_tuning(sim: *mut SmsSim, tuning: *const Sms
     if let (Some(s), Some(t)) = (unsafe { sim.as_mut() }, unsafe { tuning.as_ref() }) {
         let ticks = |secs: f32| (secs.max(0.0) * TICK_HZ as f32).round().min(1.0e4) as u32;
         let o = &mut s.sim.mario.options;
-        o.jump_height = if t.jump_height.is_finite() { t.jump_height.clamp(0.1, 10.0) } else { 1.0 };
+        o.jump_height = if t.jump_height.is_finite() {
+            t.jump_height.clamp(0.1, 10.0)
+        } else {
+            1.0
+        };
         o.jump_buffer_ticks = ticks(t.jump_buffer);
         o.chain_grace_ticks = ticks(t.chain_grace);
+        let factor = |v: f32| {
+            if v.is_finite() {
+                v.clamp(0.1, 10.0)
+            } else {
+                1.0
+            }
+        };
+        o.move_speed = factor(t.move_speed);
+        o.enemy_push = t.enemy_push != 0;
+        o.cycle_nozzles = t.cycle_nozzles != 0;
+        s.water.reach = factor(t.spray_reach);
     }
 }
 
 /// Sizes of the ABI's structs, for hosts to check their copies against: `SmsVec3`,
 /// `SmsGroundHit`, `SmsRoofHit`, `SmsWallHit`, `SmsEvent`, `SmsHost`, `SmsPad`, `SmsState`,
 /// `SmsModelInfo`, `SmsBatch`, `SmsTexture`, `SmsDraw`, `SmsViewFrame`, `SmsTuning`,
-/// `SmsWaterVertex`, `SmsWaterInfo`. Writes up to `max`;
+/// `SmsWaterVertex`, `SmsWaterInfo`, `SmsEnemy`. Writes up to `max`;
 /// returns how many there are.
 ///
 /// # Safety
@@ -637,6 +742,7 @@ pub unsafe extern "C" fn sms_struct_sizes(out: *mut u32, max: u32) -> u32 {
         size_of::<SmsTuning>(),
         size_of::<view::SmsWaterVertex>(),
         size_of::<view::SmsWaterInfo>(),
+        size_of::<SmsEnemy>(),
     ];
     if !out.is_null() {
         for (i, s) in sizes.iter().take(max as usize).enumerate() {
@@ -689,7 +795,10 @@ mod tests {
             let (_, yaw) = libsms::input::stick_intent(s, 0x1234, 0, &cfg);
             let want = math::matan(z, x);
             // The per-axis dead zone bends the direction by up to about 3 degrees.
-            assert!(math::diff(yaw, want).unsigned_abs() < 600, "{x},{z}: {yaw} vs {want}");
+            assert!(
+                math::diff(yaw, want).unsigned_abs() < 600,
+                "{x},{z}: {yaw} vs {want}"
+            );
         }
     }
 
@@ -707,6 +816,7 @@ mod tests {
             roof: None,
             walls: None,
             event: Some(count),
+            enemies: None,
         };
         unsafe {
             let sim = sms_sim_new(dir.as_ptr(), &SmsVec3::default(), 0);
@@ -737,12 +847,102 @@ mod tests {
         }
     }
 
+    /// One enemy, id 10, at Mario's feet (`user`'s third counter 0) or 4 m in front of him (1).
+    unsafe extern "C" fn one_enemy(
+        user: *mut c_void,
+        _: *const SmsVec3,
+        _: f32,
+        out: *mut SmsEnemy,
+        max: u32,
+    ) -> u32 {
+        if max == 0 {
+            return 0;
+        }
+        // SAFETY: `user` is the test's counters; the sim gave room for `max`.
+        unsafe {
+            let ahead = (*(user as *const [u32; 3]))[2] as f32;
+            out.write(SmsEnemy {
+                id: 10,
+                pos: SmsVec3 {
+                    x: 0.0,
+                    y: 0.0,
+                    z: 400.0 * ahead,
+                },
+                radius: 60.0,
+                height: 200.0,
+            });
+        }
+        1
+    }
+
+    unsafe extern "C" fn count_hits(user: *mut c_void, e: *const SmsEvent) {
+        // SAFETY: `user` is the test's counters; `e` is valid for the call.
+        unsafe {
+            let c = &mut *(user as *mut [u32; 3]);
+            if (*e).arg == 10 && (*e).kind == SmsEventKind::EnemyHit as u32 {
+                c[0] += 1;
+            }
+            if (*e).arg == 10 && (*e).kind == SmsEventKind::WaterHit as u32 {
+                c[1] += 1;
+            }
+        }
+    }
+
+    #[test]
+    fn enemies_are_stomped_and_sprayed_through_the_c_abi() {
+        let Some(dir) = libsms::assets::find(None) else {
+            eprintln!("skipping: no assets/");
+            return;
+        };
+        let dir = CString::new(dir.to_string_lossy().as_bytes()).unwrap();
+        for ahead in [0, 1] {
+            let mut c = [0u32, 0, ahead];
+            let host = SmsHost {
+                user: &mut c as *mut [u32; 3] as *mut c_void,
+                ground: Some(flat),
+                roof: None,
+                walls: None,
+                event: Some(count_hits),
+                enemies: Some(one_enemy),
+            };
+            let pad = if ahead == 0 {
+                SmsPad {
+                    a: 1,
+                    ..SmsPad::default()
+                }
+            } else {
+                SmsPad {
+                    r: 1,
+                    r_analog: 255,
+                    ..SmsPad::default()
+                }
+            };
+            unsafe {
+                let sim = sms_sim_new(dir.as_ptr(), &SmsVec3::default(), 0);
+                for _ in 0..120 {
+                    sms_sim_step(sim, &host, &pad, 0, 1.0 / 60.0, std::ptr::null_mut());
+                }
+                sms_sim_free(sim);
+            }
+            if ahead == 0 {
+                assert!(c[0] >= 1 && c[1] == 0, "stomped: {c:?}");
+            } else {
+                assert!(c[0] == 0 && c[1] > 10, "sprayed: {c:?}");
+            }
+        }
+    }
+
     #[test]
     fn struct_sizes_are_what_hosts_mirror() {
-        let mut sizes = [0u32; 16];
-        let n = unsafe { sms_struct_sizes(sizes.as_mut_ptr(), 16) } as usize;
+        let mut sizes = [0u32; 17];
+        let n = unsafe { sms_struct_sizes(sizes.as_mut_ptr(), 17) } as usize;
         // ror2-mario's Native.cs and ror2-common's view structs check these at load.
-        assert_eq!(&sizes[..n], &[12, 20, 8, 16, 32, 40, 24, 48, 40, 24, 12, 64, 48, 12, 24, 24]);
+        assert_eq!(
+            &sizes[..n],
+            &[
+                12, 20, 8, 16, 32, 48, 24, 48, 40, 24, 12, 64, 48, 24, 24, 24, 24
+            ]
+        );
     }
 
     #[test]
@@ -758,6 +958,7 @@ mod tests {
             roof: None,
             walls: None,
             event: None,
+            enemies: None,
         };
         unsafe {
             let sim = sms_sim_new(dir.as_ptr(), &SmsVec3::default(), 0);
@@ -765,8 +966,16 @@ mod tests {
             assert!(!sim.is_null() && !v.is_null());
             let frame = view::SmsViewFrame {
                 dt: 1.0 / 60.0,
-                forward: SmsVec3 { x: 0.0, y: 0.0, z: 1.0 },
-                up: SmsVec3 { x: 0.0, y: 1.0, z: 0.0 },
+                forward: SmsVec3 {
+                    x: 0.0,
+                    y: 0.0,
+                    z: 1.0,
+                },
+                up: SmsVec3 {
+                    x: 0.0,
+                    y: 1.0,
+                    z: 0.0,
+                },
                 volume: 1.0,
                 ..Default::default()
             };
@@ -791,7 +1000,10 @@ mod tests {
             let t = batches[0].texture;
             assert!(t >= 0);
             let mut tex = view::SmsTexture::default();
-            assert_eq!(view::sms_view_texture(v, t as u32, &mut tex, std::ptr::null_mut(), 0), 1);
+            assert_eq!(
+                view::sms_view_texture(v, t as u32, &mut tex, std::ptr::null_mut(), 0),
+                1
+            );
             let mut px = vec![0u8; (tex.width * tex.height * 4) as usize];
             assert_eq!(
                 view::sms_view_texture(v, t as u32, &mut tex, px.as_mut_ptr(), px.len() as u32),
@@ -815,7 +1027,10 @@ mod tests {
                 most = most.max(w.drop_quads);
             }
             assert!(most > 10, "{most} drops");
-            assert_eq!(view::sms_view_water_texture(v, 0, &mut tex, std::ptr::null_mut(), 0), 1);
+            assert_eq!(
+                view::sms_view_water_texture(v, 0, &mut tex, std::ptr::null_mut(), 0),
+                1
+            );
             view::sms_view_free(v);
             sms_sim_free(sim);
         }

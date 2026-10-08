@@ -10,7 +10,7 @@
 use glam::Vec3;
 
 use crate::event::WaterEmit;
-use crate::host::{Host, SurfaceFlags};
+use crate::host::{Enemy, Host, SurfaceFlags};
 use crate::params::{Params, WaterParticle};
 
 /// `SLOT_NUM`.
@@ -37,6 +37,8 @@ pub struct Particle {
     pub state: State,
     pub kind: usize,
     pub attack: i16,
+    /// [`WaterManager::reach`] when it left the nozzle (1 for all but Spray's).
+    pub reach: f32,
     /// The surface it sticks to: normal and whether it is wet (`isWaterSlip`).
     surface: Option<(Vec3, bool)>,
 }
@@ -52,6 +54,10 @@ pub enum WaterEvent {
     IntoWater(Vec3),
     /// A stuck particle drying (`MSD_SE_PO_WT_DRY_UP`).
     DryUp(Vec3),
+    /// A flying particle hit the enemy `id` (`HIT_MESSAGE_SPRAYED_BY_WATER`) with its
+    /// `attack` (`getParticleAttack`: hit points, at least 1 to the game's small enemies) and
+    /// was spent on it. What that does to the enemy is the host's.
+    Hit { id: u64, pos: Vec3, attack: i16 },
 }
 
 /// The manager's constants (`TModelWaterManager::load`, `gWaterManagerPlaneInfo`).
@@ -64,6 +70,11 @@ mod k {
     pub const MERGE: f32 = 2.5;
     /// `unk5D88[7]`: frames before a new particle is drawn.
     pub const DRAW_DELAY: f32 = 1.0;
+    /// `unk5D88[8]`: chance a particle spent on an actor splashes.
+    pub const ACTOR_SPLASH: f32 = 0.3;
+    /// `mStaticHitActor.initHitActor(..., 50, 80, ...)`: a particle's attack cylinder.
+    pub const HIT_RADIUS: f32 = 50.0;
+    pub const HIT_HEIGHT: f32 = 80.0;
     /// `unk5D88[9]`, `[10]`: splash chances.
     pub const GROUND_SPLASH: f32 = 0.5;
     pub const WALL_SPLASH: f32 = 0.8;
@@ -82,6 +93,10 @@ pub struct WaterManager {
     pub particles: Vec<Particle>,
     pub types: [WaterParticle; 17],
     pub events: Vec<WaterEvent>,
+    /// Host tuning: the Spray nozzle's water leaves at this times its speed, and its
+    /// horizontal speed cap is this times its size, so a spray lands about this many times
+    /// further. 1: the game's. The other nozzles' water is the game's.
+    pub reach: f32,
     seed: u32,
 }
 
@@ -91,6 +106,7 @@ impl WaterManager {
             particles: Vec::with_capacity(SLOTS),
             types: params.water_particles.clone(),
             events: Vec::new(),
+            reach: 1.0,
             seed: 0x2545_F491,
         }
     }
@@ -122,7 +138,12 @@ impl WaterManager {
             if dir == Vec3::ZERO {
                 dir.y = -1.0;
             }
-            let speed = self.rand11() * w.pow_tremble + w.power;
+            let reach = if w.nozzle == crate::params::NozzleKind::Spray {
+                self.reach
+            } else {
+                1.0
+            };
+            let speed = (self.rand11() * w.pow_tremble + w.power) * reach;
             let vel = dir.normalize() * speed + w.inherit;
             let size = self.rand11() * w.size_tremble + w.size;
             self.particles.push(Particle {
@@ -133,6 +154,7 @@ impl WaterManager {
                 state: State::Flying,
                 kind,
                 attack: w.attack,
+                reach,
                 surface: None,
             });
             n += 1;
@@ -150,8 +172,55 @@ impl WaterManager {
         self.types[p.kind.min(16)].extension
     }
 
+    /// `TObjHitCheck::checkWater` (Strategic/ObjHitCheck.cpp) and the top of `move`: a
+    /// flying particle whose attack cylinder reaches an enemy is spent on it, with a splash
+    /// sound and sometimes a splash. Mario's own water never hits him. One [`Host::enemies`]
+    /// query covers all the flying particles.
+    fn hit_enemies(&mut self, host: &dyn Host) {
+        let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+        for p in self.particles.iter().filter(|p| p.state == State::Flying) {
+            lo = lo.min(p.pos);
+            hi = hi.max(p.pos);
+        }
+        if lo.x > hi.x {
+            return;
+        }
+        let mut found: Vec<Enemy> = Vec::new();
+        let reach = (hi - lo).length() * 0.5 + k::HIT_RADIUS + k::HIT_HEIGHT;
+        host.enemies((lo + hi) * 0.5, reach, &mut found);
+        if found.is_empty() {
+            return;
+        }
+        for i in 0..self.particles.len() {
+            let p = self.particles[i];
+            if p.state != State::Flying || p.life <= 0.0 {
+                continue;
+            }
+            let Some(e) = found
+                .iter()
+                .find(|e| e.reached_by(p.pos, k::HIT_RADIUS, k::HIT_HEIGHT))
+            else {
+                continue;
+            };
+            self.events.push(WaterEvent::Hit {
+                id: e.id,
+                pos: p.pos,
+                attack: p.attack,
+            });
+            self.events.push(WaterEvent::SplashSound {
+                pos: p.pos,
+                size: p.size,
+            });
+            if self.rand() < k::ACTOR_SPLASH {
+                self.events.push(WaterEvent::Splash(p.pos));
+            }
+            self.particles[i].life = 0.0;
+        }
+    }
+
     /// `TModelWaterManager::move`: one frame.
     pub fn step(&mut self, host: &dyn Host, mario: Vec3) {
+        self.hit_enemies(host);
         // Fly, slide, fall; cap horizontal speed at the particle's size.
         for i in 0..self.particles.len() {
             let gravity = self.kind(i).gravity;
@@ -162,8 +231,9 @@ impl WaterManager {
                 continue;
             }
             let h2 = p.vel.x * p.vel.x + p.vel.z * p.vel.z;
-            if h2 > p.size * p.size {
-                let s = (p.size - 0.1) / h2.sqrt();
+            let cap = p.size * p.reach;
+            if h2 > cap * cap {
+                let s = (cap - 0.1) / h2.sqrt();
                 p.vel.x *= s;
                 p.vel.z *= s;
             }
@@ -372,6 +442,46 @@ mod tests {
             })
             .expect("splashed");
         assert!(landed.z > 300.0 && landed.y < 10.0, "{landed}");
+    }
+
+    /// A floor, and one enemy standing in the spray's path.
+    struct EnemyAhead;
+
+    impl Host for EnemyAhead {
+        fn ground(&self, p: Vec3) -> Option<crate::host::GroundHit> {
+            FlatHost::default().ground(p)
+        }
+        fn enemies(&self, _pos: Vec3, _radius: f32, out: &mut Vec<Enemy>) {
+            out.push(Enemy {
+                id: 7,
+                pos: Vec3::new(0.0, 0.0, 200.0),
+                radius: 60.0,
+                height: 200.0,
+            });
+        }
+    }
+
+    #[test]
+    fn a_shot_into_an_enemy_is_spent_on_it() {
+        let mut w = WaterManager::new(&Params::default());
+        let mut e = emit(Vec3::Z);
+        e.count = 8;
+        e.attack = 3;
+        w.emit(&e);
+        let mut hits = Vec::new();
+        for _ in 0..30 {
+            w.step(&EnemyAhead, Vec3::ZERO);
+            hits.extend(w.events.drain(..).filter_map(|e| match e {
+                WaterEvent::Hit { id, pos, attack } => Some((id, pos, attack)),
+                _ => None,
+            }));
+        }
+        assert_eq!(hits.len(), 8, "{hits:?}");
+        assert!(
+            hits.iter()
+                .all(|&(id, pos, attack)| id == 7 && attack == 3 && pos.z < 200.0)
+        );
+        assert!(w.particles.is_empty());
     }
 
     #[test]

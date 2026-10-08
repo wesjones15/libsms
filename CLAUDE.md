@@ -53,12 +53,13 @@ Workspace:
   the lit colour (`GX_TG_SRTG`) plus a highlight; env-only materials bake over the env map's
   space), and `audio` (the viewer's old `sound.rs`: the game's sounds on cpal, music optional).
   `cargo run -p libsms-present --example bakes -- <dir>` writes every bake to PNG.
-- `crates/libsms-ffi/`: C ABI (`sms.dll`): `SmsHost` callbacks (ground/roof/walls/events),
+- `crates/libsms-ffi/`: C ABI (`sms.dll`): `SmsHost` callbacks (ground/roof/walls/events/enemies),
   `sms_sim_new/step/state/teleport/free`, and `sms_view_*` (models, bakes, per-frame draws;
   its structs match libpikmin's `pik_view_*` so `../ror2-common/` serves both). Pads may carry
   a world-space move direction instead of a stick. The sim handle also runs FLUDD's water
-  (`libsms::water`, through the same callbacks) and takes host tuning (`sms_sim_set_tuning`:
-  jump height, A buffer, chain grace; `Options`); the view builds the water's quads
+  (`libsms::water`, through the same callbacks; its enemy hits come back as `WaterHit` events)
+  and takes host tuning (`sms_sim_set_tuning`: jump height, A buffer, chain grace, move speed,
+  spray reach, solid enemies, nozzle cycling; `Options`); the view builds the water's quads
   (`libsms_present::water`, `sms_view_water_*`). Bump `SMS_ABI_VERSION` on any layout change
   and keep `sms_struct_sizes`' test in step; `../ror2-mario/MarioTest/Native.cs` mirrors it.
 - `crates/libsms-audio/`: device-independent PCM engine (`Engine`), JAI game layer
@@ -102,5 +103,6 @@ Ported and tested: disc-file loading (`prm`, `bck`, rig `JNT1`/`INF1`), input, c
 double/triple chain, dive/belly slide, ground pound, wall slide/kick, bump knock-downs, FLUDD tank,
 Spray/Hover/Rocket/Turbo, crouch, nozzle swap, FLUDD/nozzle/pumping-arm animation and sound cues,
 water particles, ledge grab/hanging/shimmy/climb, grabbing/carrying/putting/throwing,
-Yoshi's egg, riding, flutter, tongue and juice, damage, health and coins. Not yet: swimming, bars, wires, poles, fences,
+Yoshi's egg, riding, flutter, tongue and juice, damage, health and coins, stomping and
+pounding enemies, water hitting enemies. Not yet: swimming, bars, wires, poles, fences,
 the Spray "bomb". See the spec.

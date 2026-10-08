@@ -64,6 +64,8 @@ Three probes, matching `TMap` (Map/Map.hpp). (ported: `host.rs`)
 - Surface flags the logic branches on: ILLEGAL, MARIO_THROUGH, FORCE_SLIP, SLIDER, SLIP_45,
   NO_SLIP, WET, WATER_SURFACE, FENCE, NO_WALL_JUMP, NO_LEDGE_GRAB, POUND_THROUGH.
 - Pass-through floors are skipped by re-probing 1 unit below (`checkGroundPlane`).
+- Enemies (`Host::enemies`): standing cylinders (feet, `mDamageRadius`, `mDamageHeight`) near a
+  point; the sim tests overlap itself with `checkDistance` (section 7c).
 
 Per tick (`checkCurrentPlane`): probe the floor at `y + 25` and ceiling at `y + 80`; set slope angle
 `matan(n.z, n.x)`; AIRBORNE if `y > floor + 100`; SLIP if `isSlipStart`.
@@ -130,6 +132,9 @@ Host tuning (not the game; all off by default, `Options`): `jump_height` multipl
 press that did nothing in the air and fires it on the first grounded tick, and
 `chain_grace_ticks` keeps the Second/Triple on offer for that long after a window closes. For hosts
 whose worlds are built bigger than Delfino and whose players aren't on a GameCube pad.
+`move_speed` multiplies the ground covered per tick in `walkProcess` and `jumpProcess` (speeds,
+and so the run animation, stay the game's), for a host's speed buffs. `enemy_push` and
+`cycle_nozzles`: see sections 7c and 6. The Spray's reach is the water manager's (`reach`).
 
 Air control (`doJumping`): `forward *= mJumpSpeedBrake` (0.999); with the stick, `forward +=
 mag * cos(d) * mJumpAccelControl (0.008)`, sideways `mag * sin(d) * mJumpSlideControl (0.3)`;
@@ -229,7 +234,24 @@ stretched along the screen velocity by `mExtension * 4`, summed into alpha and s
 
 Not yet: Spray secondary "bomb" trigger (A + R, `mBomb`), the diving helmet nozzle
 (swimming is not implemented at all), the nozzle mist particle (`0x10D`), graffiti sinking,
-dirt/pollution, water hitting actors.
+dirt/pollution, the point-blank spray message `hitNormal` sends to whatever Mario touches.
+
+**Water hitting enemies** (`TObjHitCheck::checkWater`, ObjHitCheck.cpp; top of
+`TModelWaterManager::move`): each frame every flying particle's attack cylinder
+(`mStaticHitActor`: radius 50, height 80, standing at the particle) is tested against the
+actors' damage cylinders (`checkDistance`); the first one it reaches gets
+`HIT_MESSAGE_SPRAYED_BY_WATER` and, if it takes it, the particle splashes (`splashSound`, 30%
+splash, `unk5D88[8]`) and is spent. The enemy's reaction is its own: small enemies lose
+`getParticleAttack` hit points (at least 1, `TSmallEnemy::decHpByWater`); many are only pushed
+or stunned. Here every enemy takes it, and `WaterEvent::Hit { id, pos, attack }` hands the
+reaction to the host (ror2-mario turns it into damage, by the player's request, not the game).
+
+**Host tuning, not the game**: `WaterManager::reach` multiplies the Spray nozzle's particle speed
+and its horizontal cap (`size`); the landing distance grows about linearly (full R, standing:
+960 units at 1, 1480 at 1.5, 2040 at 2). `Options::cycle_nozzles` makes X step Spray, Hover,
+Rocket, Turbo, Spray: from Spray the backpack swings out to Hover as usual; from a secondary it
+swings back and, at the halfway point where the game fits Spray, fits the next secondary and
+swings out again; from Turbo it swings back to Spray.
 
 ## 7. Yoshi (Yoshi.cpp, Tongue.cpp, Item.cpp `TEggYoshi`, the `onYoshi()` branches)
 
@@ -341,6 +363,32 @@ sound comes with it (`SY_COIN`, `SY_RED_COIN_GET`, `SY_BLUE_COIN_GET`).
 Not ported: the run flinch for type 3 (`setUpperDamageRun`), the water the hit sprays out,
 camera shake and rumble (hosts can use `Event::Damaged`), dirt, air underwater, trampling
 enemies, lives and the 100-coin Shine.
+
+## 7c. Mario against enemies (MarioCheckCol.cpp `checkCollision`/`hitNormal`, MarioCollision.cpp `trampleExec`, MarioPhysics.cpp `keepDistance`)
+
+(ported: `collide.rs`.) Mario's attack cylinder is `mTrampleRadius` (100) wide and
+`mAttackHeight` (50) tall from his feet; each tick the actors whose damage cylinders it reaches
+(`checkDistance`: vertical ranges overlap and XZ distance under the radii's sum) go in his
+collision list, five at most. For enemies (`hitNormal`):
+
+- Jumping, falling (`vel.y < 0`) and above the enemy's feet: in `HipDrop`, send
+  `HIP_DROP` (the ground pound carries on through); otherwise `trampleExec` (not in a dive):
+  send `TRAMPLE` and bounce. A long jump turns into a back flip; else status `TRAMPLE` with clip
+  `step1`, or `step2` after `step1`, or `step3` (restarted) after `step2`/`step3`, and
+  `setStatusToJumping(TRAMPLE)`: `vel.y = 0.25 * forward + mTramplePowStep1/2/3` (30/40/50 by
+  clip), `forward *= 0.8`, the small/mid/large jump voice. In the air `trample` is
+  `jumpingCommonEvents` then `jumpingBasic(SEC_JUMP_SLIP, clip, 3)`; it allows the short hop.
+- Belly sliding (`CATCH`) or diving (`JUMP_CATCH`): send `PUNCH` (then `TRAMPLE`).
+
+Each message is `Event::EnemyHit { id, kind }`, once per enemy per status (the game's enemies
+react to the first and die or flinch; a host's may outlast it). The game keeps Mario out of only
+some actors (`keepDistance(actor, 0)`: Kumokun, the Manta's children, ...); the rest he passes
+into and they hurt him. `Options::enemy_push` (host tuning) keeps him out of every enemy he isn't
+stomping: pushed to the radii's sum at most 50 a tick, or knocked down (`JUMP_SHORT_BACK_DOWN`)
+when running into it faster than `mClashSpeed`.
+
+Not yet: `SUPER_HIP_DROP` from below (`MARIO_FLAG_UNK200`), pick-up enemies, the fence and
+roof punches, NPCs.
 
 ## 8. Verified numbers (disc tuning, headless, `cargo run -p libsms --example report`)
 

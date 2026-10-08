@@ -42,15 +42,33 @@ pub enum Event {
     Eaten { id: u64 },
     /// Yoshi swallowed the enemy `id` off his tongue (`HIT_MESSAGE_UNKB`: `kill`).
     EnemyEaten { id: u64 },
+    /// Mario hit the enemy `id` (`TMario::hitNormal`'s `receiveMessage`). The host decides
+    /// what it does to the enemy; Mario has already reacted (a stomp bounces him).
+    EnemyHit { id: u64, kind: EnemyHitKind },
     /// A hit landed (`damageExec`): `damage` health lost, `health` left. `yoshi`: Mario was
     /// riding, so Yoshi took it and threw him off instead. Hosts shake the camera and rumble.
-    Damaged { damage: u8, health: i16, yoshi: bool },
+    Damaged {
+        damage: u8,
+        health: i16,
+        yoshi: bool,
+    },
     /// Out of health (`loserExec`): Mario lies down for good until the host restarts him.
     Down,
     /// A sound the game starts at this point (`startSoundActor` and friends), by its
     /// `MSD_SE_*` name. Ids without the `0x800` bit are held sounds the game re-requests every
     /// frame while they last; hosts keep them alive rather than restarting them.
     Sound(SoundCue),
+}
+
+/// How Mario hit an enemy (the `HIT_MESSAGE_*` he sent).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnemyHitKind {
+    /// Landed on it from above (`HIT_MESSAGE_TRAMPLE`, `trampleExec`).
+    Trample,
+    /// Ground pounded onto it (`HIT_MESSAGE_HIP_DROP`).
+    HipDrop,
+    /// Dived or slid into it (`HIT_MESSAGE_PUNCH`, then `HIT_MESSAGE_TRAMPLE`).
+    Punch,
 }
 
 /// One `startSoundActor` / `startSoundActorWithInfo` call.

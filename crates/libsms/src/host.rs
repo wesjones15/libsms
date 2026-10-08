@@ -97,16 +97,32 @@ pub struct Takeable {
     pub fruit: Option<Fruit>,
 }
 
-/// An enemy (`TSpineEnemy`, `ACTOR_TYPE_ENEMY`): what else Yoshi's tongue goes for when Mario
-/// shoots it (`TYoshiTongue::findTarget`'s `allowExtra`).
+/// An enemy (`TSpineEnemy`, `ACTOR_TYPE_ENEMY`): what Mario stomps and pounds and FLUDD's water
+/// hits, and what else Yoshi's tongue goes for when Mario shoots it
+/// (`TYoshiTongue::findTarget`'s `allowExtra`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Enemy {
     /// The host's handle for it.
     pub id: u64,
     /// Its feet.
     pub pos: Vec3,
+    /// Its hit cylinder's radius (`mDamageRadius`).
+    pub radius: f32,
     /// Its hit cylinder's height (`mDamageHeight`); the tongue aims at half of it.
     pub height: f32,
+}
+
+impl Enemy {
+    /// `checkDistance` (Strategic/ObjHitCheck.cpp): does an attack cylinder (`radius`,
+    /// `height`, standing at `pos`) reach this enemy's hit cylinder?
+    pub fn reached_by(&self, pos: Vec3, radius: f32, height: f32) -> bool {
+        if pos.y > self.pos.y + self.height || pos.y + height < self.pos.y {
+            return false;
+        }
+        let r = radius + self.radius;
+        let (dx, dz) = (pos.x - self.pos.x, pos.z - self.pos.z);
+        dx * dx + dz * dz < r * r
+    }
 }
 
 pub trait Host {
@@ -140,7 +156,8 @@ pub trait Host {
         false
     }
 
-    /// Enemies whose hit cylinders reach a sphere of `radius` at `pos`.
+    /// Enemies whose hit cylinders reach a sphere of `radius` at `pos` (more is fine: the sim
+    /// tests the cylinders itself).
     fn enemies(&self, _pos: Vec3, _radius: f32, _out: &mut Vec<Enemy>) {}
 
     /// `receiveMessage(HIT_MESSAGE_TAKE)` from Yoshi's tongue. Return whether the enemy lets

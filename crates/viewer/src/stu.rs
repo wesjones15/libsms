@@ -56,6 +56,7 @@ impl Stu {
         Enemy {
             id: id as u64,
             pos: self.pos,
+            radius: RADIUS,
             height: HEIGHT,
         }
     }
@@ -106,7 +107,9 @@ impl StuModel {
     /// Draws a Stu with its model space placed by `at` (decomp units to the scene).
     pub fn draw(&mut self, stu: &Stu, at: Mat4, view: Mat4, proj: Mat4) {
         let len = self.walk.as_ref().map_or(1.0, |c| c.frames.max(1.0));
-        let joints = self.body.posed(self.walk.as_ref(), stu.frame % len, |_| None);
+        let joints = self
+            .body
+            .posed(self.walk.as_ref(), stu.frame % len, |_| None);
         let pose = Pose::new(&self.body.model.bmd, at, &joints);
         let lights = Lights::daylight(view);
         for pass in [Pass::Opaque, Pass::Translucent] {

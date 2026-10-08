@@ -49,6 +49,9 @@ struct Slot {
     gun_angle: f32,
 }
 
+/// The secondary nozzles in [`crate::Options::cycle_nozzles`]' order (after Spray).
+pub const CYCLE: [NozzleKind; 3] = [NozzleKind::Hover, NozzleKind::Rocket, NozzleKind::Turbo];
+
 #[derive(Debug, Clone)]
 pub struct Fludd {
     pub nozzle: NozzleKind,
@@ -67,6 +70,9 @@ pub struct Fludd {
     /// 0 = Spray fitted, 1 = secondary nozzle fitted (`mSwitchToSecondNozzleProgress`).
     pub switch_progress: f32,
     switch_speed: f32,
+    /// [`crate::Options::cycle_nozzles`]: the secondary nozzle a swing back from one
+    /// secondary is going to (it turns round at the halfway point instead of fitting Spray).
+    cycle_to: Option<NozzleKind>,
     /// FLUDD's handles: 1 = folded away, 0 = held out for pumping (`unk1CEC`). Water only
     /// leaves once it reaches 0.
     pub housed: f32,
@@ -97,6 +103,7 @@ impl Fludd {
             prop_speed: 0.0,
             switch_progress: 0.0,
             switch_speed: 0.0,
+            cycle_to: None,
             housed: 1.0,
             house_hold: 0,
             body_clip: crate::fludd_anim::body_clip::HOUSE,
@@ -170,15 +177,29 @@ impl Fludd {
 
     /// `changeBackup` (X): start swapping between Spray and the second nozzle.
     /// Returns the selection sound it starts (`startSoundSystemSE`).
-    pub fn swap_nozzle(&mut self, p: &Params) -> Option<&'static str> {
+    ///
+    /// With `cycle` ([`crate::Options::cycle_nozzles`]), X steps through every nozzle in turn
+    /// instead: Spray, Hover, Rocket, Turbo, Spray. Between two secondaries the backpack swings
+    /// halfway back, changes nozzle and swings out again.
+    pub fn swap_nozzle(&mut self, p: &Params, cycle: bool) -> Option<&'static str> {
         let mut sound = None;
         if self.switch_progress == 0.0 {
             sound = Some("MSD_SE_SY_SELECT_POMP_BACK");
             self.switch_speed = p.water_gun.change_speed;
+            if cycle {
+                self.second = CYCLE[0];
+            }
         }
         if self.switch_progress == 1.0 {
             sound = Some("MSD_SE_SY_SELECT_POMP");
             self.switch_speed = -p.water_gun.change_speed;
+            if cycle {
+                self.cycle_to = CYCLE
+                    .iter()
+                    .position(|&k| k == self.nozzle)
+                    .and_then(|i| CYCLE.get(i + 1))
+                    .copied();
+            }
         }
         sound
     }
@@ -242,7 +263,13 @@ impl Fludd {
                 self.change_nozzle(to, false, p);
             }
             if after < 0.5 && 0.5 <= before {
-                self.change_nozzle(NozzleKind::Spray, false, p);
+                match self.cycle_to.take() {
+                    Some(to) => {
+                        self.change_nozzle(to, false, p);
+                        self.switch_speed = -self.switch_speed;
+                    }
+                    None => self.change_nozzle(NozzleKind::Spray, false, p),
+                }
             }
             if self.switch_progress < 0.0 {
                 self.switch_progress = 0.0;
@@ -491,7 +518,11 @@ impl Mario {
 
         let x_edge = pad.x && !self.pad_prev.x;
         if x_edge && self.status != Status::BackJump && !self.on_yoshi() {
-            let sound = self.fludd.as_mut().and_then(|f| f.swap_nozzle(&params_ptr));
+            let cycle = self.options.cycle_nozzles;
+            let sound = self
+                .fludd
+                .as_mut()
+                .and_then(|f| f.swap_nozzle(&params_ptr, cycle));
             if let Some(name) = sound {
                 self.sound(name, None);
             }
@@ -647,9 +678,7 @@ impl Mario {
                 self.sound("MSD_SE_PO_NORMAL_NOZZLE_IMI", Some(pressure));
                 self.sound("MSD_SE_PO_WATER_HI", Some(amount));
             }
-            NozzleKind::Turbo | NozzleKind::Yoshi => {
-                self.sound("MSD_SE_PO_WATER_HI", Some(amount))
-            }
+            NozzleKind::Turbo | NozzleKind::Yoshi => self.sound("MSD_SE_PO_WATER_HI", Some(amount)),
             NozzleKind::Underwater => self.sound("MSD_SE_PO_HOVER", None),
             NozzleKind::Hover if emitted > 0 => self.sound("MSD_SE_PO_HOVER", None),
             _ => {}

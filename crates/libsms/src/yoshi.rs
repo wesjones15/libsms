@@ -239,9 +239,7 @@ impl Yoshi {
     /// The `null_tongue` joint in the world: position and X axis (`getEmitPosDir`). Without a
     /// host pose, a stand-in at his mouth.
     pub(crate) fn mouth_world(&self) -> (Vec3, Vec3) {
-        let (p, d) = self
-            .mouth
-            .unwrap_or((Vec3::new(0.0, 110.0, 95.0), Vec3::Z));
+        let (p, d) = self.mouth.unwrap_or((Vec3::new(0.0, 110.0, 95.0), Vec3::Z));
         let dir = self.to_world(d) - self.pos;
         (self.to_world(p), dir.try_normalize().unwrap_or(Vec3::Z))
     }
@@ -573,7 +571,7 @@ impl Mario {
     }
 
     /// `keepDistance(target, radius, 0)`: push Mario out of a cylinder.
-    fn keep_distance(&mut self, host: &mut dyn Host, target: Vec3, radius: f32) {
+    pub(crate) fn keep_distance(&mut self, host: &mut dyn Host, target: Vec3, radius: f32) {
         let (mut dx, dz) = (self.pos.x - target.x, self.pos.z - target.z);
         let thresh = radius + self.radius;
         let mut dist = (dx * dx + dz * dz).sqrt();
@@ -709,9 +707,9 @@ impl Mario {
             }
             1 => {
                 // The decomp turns by the unwrapped difference.
-                let delta =
-                    (SEARCH_TURN * (self.yoshi.search_yaw as i32 - self.yoshi.yaw as i32) as f32)
-                        as i16;
+                let delta = (SEARCH_TURN
+                    * (self.yoshi.search_yaw as i32 - self.yoshi.yaw as i32) as f32)
+                    as i16;
                 self.yoshi.yaw = self.yoshi.yaw.wrapping_add(delta);
                 if delta > -256 && delta < 256 {
                     self.emit_tongue(host);
@@ -772,7 +770,9 @@ impl Mario {
                 self.yoshi.pos.y += self.yoshi.vel_y;
                 match g {
                     Some(g) if g.height > self.yoshi.pos.y => {
-                        if g.flags.has(SurfaceFlags::ILLEGAL | SurfaceFlags::WATER_SURFACE) {
+                        if g.flags
+                            .has(SurfaceFlags::ILLEGAL | SurfaceFlags::WATER_SURFACE)
+                        {
                             self.yoshi_disappear();
                         } else {
                             self.yoshi.pos.y = g.height;
@@ -844,7 +844,11 @@ impl Mario {
     fn yoshi_think_animation(&mut self) {
         use Status::*;
         let y = &self.yoshi;
-        let cur = if y.clip == clip::WALK { clip::RUN } else { y.clip };
+        let cur = if y.clip == clip::WALK {
+            clip::RUN
+        } else {
+            y.clip
+        };
         let mut rate = self.anim.rate * 0.5;
         let new = if self.status.kind() == crate::mario::Kind::Running && self.status != Slip {
             if cur == clip::JUMP_FALL {
@@ -945,7 +949,11 @@ impl Mario {
 
 /// Clip lengths for Yoshi (`assets/yoshi/*.bck`, `*.btp`) and his egg
 /// (`assets/scene/mapobj/eggyoshi_*.bck`), keyed by file stem.
-pub fn insert_yoshi_clips(table: &mut AnimTable, yoshi: &std::path::Path, mapobj: &std::path::Path) {
+pub fn insert_yoshi_clips(
+    table: &mut AnimTable,
+    yoshi: &std::path::Path,
+    mapobj: &std::path::Path,
+) {
     for (dir, prefix) in [(yoshi, "yoshi_"), (mapobj, "eggyoshi_")] {
         let Ok(rd) = std::fs::read_dir(dir) else {
             continue;
@@ -959,7 +967,9 @@ pub fn insert_yoshi_clips(table: &mut AnimTable, yoshi: &std::path::Path, mapobj
                 continue;
             }
             let info = match path.extension().and_then(|s| s.to_str()) {
-                Some("bck") => std::fs::read(&path).ok().and_then(|b| AnimTable::parse_bck(&b)),
+                Some("bck") => std::fs::read(&path)
+                    .ok()
+                    .and_then(|b| AnimTable::parse_bck(&b)),
                 Some("btp") => std::fs::read(&path).ok().and_then(|b| parse_btp(&b)),
                 _ => None,
             };

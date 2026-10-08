@@ -183,7 +183,7 @@ impl Mario {
         if self.ground_illegal() {
             return 2;
         }
-        let ny = self.ground.normal.y;
+        let ny = self.ground.normal.y * self.options.move_speed;
         let next = Vec3::new(
             self.pos.x + self.vel.x / 4.0 * ny,
             self.pos.y,
@@ -329,7 +329,8 @@ impl Mario {
             self.vel.z *= max / speed;
         }
 
-        let next = self.pos + self.vel * 0.25;
+        let k = self.options.move_speed;
+        let next = self.pos + Vec3::new(self.vel.x * k, self.vel.y, self.vel.z * k) * 0.25;
         let ret = self.check_ground_at_jumping(host, next, arg);
 
         if self.vel.y >= 0.0 {
@@ -596,7 +597,8 @@ impl Mario {
     /// `askStrongGroundTouch`: did this landing hit hard enough for the heavy effect?
     pub(crate) fn ask_strong_ground_touch(&self) -> bool {
         !self.on_yoshi()
-            && self.fall_start_y - self.pos.y > self.params.mario.damage_fall_height && self.vel.y <= -70.0
+            && self.fall_start_y - self.pos.y > self.params.mario.damage_fall_height
+            && self.vel.y <= -70.0
     }
 
     pub(crate) fn is_upper_pumping_style(&self) -> bool {

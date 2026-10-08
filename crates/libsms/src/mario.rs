@@ -85,6 +85,9 @@ pub enum Status {
     Landing,
     RocketLanding,
     SlipFall,
+    /// Bouncing off an enemy's head (`MARIO_STATUS_TRAMPLE`); the arg is which stomp in a
+    /// row (0..2, `ANIM_STEP1..3`).
+    Trample,
     HipDrop,
     LeftRotateJump,
     RightRotateJump,
@@ -148,7 +151,7 @@ impl Status {
         use Status::*;
         matches!(
             self,
-            Jump | SecondJump | WallJump | MissJump | RotateBroadJump | SlipFall
+            Jump | SecondJump | WallJump | MissJump | RotateBroadJump | SlipFall | Trample
         )
     }
 }
@@ -185,6 +188,16 @@ pub struct Options {
     /// Ticks after a landing window (`*JumpSlip`, 0x10 ticks) in which a jump still chains
     /// into the double or triple jump. 0: the game's.
     pub chain_grace_ticks: u32,
+    /// Keep Mario out of every enemy he touches (`keepDistance`), as the game does only for
+    /// some (Kumokun, the Manta's children...). Off: the game's; most enemies he walks into
+    /// simply hurt him.
+    pub enemy_push: bool,
+    /// X steps through every nozzle (Spray, Hover, Rocket, Turbo) instead of swapping Spray
+    /// with the one secondary nozzle the stage gave Mario. Off: the game's.
+    pub cycle_nozzles: bool,
+    /// Ground covered per tick, walking and in the air, times this (a host's speed buffs).
+    /// Speeds, and so animation, stay the game's. 1: the game's.
+    pub move_speed: f32,
 }
 
 impl Default for Options {
@@ -194,6 +207,9 @@ impl Default for Options {
             jump_height: 1.0,
             jump_buffer_ticks: 0,
             chain_grace_ticks: 0,
+            enemy_push: false,
+            cycle_nozzles: false,
+            move_speed: 1.0,
         }
     }
 }
@@ -287,6 +303,10 @@ pub struct Mario {
     /// The chained jump still on offer after a landing window closed, and ticks left
     /// ([`Options::chain_grace_ticks`]).
     pub(crate) chain_grace: Option<(Status, u32)>,
+    /// Enemies Mario has hit since his status last changed. Sunshine's enemies react to the
+    /// first message (and die or flinch); hosts' enemies may outlast it, so a pound or a
+    /// slide through one reports it once, not every tick it overlaps.
+    pub(crate) enemies_hit: Vec<u64>,
 }
 
 impl Mario {
@@ -361,6 +381,7 @@ impl Mario {
             ticks: 0,
             jump_buffer: 0,
             chain_grace: None,
+            enemies_hit: Vec::new(),
         }
     }
 
@@ -405,6 +426,7 @@ impl Mario {
 
         self.check_player_action(host, pad);
         self.check_yoshi_collision(host);
+        self.check_enemy_collision(host);
         self.check_yoshi_get_off();
         self.think_yoshi_head_collision(host);
         self.state_machine(host);
@@ -474,8 +496,8 @@ impl Mario {
                 self.chain_grace = None;
             }
         }
-        let buffered = self.jump_buffer > 0
-            && matches!(self.status.kind(), Kind::Waiting | Kind::Running);
+        let buffered =
+            self.jump_buffer > 0 && matches!(self.status.kind(), Kind::Waiting | Kind::Running);
 
         let i = &mut self.input;
         i.stick = self.intended_mag > 0.0;
@@ -649,6 +671,7 @@ impl Mario {
         self.prev_status = self.status;
         self.status = to;
         self.status_arg = arg;
+        self.enemies_hit.clear();
         self.status_state = 0;
         self.status_timer = 0;
         true
@@ -681,7 +704,7 @@ impl Mario {
     }
 
     /// `setStatusToJumping`: take-off velocities per jump type.
-    fn set_status_to_jumping(&mut self, st: Status, _arg: u32) -> Status {
+    fn set_status_to_jumping(&mut self, st: Status, arg: u32) -> Status {
         self.fall_start_y = self.pos.y;
         let j = self.params.jump.clone();
         self.jump_buffer = 0;
@@ -769,6 +792,17 @@ impl Mario {
             }
             Status::ForceJump => {
                 event = Some(JumpKind::Forced);
+            }
+            Status::Trample => {
+                // By stomp in a row: the small, mid and large jump voices.
+                let (pow, kind) = match arg {
+                    0 => (self.params.mario.trample_pow_step1, JumpKind::Normal),
+                    1 => (self.params.mario.trample_pow_step2, JumpKind::Second),
+                    _ => (self.params.mario.trample_pow_step3, JumpKind::Triple),
+                };
+                self.set_player_jump_speed(0.25, pow);
+                self.forward_vel *= 0.8;
+                event = Some(kind);
             }
             _ => {}
         }
