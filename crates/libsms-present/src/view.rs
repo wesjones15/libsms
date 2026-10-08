@@ -133,6 +133,12 @@ pub struct View {
     /// Camera right and up, sim axes, for environment maps.
     right: Vec3,
     up: Vec3,
+    /// How many 120 Hz ticks behind the sim the host draws Mario (its own smoothing between
+    /// the batches of ticks it runs). The pose is taken that far back too, so a host running
+    /// the sim at 60 Hz on a faster display doesn't show each pose for several frames.
+    pub lag: f32,
+    /// The model yaw at the last two sim ticks seen, for in-between facings.
+    yaw_seen: [(u64, i16); 2],
 
     pub draws: Vec<Draw>,
     pub positions: Vec<Vec3>,
@@ -409,6 +415,8 @@ impl View {
             shirt: false,
             time: 0.0,
             blink_at: 2.0,
+            lag: 0.0,
+            yaw_seen: [(0, 0); 2],
             right: Vec3::X,
             up: Vec3::Y,
             draws: Vec::new(),
@@ -440,7 +448,20 @@ impl View {
         let alpha = sim.alpha();
         let m = &sim.mario;
         let pos = m.prev_pos.lerp(m.pos, alpha);
-        let yaw = m.model_yaw as f32 * std::f32::consts::PI / 32768.0;
+        // Drawn `lag - alpha` ticks before the sim's latest state: the clip that far back, and
+        // the facing between the last two states seen.
+        let back = (self.lag - alpha).max(0.0);
+        if self.yaw_seen[1].0 != m.ticks {
+            self.yaw_seen = [self.yaw_seen[1], (m.ticks, m.model_yaw)];
+        }
+        let [(t0, y0), (t1, y1)] = self.yaw_seen;
+        let yaw = if t1 > t0 && back > 0.0 {
+            let t = (1.0 - back / (t1 - t0) as f32).clamp(0.0, 1.0);
+            y0 as f32 + y1.wrapping_sub(y0) as f32 * t
+        } else {
+            m.model_yaw as f32
+        };
+        let yaw = yaw * std::f32::consts::PI / 32768.0;
         let rot = Quat::from_rotation_y(yaw);
         // `addDamageFog` while invincible; hosts flash instead.
         let flags = (m.invincible > 0) as u8;
@@ -451,7 +472,7 @@ impl View {
         });
         let joints = self
             .skeleton
-            .pose_layered(self.clips.get(m.anim.clip).map(|c| (c, m.anim.frame)), upper);
+            .pose_layered(self.clips.get(m.anim.clip).map(|c| (c, m.anim.frame_before(back))), upper);
 
         // Blink every few seconds (the game runs `ma_wink_tx` on idle; 30 frames a second).
         if self.time > self.blink_at + 2.0 {

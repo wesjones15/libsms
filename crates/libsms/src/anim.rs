@@ -200,6 +200,20 @@ impl AnimState {
         self.frame = f;
     }
 
+    /// The frame `ticks` 120 Hz ticks of playback before this one, for hosts that draw a little
+    /// behind the sim (fractional ticks give in-between poses). Loops wrap; other clips stop at
+    /// their first frame, and one that has run to its end stays there.
+    pub fn frame_before(&self, ticks: f32) -> f32 {
+        let len = self.info.frames;
+        let ticks = if ticks.is_finite() { ticks.max(0.0) } else { 0.0 };
+        let f = self.frame - self.rate * 0.5 * ticks;
+        match self.info.mode {
+            LoopMode::Loop | LoopMode::MirrorLoop if len > 0.0 => f.rem_euclid(len),
+            _ if self.finished_once && self.frame >= len => len,
+            _ => f.clamp(0.0, len.max(0.0)),
+        }
+    }
+
     /// `isLast1AnimeFrame`.
     pub fn at_last_frame(&self) -> bool {
         self.frame >= self.info.frames - 1.0
@@ -357,6 +371,24 @@ mod tests {
             },
         );
         t
+    }
+
+    #[test]
+    fn frame_before_steps_back_within_the_clip() {
+        let t = table();
+        let mut a = AnimState::new("loop", &t);
+        a.advance(); // 0.5
+        assert_eq!(a.frame_before(0.5), 0.25);
+        // Loops wrap back past the start.
+        assert_eq!(a.frame_before(3.0), 9.0);
+        let mut o = AnimState::new("once", &t);
+        o.advance();
+        assert_eq!(o.frame_before(3.0), 0.0);
+        // A finished one-shot holds its last frame.
+        for _ in 0..40 {
+            o.advance();
+        }
+        assert_eq!(o.frame_before(2.0), 10.0);
     }
 
     #[test]

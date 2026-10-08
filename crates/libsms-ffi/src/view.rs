@@ -112,7 +112,8 @@ pub struct SmsViewFrame {
     /// Sound volume 0..1.
     pub volume: f32,
     /// How many 120 Hz ticks behind the sim the host draws Mario (its own smoothing between
-    /// steps); the water is drawn as far back, so it leaves the drawn nozzle.
+    /// steps); his pose, facing and water are taken as far back, so they match where he's
+    /// drawn and move at the display's rate.
     pub lag: f32,
 }
 
@@ -451,6 +452,7 @@ pub unsafe extern "C" fn sms_view_update(view: *mut SmsView, sim: *mut SmsSim, f
             let right = Vec3::from(f.up).cross(fwd).normalize_or(Vec3::X);
             let up = fwd.cross(right);
             v.view.set_camera(right, up);
+            v.view.lag = if f.lag.is_finite() { f.lag.clamp(0.0, 16.0) } else { 0.0 };
             v.view.update(&mut s.sim, f.dt.clamp(0.0, 0.25));
             let frac = (s.water_ticks as f32 + s.sim.alpha() - f.lag) / 4.0;
             let juice = s.sim.mario.juice_color();
