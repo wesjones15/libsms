@@ -74,6 +74,9 @@ impl<H: Host> Host for Rig<H> {
     fn take_enemy(&mut self, id: u64) -> bool {
         self.world.take_enemy(id)
     }
+    fn water_level(&self, p: Vec3) -> Option<f32> {
+        self.world.water_level(p)
+    }
 }
 
 struct Scene<H: Host> {
@@ -645,6 +648,107 @@ fn an_empty_tank_does_not_spray() {
     s.pad.r_analog = 255;
     s.secs(0.5);
     assert_eq!(s.event_count(|e| matches!(e, Event::WaterEmit(_))), 0);
+}
+
+#[test]
+fn pressing_r_with_a_dry_tank_puffs_empty_air() {
+    let mut s = Scene::flat();
+    s.sim.mario.give_fludd();
+    s.sim.mario.fludd.as_mut().unwrap().water = 0;
+    s.pad.r = true;
+    s.pad.r_analog = 255;
+    s.secs(0.5);
+    assert_eq!(
+        s.event_count(|e| matches!(e, Event::Sound(c) if c.name == "MSD_SE_PO_ACTION_ON_EMPTY")),
+        1
+    );
+}
+
+fn tank(s: &Scene<impl Host>) -> (i32, i32) {
+    let f = s.mario().fludd.as_ref().unwrap();
+    (f.water, f.max_water(&s.mario().params))
+}
+
+#[test]
+fn r_in_shallow_water_sucks_the_tank_full_then_sprays() {
+    let mut s = Scene::new(FlatHost {
+        water: Some(30.0),
+        ..FlatHost::default()
+    });
+    s.sim.mario.give_fludd();
+    s.sim.mario.fludd.as_mut().unwrap().water = 0;
+    s.step(1);
+    assert!(s.mario().in_water());
+    s.pad.r_analog = 255;
+    s.secs(0.5);
+    let (water, max) = tank(&s);
+    assert!(water > 0, "nothing sucked up");
+    assert!(
+        s.event_count(|e| matches!(e, Event::Sound(c) if c.name == "MSD_SE_PO_SUCK_WATER_B")) > 0
+    );
+    // Filling, nothing comes out.
+    if water < max {
+        assert_eq!(s.event_count(|e| matches!(e, Event::WaterEmit(_))), 0);
+    }
+    assert!(s.until(120 * 20, |m| {
+        let f = m.fludd.as_ref().unwrap();
+        f.water == f.max_water(&m.params)
+    }));
+    s.secs(0.5);
+    assert_eq!(
+        s.event_count(|e| matches!(e, Event::Sound(c) if c.name == "MSD_SE_SY_PO_WATER_FULL")),
+        1
+    );
+    // Full, it sprays, and stays full.
+    assert!(s.event_count(|e| matches!(e, Event::WaterEmit(_))) > 0);
+    let (water, max) = tank(&s);
+    assert_eq!(water, max);
+}
+
+#[test]
+fn out_of_the_water_r_does_not_refill() {
+    let mut s = Scene::new(FlatHost {
+        water: Some(-10.0),
+        ..FlatHost::default()
+    });
+    s.sim.mario.give_fludd();
+    s.sim.mario.fludd.as_mut().unwrap().water = 0;
+    s.pad.r_analog = 255;
+    s.secs(0.5);
+    assert!(!s.mario().in_water());
+    assert_eq!(tank(&s).0, 0);
+}
+
+#[test]
+fn unlimited_water_never_runs_dry() {
+    let mut s = Scene::flat();
+    s.sim.mario.options.unlimited_water = true;
+    s.sim.mario.give_fludd();
+    s.pad.r_analog = 255;
+    s.secs(2.0);
+    assert!(s.event_count(|e| matches!(e, Event::WaterEmit(_))) > 0);
+    let (water, max) = tank(&s);
+    assert_eq!(water, max);
+    assert_eq!(
+        s.event_count(|e| matches!(e, Event::Sound(c) if c.name == "MSD_SE_SY_PO_WATER_FULL")),
+        0
+    );
+}
+
+#[test]
+fn a_host_refill_fills_the_tank_and_chimes() {
+    let mut s = Scene::flat();
+    s.sim.mario.give_fludd();
+    s.sim.mario.fludd.as_mut().unwrap().water = 0;
+    s.step(1);
+    s.sim.mario.refill_water();
+    s.step(1);
+    let (water, max) = tank(&s);
+    assert_eq!(water, max);
+    assert_eq!(
+        s.event_count(|e| matches!(e, Event::Sound(c) if c.name == "MSD_SE_SY_PO_WATER_FULL")),
+        1
+    );
 }
 
 #[test]

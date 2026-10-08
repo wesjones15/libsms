@@ -132,6 +132,14 @@ impl Fludd {
         self.slots[self.nozzle as usize].state
     }
 
+    /// A trigger nozzle's charge and its maximum (`TWaterGun::getPressure`/`getPressureMax`),
+    /// while it's building (`isPressureOn`); what the HUD's gauge shows in red.
+    pub fn pressure(&self, p: &Params) -> Option<(f32, f32)> {
+        let fill = self.slots[self.nozzle as usize].fill;
+        (self.nozzle.is_trigger() && fill > 0.0)
+            .then(|| (fill, self.nozzle_params(p).inside_pressure_max))
+    }
+
     /// Continuous-nozzle output (`unk378`), `0..=1`.
     pub fn spray_amount(&self) -> f32 {
         self.slots[self.nozzle as usize].amount
@@ -496,7 +504,8 @@ impl Mario {
 
         let params_ptr = self.params.clone();
         if self.in_water {
-            // TWaterGun::suck: standing in water refills at `suck_rate` x current pressure.
+            // TWaterGun::suck: standing in water, R draws water in at `suck_rate` x the
+            // trigger's pressure instead of spraying it.
             let pressure = (r_level * 150.0) as i32;
             let mut sucked = false;
             if let Some(f) = self.fludd.as_mut() {
@@ -510,9 +519,20 @@ impl Mario {
             if sucked {
                 self.sound("MSD_SE_PO_SUCK_WATER_B", None);
             }
+            // Only a full tank sprays there, and it stays full (`resetWaterToFull`).
+            let full = self
+                .fludd
+                .as_ref()
+                .is_some_and(|f| f.water >= f.max_water(&params_ptr));
+            if full && self.upper == UpperState::Pumping {
+                self.emit(host);
+                self.refill_water();
+            }
+        } else if self.upper == UpperState::Pumping {
+            self.emit(host);
         }
         // Riding, R spits juice without pumping (`onYoshi() && mAnalogR > 0`).
-        if self.upper == UpperState::Pumping || (self.on_yoshi() && pad.r_analog > 0) {
+        if self.on_yoshi() && pad.r_analog > 0 {
             self.emit(host);
         }
 
@@ -536,6 +556,25 @@ impl Mario {
             }
         }
         self.anims = anims;
+
+        if self.options.unlimited_water {
+            self.refill_water();
+            self.was_full = true;
+        }
+        let (water, max) = match self.fludd.as_ref() {
+            Some(f) => (f.water, f.max_water(&params_ptr)),
+            None => return,
+        };
+        // `soundMovement`: R pressed with the tank dry puffs empty air.
+        if self.input.r_pressed && water == 0 {
+            self.sound("MSD_SE_PO_ACTION_ON_EMPTY", None);
+        }
+        // `TGCConsole2`'s gauge chimes as the tank fills up (`SY_PO_WATER_FULL`).
+        let full = water >= max;
+        if full && !self.was_full {
+            self.sound("MSD_SE_SY_PO_WATER_FULL", None);
+        }
+        self.was_full = full;
     }
 
     /// `TNozzleBase/Trigger/Deform::movement` for the fitted nozzle.

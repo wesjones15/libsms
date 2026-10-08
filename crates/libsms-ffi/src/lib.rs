@@ -27,7 +27,7 @@ use libsms::{
 use view::SmsView;
 
 /// ABI version, bumped when the C interface changes.
-pub const SMS_ABI_VERSION: u32 = 7;
+pub const SMS_ABI_VERSION: u32 = 8;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sms_abi_version() -> u32 {
@@ -176,6 +176,10 @@ pub struct SmsHost {
     /// Mario stomps, pounds and is pushed by these, and FLUDD's water hits them.
     pub enemies:
         Option<unsafe extern "C" fn(*mut c_void, *const SmsVec3, f32, *mut SmsEnemy, u32) -> u32>,
+    /// Shallow water at `pos`: write its surface's height to `out` and return 1, or return 0
+    /// for none (`TPoolManager::getWaterLevel`). While it's above his feet Mario is in the
+    /// water, and R fills FLUDD's tank from it.
+    pub water: Option<unsafe extern "C" fn(*mut c_void, *const SmsVec3, *mut f32) -> u8>,
 }
 
 /// One frame of controller input.
@@ -259,7 +263,9 @@ pub struct SmsState {
     pub has_fludd: u8,
     /// 1 falling in a ground pound, 2 in a super pound (the game draws flames), else 0.
     pub pounding: u8,
-    pub _pad: [u8; 3],
+    /// 1 standing in shallow water (the host's `water`).
+    pub in_water: u8,
+    pub _pad: [u8; 2],
 }
 
 /// Host tuning that departs from the game on purpose ([`libsms::Options`]); zeroes and ones
@@ -294,7 +300,9 @@ pub struct SmsTuning {
     pub enemy_push: u8,
     /// 1: X steps through Spray, Hover, Rocket and Turbo; 0: the game's (Spray and one).
     pub cycle_nozzles: u8,
-    pub _pad: [u8; 2],
+    /// 1: FLUDD's tank never runs dry; 0: the game's.
+    pub unlimited_water: u8,
+    pub _pad: u8,
 }
 
 /// An opaque sim handle.
@@ -387,6 +395,14 @@ impl Host for FfiHost<'_> {
             radius: e.radius,
             height: e.height,
         }));
+    }
+
+    fn water_level(&self, pos: Vec3) -> Option<f32> {
+        let f = self.0.water?;
+        let mut level = 0.0;
+        // SAFETY: as above.
+        let hit = unsafe { f(self.0.user, &SmsVec3::from(pos), &mut level) };
+        (hit != 0 && level.is_finite()).then_some(level)
     }
 
     fn event(&mut self, event: Event) {
@@ -658,7 +674,8 @@ pub unsafe extern "C" fn sms_sim_state(sim: *const SmsSim, out: *mut SmsState) -
         on_ground: m.on_ground() as u8,
         has_fludd: m.fludd.is_some() as u8,
         pounding: m.pounding(),
-        _pad: [0; 3],
+        in_water: m.in_water() as u8,
+        _pad: [0; 2],
     };
     1
 }
@@ -708,6 +725,19 @@ pub unsafe extern "C" fn sms_sim_teleport(sim: *mut SmsSim, pos: *const SmsVec3)
     }
 }
 
+/// Fills FLUDD's tank (a new level, a refill button); the HUD's full-tank chime plays on the
+/// next step if it wasn't full.
+///
+/// # Safety
+/// `sim` from [`sms_sim_new`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_sim_refill(sim: *mut SmsSim) {
+    // SAFETY: the caller promised a valid pointer.
+    if let Some(s) = unsafe { sim.as_mut() } {
+        s.sim.mario.refill_water();
+    }
+}
+
 /// Sets host tuning (see [`SmsTuning`]); a new sim has the game's.
 ///
 /// # Safety
@@ -735,6 +765,7 @@ pub unsafe extern "C" fn sms_sim_set_tuning(sim: *mut SmsSim, tuning: *const Sms
         o.move_speed = factor(t.move_speed);
         o.enemy_push = t.enemy_push != 0;
         o.cycle_nozzles = t.cycle_nozzles != 0;
+        o.unlimited_water = t.unlimited_water != 0;
         s.water.reach = factor(t.spray_reach);
         o.stomp_bounce = factor(t.stomp_bounce);
         // The rocket's apex grows about as its lift to the power 1.9 (examples/report.rs:
@@ -761,7 +792,8 @@ pub unsafe extern "C" fn sms_sim_set_tuning(sim: *mut SmsSim, tuning: *const Sms
 /// Sizes of the ABI's structs, for hosts to check their copies against: `SmsVec3`,
 /// `SmsGroundHit`, `SmsRoofHit`, `SmsWallHit`, `SmsEvent`, `SmsHost`, `SmsPad`, `SmsState`,
 /// `SmsModelInfo`, `SmsBatch`, `SmsTexture`, `SmsDraw`, `SmsViewFrame`, `SmsTuning`,
-/// `SmsWaterVertex`, `SmsWaterInfo`, `SmsEnemy`. Writes up to `max`;
+/// `SmsWaterVertex`, `SmsWaterInfo`, `SmsEnemy`, `SmsFxVertex`, `SmsFxBatch`, `SmsFxInfo`,
+/// `SmsHudInfo`. Writes up to `max`;
 /// returns how many there are.
 ///
 /// # Safety
@@ -790,6 +822,7 @@ pub unsafe extern "C" fn sms_struct_sizes(out: *mut u32, max: u32) -> u32 {
         size_of::<view::SmsFxVertex>(),
         size_of::<view::SmsFxBatch>(),
         size_of::<view::SmsFxInfo>(),
+        size_of::<view::SmsHudInfo>(),
     ];
     if !out.is_null() {
         for (i, s) in sizes.iter().take(max as usize).enumerate() {
@@ -864,6 +897,7 @@ mod tests {
             walls: None,
             event: Some(count),
             enemies: None,
+            water: None,
         };
         unsafe {
             let sim = sms_sim_new(dir.as_ptr(), &SmsVec3::default(), 0);
@@ -951,6 +985,7 @@ mod tests {
                 walls: None,
                 event: Some(count_hits),
                 enemies: Some(one_enemy),
+                water: None,
             };
             let pad = if ahead == 0 {
                 SmsPad {
@@ -981,13 +1016,13 @@ mod tests {
 
     #[test]
     fn struct_sizes_are_what_hosts_mirror() {
-        let mut sizes = [0u32; 20];
-        let n = unsafe { sms_struct_sizes(sizes.as_mut_ptr(), 20) } as usize;
+        let mut sizes = [0u32; 21];
+        let n = unsafe { sms_struct_sizes(sizes.as_mut_ptr(), 21) } as usize;
         // ror2-mario's Native.cs and ror2-common's view structs check these at load.
         assert_eq!(
             &sizes[..n],
             &[
-                12, 20, 8, 16, 32, 48, 24, 52, 40, 24, 12, 64, 48, 44, 24, 24, 24, 36, 16, 12
+                12, 20, 8, 16, 32, 56, 24, 52, 40, 24, 12, 64, 48, 44, 24, 24, 24, 36, 16, 12, 32
             ]
         );
     }
@@ -1006,6 +1041,7 @@ mod tests {
             walls: None,
             event: None,
             enemies: None,
+            water: None,
         };
         unsafe {
             let sim = sms_sim_new(dir.as_ptr(), &SmsVec3::default(), 0);

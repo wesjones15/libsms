@@ -528,6 +528,8 @@ mod tests {
             ),
             ("spin voice", cue("MSD_SE_MV24_JUMP_SPECIAL_01", None)),
             ("spin whoosh", cue("MSD_SE_MA_ROLL_JUMP", None)),
+            ("empty tank", cue("MSD_SE_PO_ACTION_ON_EMPTY", None)),
+            ("full tank", cue("MSD_SE_SY_PO_WATER_FULL", None)),
         ];
         for (what, event) in cases {
             let mut sys = SoundSystem::new(data.clone());

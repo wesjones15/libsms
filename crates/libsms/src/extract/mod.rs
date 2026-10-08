@@ -84,7 +84,11 @@ impl From<std::io::Error> for ExtractError {
 /// `particle.szs` holds the common particle effects (`.jpa`, JPA1) the game loads by bare name
 /// (`TMarDirector::loadParticleMario` and kin, MarDirectorLoadResource.cpp), Mario's among them:
 /// `ms_m_sphipd_a..d.jpa` are the super ground pound's flames.
-pub const EXTRACTS: [(&str, &str, &str); 7] = [
+///
+/// `game_6` is the HUD's archive (`TGCConsole2::load` mounts it): `scrn/standard_1.blo` lays out
+/// the panes and `timg/` holds their pictures, FLUDD's water gauge among them (`water_*.bti`).
+/// European discs carry one per language (`game_6_en.szs`, ...); `|` separates the names tried.
+pub const EXTRACTS: [(&str, &str, &str); 8] = [
     ("params.szs", "mario/", "params_mario"),
     ("params.szs", "npc/", "params_npc"),
     ("params.szs", "enemy/", "params_enemy"),
@@ -92,6 +96,7 @@ pub const EXTRACTS: [(&str, &str, &str); 7] = [
     ("nintendo.szs", "audi/msound.aaf", "AudioRes/msound.aaf"),
     ("yoshi.szs", "", "yoshi"),
     ("particle.szs", "", "particle"),
+    ("game_6_en.szs|game_6.szs", "", "game_6"),
 ];
 
 /// Folders gathered from every stage archive (`data/scene/*.szs`) into one folder under `out`:
@@ -122,7 +127,7 @@ pub const DISC_FOLDERS: [&str; 1] = ["AudioRes/"];
 
 /// Files that must exist for the library and viewer to work. Adding one here makes an older
 /// `assets/` incomplete, so hosts re-extract it on the next run.
-pub const REQUIRED: [&str; 28] = [
+pub const REQUIRED: [&str; 29] = [
     "params_mario/run.prm",
     "params_mario/jump.prm",
     "params_mario/mario.prm",
@@ -151,6 +156,7 @@ pub const REQUIRED: [&str; 28] = [
     "scene/mapobj/coin.bmd",
     "params_mario/dmghamukuri.prm",
     "particle/ms_m_sphipd_a.jpa",
+    "game_6/scrn/standard_1.blo",
 ];
 
 pub const GAME_IDS: [(&str, &str); 3] = [
@@ -231,7 +237,15 @@ pub fn extract_assets(
     for (archive, inner, dest) in EXTRACTS {
         if cache.as_ref().map(|c| c.0.as_str()) != Some(archive) {
             log(&format!("reading {archive}"));
-            let raw = disc.read_file(&format!("data/{archive}"))?;
+            let mut names = archive.split('|');
+            let first = names.next().unwrap_or(archive);
+            let mut raw = disc.read_file(&format!("data/{first}"));
+            for name in names {
+                if raw.is_err() {
+                    raw = disc.read_file(&format!("data/{name}"));
+                }
+            }
+            let raw = raw?;
             let bytes = if yaz0::is_yaz0(&raw) {
                 yaz0::decompress(&raw)?
             } else {

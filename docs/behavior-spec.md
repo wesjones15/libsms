@@ -66,6 +66,9 @@ Three probes, matching `TMap` (Map/Map.hpp). (ported: `host.rs`)
 - Pass-through floors are skipped by re-probing 1 unit below (`checkGroundPlane`).
 - Enemies (`Host::enemies`): standing cylinders (feet, `mDamageRadius`, `mDamageHeight`) near a
   point; the sim tests overlap itself with `checkDistance` (section 7c).
+- Shallow water (`Host::water_level`): a pool's surface at a point (`TPoolManager::getWaterLevel`).
+  `thinkWaterSurface` (after `stateMachineUpper`) puts Mario in shallow water while it's above his
+  feet. Only the pool half is ported: no water-surface planes, no swimming (deep water is wading).
 
 Per tick (`checkCurrentPlane`): probe the floor at `y + 25` and ceiling at `y + 80`; set slope angle
 `matan(n.z, n.x)`; AIRBORNE if `y > floor + 100`; SLIP if `isSlipStart`.
@@ -224,6 +227,13 @@ Slots: 0 Spray (`NozzleDeform.prm`), 1 Rocket, 2 Underwater, 3 Yoshi, 4 Hover, 5
 
 - **Tank**: `water` in the current nozzle's units; `mAmountMax` (disc) 10000 Spray/Hover/Diving,
   2100 Rocket/Turbo. Changing nozzle rescales to the same fraction (`changeNozzle`).
+- **Refilling** (`gunExec`, MarioMove.cpp; `TWaterGun::suck`): in shallow water, R draws water in
+  at `pressure * mSuckRate` a tick (`PO_SUCK_WATER_B` while it isn't full) instead of spraying;
+  only a full tank sprays there, and stays full (`resetWaterToFull`). Out of water, pumping
+  sprays. R pressed (`mInput & 0x100`: FLUDD on, not dashing) with the tank at 0 plays
+  `PO_ACTION_ON_EMPTY` (`soundMovement`). The HUD chimes `SY_PO_WATER_FULL` as the tank reaches
+  full (`updateWaterGaugeFill`). `Mario::refill_water` is a host's own refill;
+  `Options::unlimited_water` (host tuning, not the game) keeps the tank full.
 - **Upper-body state**: R pressure > 0 enters `Pumping`; releasing holds the stance for
   `mPumpWaitTime` (5) ticks. Firing only happens in `Pumping`.
 - **Trigger nozzles** (Rocket, Hover, Turbo; `TNozzleTrigger::movement`): while pumping,
@@ -268,6 +278,20 @@ Slots: 0 Spray (`NozzleDeform.prm`), 1 Rocket, 2 Underwater, 3 Yoshi, 4 Hover, 5
   firing `PO_ROCKET_TRIGGER`/`PO_SNIPER_TRIGGER`, refilling `PO_SUCK_WATER_B`, X
   `SY_SELECT_POMP(_BACK)`. As in the game, Turbo's `PO_WATER_HI` gets the nozzle's output
   (`unk378`), which `TNozzleTrigger::movement` never sets, so its pitch curve gates it silent.
+
+**Water gauge** (`TGCConsole2`, GCConsole2.cpp; ported: `libsms_present::hud`). The layout is
+`game_6/scrn/standard_1.blo` (J2DScreen `blo1`), the `' w_0'` pane at (493, 355) of the 600x480
+screen, its pictures in `game_6/timg/`. `drawWaterBack`: the splash `w_ba` in blue (TEV C0/C1
+0x0000FF, alpha 0x78 x texture alpha); while a trigger nozzle charges (`isPressureOn`: its
+`unk388 > 0`) the part below `y1 + (1 - p / pMax) * height` is 0xFF3F3F at alpha 0xC8, and at a
+full charge `getPressureFlashColor` steps it to yellow and back over 25 frames. The screen draws
+the glass `w_t0`. `drawWater`: two layers, `w_t3` in 0x00B4F0 then `w_t2` in 0x64DCFF, each at
+`(1 - mask) * texture` alpha, the mask the same picture shifted by `fill * (1 - h)` of its height
+(h 0.13 and 0.161; tops 10 and 7 below the glass) so the water's edge keeps the face's slant; the
+top face `w_t1` at `glass.y + (int)(47 * (1 - fill) - 0.5) + 1` with alpha 0xFF full, 0 empty,
+0x50 between; then `w_tx` ("WATER") and the fitted nozzle's icon `nz01..04` (Spray, Hover,
+Rocket, Turbo). Not ported: the X-button hint, the slide in/out and the icon's swap animation,
+Yoshi's juice gauge.
 
 **Water particles** (`TModelWaterManager`, ModelWaterManager.cpp; ported: `water.rs`, stepped by
 the host once per 30 Hz frame). 256 slots. `makeEmit` adds the trembles to direction, power and

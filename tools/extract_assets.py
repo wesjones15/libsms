@@ -30,7 +30,8 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 
 # (archive inside files/data, path inside the archive, destination under --out)
-# An empty inner path is the whole archive. Matches libsms::extract::EXTRACTS.
+# An empty inner path is the whole archive; "a|b" tries each archive name (European discs carry
+# a game_6 per language). Matches libsms::extract::EXTRACTS.
 EXTRACTS = [
     ("params.szs", "mario/", "params_mario"),
     ("params.szs", "npc/", "params_npc"),
@@ -39,6 +40,7 @@ EXTRACTS = [
     ("nintendo.szs", "audi/msound.aaf", "AudioRes/msound.aaf"),
     ("yoshi.szs", "", "yoshi"),
     ("particle.szs", "", "particle"),
+    ("game_6_en.szs|game_6.szs", "", "game_6"),
 ]
 
 # Disc folders copied as they are.
@@ -74,6 +76,7 @@ REQUIRED = [
     "scene/mapobj/coin.bmd",
     "params_mario/dmghamukuri.prm",
     "particle/ms_m_sphipd_a.jpa",
+    "game_6/scrn/standard_1.blo",
 ]
 
 # Folders gathered from every stage archive into one: (prefix, destination). Matches
@@ -196,6 +199,8 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
 
     for archive, inner, dest in EXTRACTS:
+        names = archive.split("|")
+        archive = next((n for n in names if n in listing), names[0])
         src = f"{iso}:files/data/{archive}:{inner}"
         dst = out / dest
         folder = inner == "" or inner.endswith("/")

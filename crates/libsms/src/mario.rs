@@ -212,6 +212,8 @@ pub struct Options {
     /// Letting go of A early (`isFallCancel`) cuts a jump short only once it has risen this
     /// share of its full height, so a tap still hops this high or a little more. 0: the game's.
     pub short_hop: f32,
+    /// FLUDD's tank never runs dry. false: the game's.
+    pub unlimited_water: bool,
 }
 
 /// Ticks either side of a stomp in which A counts for [`Options::stomp_jump`].
@@ -232,6 +234,7 @@ impl Default for Options {
             pound_jump: 0.0,
             stomp_jump: 1.0,
             short_hop: 0.0,
+            unlimited_water: false,
         }
     }
 }
@@ -316,7 +319,10 @@ pub struct Mario {
     pub(crate) dash_timer: i32,
     pub(crate) fludd_emitting: bool,
     pub(crate) hover_target_y: f32,
+    /// In shallow water (`MARIO_FLAG_IN_SHALLOW_WATER`, `thinkWaterSurface`).
     pub(crate) in_water: bool,
+    /// The tank was full last tick, for the HUD's full-tank chime.
+    pub(crate) was_full: bool,
     /// Set by the host each step: FLUDD water stuck to the ground is near Mario's feet
     /// (`TModelWaterManager::askHitWaterParticleOnGround`, [`crate::water::WaterManager::on_ground_near`]).
     pub water_underfoot: bool,
@@ -419,6 +425,7 @@ impl Mario {
             fludd_emitting: false,
             hover_target_y: pos.y,
             in_water: false,
+            was_full: true,
             water_underfoot: false,
             wet_ground: false,
             last_pound_drop: 0.0,
@@ -450,6 +457,20 @@ impl Mario {
 
     pub fn has_fludd(&self) -> bool {
         self.fludd.is_some()
+    }
+
+    /// Fills FLUDD's tank (`TWaterGun::resetWaterToFull`), as a host's own refill (a new level,
+    /// a button); the HUD's full-tank chime plays if it wasn't full.
+    pub fn refill_water(&mut self) {
+        let p = self.params.clone();
+        if let Some(f) = self.fludd.as_mut() {
+            f.refill(&p);
+        }
+    }
+
+    /// Standing in shallow water ([`Host::water_level`] above his feet).
+    pub fn in_water(&self) -> bool {
+        self.in_water
     }
 
     /// Current floor height under Mario (`mFloorPosition.y`).
@@ -497,6 +518,7 @@ impl Mario {
         self.state_machine(host);
         self.check_take(host);
         self.state_machine_upper(pad);
+        self.think_water_surface(host);
         self.think_height(host);
         self.think_params();
         self.gun_exec(host, pad);
@@ -549,6 +571,14 @@ impl Mario {
             self.spin_voice_due = true;
             self.spin_ticks = 0;
         }
+    }
+
+    /// `thinkWaterSurface` (MarioMove.cpp), the pool half: Mario is in shallow water while a
+    /// pool's surface is above his feet. No swimming: deeper water is still wading.
+    fn think_water_surface(&mut self, host: &mut dyn Host) {
+        self.in_water = host
+            .water_level(self.pos)
+            .is_some_and(|level| level > self.pos.y);
     }
 
     /// `checkPlayerAction`: controller, stick history, ground/roof/wall probes.

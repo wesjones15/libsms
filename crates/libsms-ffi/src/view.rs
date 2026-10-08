@@ -20,6 +20,10 @@
 //! pound's flames): [`sms_view_fx_batches`] are runs of quads in [`sms_view_fx_vertices`], each
 //! over one of the textures counted in [`sms_view_fx_info`] ([`sms_view_fx_texture`]; a
 //! texture whose [`sms_view_fx_texture_version`] changed has new pixels).
+//!
+//! FLUDD's water gauge (`libsms_present::hud`, the HUD's tank) is one RGBA image
+//! ([`sms_view_hud_pixels`]) placed on the game's 600x480 screen as [`sms_view_hud_info`] says;
+//! its `version` changes when the picture does.
 
 use std::ffi::{CString, c_char};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -172,6 +176,24 @@ pub struct SmsFxInfo {
     pub batches: u32,
     pub vertices: u32,
     pub textures: u32,
+}
+
+/// FLUDD's water gauge this frame.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SmsHudInfo {
+    /// Its top-left on the game's screen, `screen_w` by `screen_h` (bottom right in the game).
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+    pub screen_w: u32,
+    pub screen_h: u32,
+    /// Changes whenever the pixels do.
+    pub version: u32,
+    /// 1 when the game would show it (Mario has FLUDD).
+    pub shown: u8,
+    pub _pad: [u8; 3],
 }
 
 /// An opaque view handle.
@@ -865,6 +887,58 @@ pub unsafe extern "C" fn sms_view_fx_texture(
                 return 0;
             }
             std::ptr::copy_nonoverlapping(t.rgba.as_ptr(), rgba, t.rgba.len());
+            1
+        })
+    }
+}
+
+/// FLUDD's water gauge as of the last [`sms_view_update`]. Returns 0 (and leaves `out`) without
+/// the HUD's files in the assets.
+///
+/// # Safety
+/// `view` from [`sms_view_new`]; `out` writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_hud_info(view: *mut SmsView, out: *mut SmsHudInfo) -> u8 {
+    // SAFETY: as documented.
+    unsafe {
+        with_view(view, 0, |v| {
+            let (Some(out), Some(hud)) = (out.as_mut(), v.view.hud.as_ref()) else {
+                return 0;
+            };
+            *out = SmsHudInfo {
+                x: hud.origin[0],
+                y: hud.origin[1],
+                width: hud.image.width,
+                height: hud.image.height,
+                screen_w: libsms_present::hud::SCREEN[0] as u32,
+                screen_h: libsms_present::hud::SCREEN[1] as u32,
+                version: hud.version,
+                shown: v.view.hud_shown as u8,
+                _pad: [0; 3],
+            };
+            1
+        })
+    }
+}
+
+/// Copies the gauge's pixels (RGBA, straight alpha, top row first, `width * height * 4`
+/// bytes) to `rgba`. Returns 0 if `len` is short or there is no gauge.
+///
+/// # Safety
+/// `view` from [`sms_view_new`]; `rgba` writable for `len` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_hud_pixels(view: *mut SmsView, rgba: *mut u8, len: u32) -> u8 {
+    // SAFETY: as documented.
+    unsafe {
+        with_view(view, 0, |v| {
+            let Some(hud) = v.view.hud.as_ref() else {
+                return 0;
+            };
+            let px = &hud.image.rgba;
+            if rgba.is_null() || px.len() > len as usize {
+                return 0;
+            }
+            std::ptr::copy_nonoverlapping(px.as_ptr(), rgba, px.len());
             1
         })
     }

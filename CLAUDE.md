@@ -20,8 +20,9 @@ This folder is the repo root. Sibling folders are read-only references:
   from every stage archive, `params_npc/` the NPC tuning (`params.szs:npc/`), `scene/mapobj/fruit*`
   the fruit models and `scene/mapobj/eggyoshi*` Yoshi's egg (stage archives), `yoshi/` Yoshi
   (`yoshi.szs`), `enemy/hamukuri*` the Strollin' Stu and `scene/mapobj/coin*` the coins (stage
-  archives), `params_enemy/` the enemies' tuning (`params.szs:enemy/`) and `particle/` the
-  common particle effects (`particle.szs`, `.jpa`). Never commit it. Hosts call `Assets::discover_or_extract`, which finds a
+  archives), `params_enemy/` the enemies' tuning (`params.szs:enemy/`), `particle/` the
+  common particle effects (`particle.szs`, `.jpa`) and `game_6/` the HUD's layout and pictures
+  (`game_6_en.szs` on PAL, `game_6.szs` elsewhere). Never commit it. Hosts call `Assets::discover_or_extract`, which finds a
   complete folder or extracts from the disc (`SMS_DISC`, or an image in the given folders) on first
   run, and redoes an older partial one. The older copy at `../extracted/sms` is not used.
 - `../libpikmin/`: the pattern to follow (Host trait, fixed step, events, disc-parsed params).
@@ -29,7 +30,7 @@ This folder is the repo root. Sibling folders are read-only references:
 Workspace:
 - `crates/libsms/`: the sim. No Elden Ring or libsm64 types.
 - `crates/libsms-assets/`: readers for drawing (J3D `.bmd` models incl. MAT3/TEV materials, GX
-  textures, `.btp` patterns, skinning, which hand models each clip uses). Like libpikmin-assets.
+  textures, `.btp` patterns, `.blo` screens, skinning, which hand models each clip uses). Like libpikmin-assets.
 - `crates/viewer/`: sample host. Draws the disc's Mario (body, hands, cap, FLUDD + nozzle) with a
   GLSL TEV interpreter on raw miniquad pipelines (`j3d.rs`). `SMS_SHOT=<png>` (+`SMS_SHOT_FRAME`,
   `SMS_CAM=yaw,pitch,dist`, `SMS_HIDE=body,cap,hands,fludd,nozzle`) takes a screenshot and quits;
@@ -53,9 +54,11 @@ Workspace:
   light with no specular: Mario's materials light themselves in TEV with a toon ramp read at
   the lit colour (`GX_TG_SRTG`) plus a highlight; env-only materials bake over the env map's
   space), `particles` (the disc's `.jpa` effects run as JParticle runs them and handed out as
-  quads: the super ground pound's flames) and `audio` (the viewer's old `sound.rs`: the game's
+  quads: the super ground pound's flames), `hud` (FLUDD's water gauge drawn as `TGCConsole2`
+  draws it into one RGBA image) and `audio` (the viewer's old `sound.rs`: the game's
   sounds on cpal, music optional).
-  `cargo run -p libsms-present --example bakes -- <dir>` writes every bake to PNG.
+  `cargo run -p libsms-present --example bakes -- <dir>` writes every bake to PNG; `--example hud
+  -- out.png` draws the water gauge at a few levels.
 - `crates/libsms-ffi/`: C ABI (`sms.dll`): `SmsHost` callbacks (ground/roof/walls/events/enemies),
   `sms_sim_new/step/state/teleport/free`, and `sms_view_*` (models, bakes, per-frame draws;
   its structs match libpikmin's `pik_view_*` so `../ror2-common/` serves both). Pads may carry
@@ -63,11 +66,12 @@ Workspace:
   (`libsms::water`, through the same callbacks; its enemy hits come back as `WaterHit` events)
   and takes host tuning (`sms_sim_set_tuning`: jump height, A buffer, chain grace, move speed,
   spray reach, solid enemies, nozzle cycling, stomp bounce, rocket height, pound jump, stomp jump,
-  short hop;
-  `Options`). `SmsState::pounding` says when to draw the super pound's flames; a `GroundPound`
+  short hop, unlimited water; `Options`), `sms_sim_refill` and an optional `water` callback
+  (shallow water's surface, `Host::water_level`). `SmsState::pounding` says when to draw the super pound's flames; a `GroundPound`
   event's value is the drop. Each step the FFI tells Mario about water on the ground for the
   wet belly slide; the view builds the water's quads
-  (`libsms_present::water`, `sms_view_water_*`) and the particles' (`sms_view_fx_*`). Bump `SMS_ABI_VERSION` on any layout change
+  (`libsms_present::water`, `sms_view_water_*`), the particles' (`sms_view_fx_*`) and the
+  water gauge's image (`sms_view_hud_*`). Bump `SMS_ABI_VERSION` on any layout change
   and keep `sms_struct_sizes`' test in step; `../ror2-mario/MarioTest/Native.cs` mirrors it.
 - `crates/libsms-audio/`: device-independent PCM engine (`Engine`), JAI game layer
   (`SoundSystem`) and `.bas` cue playback (`animation::AnimationPlayer`).
@@ -107,7 +111,8 @@ Workspace:
 
 ## Status
 Ported and tested: disc-file loading (`prm`, `bck`, rig `JNT1`/`INF1`), input, collision contract, ground movement, slipping, the jump family and the
-double/triple chain, dive/belly slide, ground pound, wall slide/kick, bump knock-downs, FLUDD tank,
+double/triple chain, dive/belly slide, ground pound, wall slide/kick, bump knock-downs, FLUDD tank
+(refilled from shallow water; the HUD gauge),
 Spray/Hover/Rocket/Turbo, crouch, nozzle swap, FLUDD/nozzle/pumping-arm animation and sound cues,
 water particles, ledge grab/hanging/shimmy/climb, grabbing/carrying/putting/throwing,
 Yoshi's egg, riding, flutter, tongue and juice, damage, health and coins, stomping and

@@ -22,6 +22,7 @@ use libsms_assets::btp::TexPattern;
 use libsms_assets::mario::{BODY_HAND_SHAPES, HIDDEN_SHAPE, Hands, SHIRT_SHAPE, hands_for_clip};
 use libsms_assets::{Batch, Bmd, Pose, paths};
 
+use crate::hud::{Gauge, Hud};
 use crate::particles::Particles;
 use crate::tev::{Baked, C4, Inputs, Source, Tex, env_uv};
 
@@ -130,6 +131,12 @@ pub struct View {
     center: Option<usize>,
     /// The game's particle effects on Mario: the super ground pound's flames.
     pub fx: Particles,
+    /// FLUDD's water gauge (the HUD's tank), redrawn as the tank changes; None without the
+    /// HUD's files. `hud_shown` says whether to show it this frame (Mario has FLUDD).
+    pub hud: Option<Hud>,
+    pub hud_shown: bool,
+    /// The sim tick the gauge last stepped at, for its 30 Hz flash.
+    hud_tick: u64,
     /// Wearing the Shine Shirt (off at the start of the game).
     pub shirt: bool,
     time: f32,
@@ -443,6 +450,9 @@ impl View {
             chest: b.joint("jnt_chest"),
             center: b.joint("center"),
             fx: Particles::load(dir, &SUPER_POUND_FLAMES),
+            hud: Hud::load(dir).ok(),
+            hud_shown: false,
+            hud_tick: 0,
             models: list,
             textures,
             skeleton,
@@ -623,6 +633,15 @@ impl View {
         }
         self.fx.advance(m.ticks);
         self.fx.build(self.right, self.up);
+
+        // The water gauge, stepped once a game frame (4 ticks).
+        let gauge = Gauge::of(m);
+        self.hud_shown = gauge.is_some() && self.hud.is_some();
+        if let (Some(hud), Some(g)) = (self.hud.as_mut(), gauge) {
+            let frames = (m.ticks / 4).saturating_sub(self.hud_tick / 4) as u32;
+            hud.update(&g, frames);
+        }
+        self.hud_tick = m.ticks;
 
         // (model, its root in Mario's model space, its joints)
         let mut parts: Vec<(u32, Mat4, Vec<Mat4>)> =

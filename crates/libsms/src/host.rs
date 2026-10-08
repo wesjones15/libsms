@@ -167,6 +167,13 @@ pub trait Host {
     fn take_enemy(&mut self, _id: u64) -> bool {
         false
     }
+
+    /// The surface of shallow water Mario stands in at `pos`, if any: a pool's level over its
+    /// floor (`TPoolManager::getWaterLevel`, read by `thinkWaterSurface` when the ground is a
+    /// pool). Mario is in the water while it's above his feet; FLUDD then sucks it up.
+    fn water_level(&self, _pos: Vec3) -> Option<f32> {
+        None
+    }
 }
 
 /// Infinite flat floor at y = 0, no ceiling, optionally one infinite wall plane. For tests.
@@ -177,6 +184,8 @@ pub struct FlatHost {
     pub wall_x: Option<(f32, f32)>,
     /// Ceiling height, if any.
     pub ceiling: Option<f32>,
+    /// A pool's surface over the whole floor, if any.
+    pub water: Option<f32>,
 }
 
 impl Host for FlatHost {
@@ -193,6 +202,10 @@ impl Host for FlatHost {
             height: c,
             flags: SurfaceFlags::NONE,
         })
+    }
+
+    fn water_level(&self, _pos: Vec3) -> Option<f32> {
+        self.water
     }
 
     fn walls(&self, center: Vec3, radius: f32, _max: usize, out: &mut Vec<WallHit>) -> Vec3 {
