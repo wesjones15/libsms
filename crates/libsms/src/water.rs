@@ -219,6 +219,24 @@ impl WaterManager {
     }
 
     /// `TModelWaterManager::move`: one frame.
+    /// `askHitWaterParticleOnGround`: a particle stuck to the ground within 300 of `pos`
+    /// (summed over the axes). Feeds [`crate::Mario::water_underfoot`].
+    pub fn on_ground_near(&self, pos: Vec3) -> bool {
+        self.particles.iter().any(|p| {
+            let d = (p.pos - pos).abs();
+            p.state == State::Ground && d.x + d.y + d.z < 300.0
+        })
+    }
+
+    /// Host effect for a belly slide over water (the game's `frontSlipEffect` water spray,
+    /// `MS_M_WATSLIDE_*`, which isn't ported): splashes thrown off either side of `pos`.
+    pub fn slide_splashes(&mut self, pos: Vec3) {
+        for _ in 0..2 {
+            let off = Vec3::new(self.rand() * 120.0 - 60.0, 10.0, self.rand() * 120.0 - 60.0);
+            self.events.push(WaterEvent::Splash(pos + off));
+        }
+    }
+
     pub fn step(&mut self, host: &dyn Host, mario: Vec3) {
         self.hit_enemies(host);
         // Fly, slide, fall; cap horizontal speed at the particle's size.

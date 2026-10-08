@@ -78,7 +78,11 @@ impl SceneAudio {
             }
         }
         let mut yoshi_tables = HashMap::new();
-        for entry in std::fs::read_dir(dir.join("yoshi/bas")).into_iter().flatten().flatten() {
+        for entry in std::fs::read_dir(dir.join("yoshi/bas"))
+            .into_iter()
+            .flatten()
+            .flatten()
+        {
             let path = entry.path();
             let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
                 continue;
@@ -153,7 +157,13 @@ impl SceneAudio {
         let shown = mario.yoshi_look().is_some();
         let pos = if mario.on_yoshi() { mario.pos } else { y.pos };
         let clips = [
-            shown.then(|| (libsms::yoshi::CLIPS[y.clip as usize], y.ctrl.frame, y.ctrl.rate)),
+            shown.then(|| {
+                (
+                    libsms::yoshi::CLIPS[y.clip as usize],
+                    y.ctrl.frame,
+                    y.ctrl.rate,
+                )
+            }),
             y.eat
                 .filter(|_| shown)
                 .map(|(c, f)| (libsms::yoshi::CLIPS[c as usize], f.frame, f.rate)),
@@ -491,6 +501,51 @@ mod tests {
                 peak = peak.max(buffer.iter().map(|v| v.abs()).fold(0.0, f32::max));
             }
             assert!(peak > 0.001, "silent {kind:?} voice: {peak}");
+        }
+    }
+
+    #[test]
+    fn pound_spin_and_turbo_sounds_are_audible() {
+        let Some((assets, _)) = fixture() else {
+            return;
+        };
+        let data = Arc::new(SoundData::load(&assets.dir).unwrap());
+        let mario = Mario::new(assets.params, assets.anim_table, Vec3::ZERO, 0);
+        let cue = |name, info| {
+            Event::Sound(SoundCue {
+                name,
+                pos: Vec3::ZERO,
+                info,
+            })
+        };
+        let cases = [
+            (
+                "ground pound",
+                Event::GroundPound {
+                    super_: true,
+                    drop: 900.0,
+                },
+            ),
+            ("spin voice", cue("MSD_SE_MV24_JUMP_SPECIAL_01", None)),
+            ("spin whoosh", cue("MSD_SE_MA_ROLL_JUMP", None)),
+            ("turbo jet", cue("MSD_SE_PO_WATER_HI", Some(1.0))),
+        ];
+        for (what, event) in cases {
+            let mut sys = SoundSystem::new(data.clone());
+            sys.set_listener(Mat4::IDENTITY, Vec3::ZERO);
+            let mut scene = SceneAudio::load(&assets.dir, &sys);
+            let mut peak = 0.0f32;
+            let mut buffer = [0.0; 1600];
+            for i in 0..30 {
+                // Held sounds (the jet) are re-requested every frame.
+                if i == 0 || what == "turbo jet" {
+                    scene.events(&mut sys, &[event], &mario);
+                }
+                sys.frame();
+                sys.render(&mut buffer, 24000.0);
+                peak = peak.max(buffer.iter().map(|v| v.abs()).fold(0.0, f32::max));
+            }
+            assert!(peak > 0.001, "silent {what}: {peak}");
         }
     }
 

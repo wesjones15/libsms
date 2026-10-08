@@ -158,9 +158,7 @@ impl YoshiModel {
     fn pose(&self, look: &YoshiLook) -> Vec<Mat4> {
         let b = &self.body.model.bmd;
         let clip = self.clips.get(look.clip);
-        let walk = look
-            .blend
-            .and_then(|(c, w)| Some((self.clips.get(c)?, w)));
+        let walk = look.blend.and_then(|(c, w)| Some((self.clips.get(c)?, w)));
         let eat = look.eat.and_then(|(c, f)| Some((self.clips.get(c)?, f)));
         let mut eating = vec![false; b.joints.len()];
         for (j, jt) in b.joints.iter().enumerate() {
@@ -250,16 +248,40 @@ impl YoshiModel {
                 for (part, &j) in self.hands.iter_mut().zip(&HAND_JOINTS) {
                     if let Some(&at) = body_pose.joints.get(j) {
                         let pose = Pose::new(&part.model.bmd, at, &part.bind);
-                        r.draw(&mut part.model, &pose, view, proj, &lights, &hand_look, pass);
+                        r.draw(
+                            &mut part.model,
+                            &pose,
+                            view,
+                            proj,
+                            &lights,
+                            &hand_look,
+                            pass,
+                        );
                     }
                 }
             }
             if let (Some((t, tip)), Some((joints, tip_at))) = (self.tongue.as_mut(), &tongue) {
                 let scene = Mat4::from_scale(Vec3::splat(S));
                 let pose = Pose::new(&t.model.bmd, scene, joints);
-                r.draw(&mut t.model, &pose, view, proj, &lights, &Look::default(), pass);
+                r.draw(
+                    &mut t.model,
+                    &pose,
+                    view,
+                    proj,
+                    &lights,
+                    &Look::default(),
+                    pass,
+                );
                 let pose = Pose::new(&tip.model.bmd, scene * *tip_at, &tip.bind);
-                r.draw(&mut tip.model, &pose, view, proj, &lights, &Look::default(), pass);
+                r.draw(
+                    &mut tip.model,
+                    &pose,
+                    view,
+                    proj,
+                    &lights,
+                    &Look::default(),
+                    pass,
+                );
             }
         }
         self.mouth
@@ -299,7 +321,15 @@ impl YoshiModel {
         });
         for pass in [Pass::Opaque, Pass::Translucent] {
             let r = &mut self.renderer;
-            r.draw(&mut part.model, &pose, view, proj, &lights, &Look::default(), pass);
+            r.draw(
+                &mut part.model,
+                &pose,
+                view,
+                proj,
+                &lights,
+                &Look::default(),
+                pass,
+            );
             if let Some((pose, l)) = &bubble {
                 r.draw(&mut e.bubble.model, pose, view, proj, &lights, l, pass);
             }
@@ -339,4 +369,3 @@ fn tongue_arc(t: &Part, start: Vec3, head_dir: Vec3, end: Vec3) -> (Vec<Mat4>, M
     let tip = Mat4::from_cols(x.extend(0.0), Vec4::Y, d.extend(0.0), end.extend(1.0));
     (out, tip)
 }
-

@@ -441,8 +441,17 @@ impl Mario {
 
         let slip_friction = if self.on_yoshi() && self.slip_set() == SlipSet::Normal {
             self.params.slip_yoshi.slip_friction
+        } else if self.slip_set() == SlipSet::Normal && self.status == Status::Catch {
+            // A belly slide over FLUDD's water glides (`mWasOnWaterSlip`), and in water drags
+            // (`mInWaterSlip`).
+            if self.in_water {
+                self.params.mario.in_water_slip
+            } else if self.status_state == 1 {
+                self.params.mario.was_on_water_slip
+            } else {
+                self.params.slip_normal.slip_friction
+            }
         } else {
-            // wet-ground slipping while belly-sliding is not modelled (needs water state)
             self.slip_params().slip_friction
         };
         let stick = self.intended_mag * 0.03125;

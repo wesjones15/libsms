@@ -1599,3 +1599,192 @@ fn move_speed_option_covers_more_ground() {
     let (one, fast) = (run(1.0), run(1.5));
     assert!((fast / one - 1.5).abs() < 0.05, "{one} -> {fast}");
 }
+
+/// Pounds from `height` above the floor; returns the landing's `(super_, drop)` and whether
+/// Mario fell in flames ([`Mario::pounding`] 2) on the way.
+fn pound_from(s: &mut Scene<FlatHost>, height: f32) -> (bool, f32, bool) {
+    s.sim.mario.pos = Vec3::new(0.0, height, 0.0);
+    s.step(2);
+    s.pad.l = true;
+    s.step(1);
+    s.pad.l = false;
+    assert_eq!(s.mario().status, Status::HipDrop);
+    let mut flames = false;
+    for _ in 0..3000 {
+        flames |= s.mario().pounding() == 2;
+        if s.mario().status == Status::HipAttackEnd {
+            break;
+        }
+        s.step(1);
+    }
+    assert_eq!(s.mario().status, Status::HipAttackEnd);
+    let (super_, drop) = s
+        .host
+        .events
+        .iter()
+        .rev()
+        .find_map(|e| match e {
+            Event::GroundPound { super_, drop } => Some((*super_, *drop)),
+            _ => None,
+        })
+        .expect("no ground pound event");
+    (super_, drop, flames)
+}
+
+#[test]
+fn a_long_ground_pound_turns_super_and_reports_its_drop() {
+    let (low, high) = (
+        pound_from(&mut Scene::flat(), 300.0),
+        pound_from(&mut Scene::flat(), 3000.0),
+    );
+    println!("pound from 300: {low:?}, from 3000: {high:?}");
+    assert!(!low.0 && !low.2, "{low:?}");
+    assert!(high.0 && high.2, "{high:?}");
+    // The wind-up lifts Mario a little before the fall.
+    assert!((300.0..450.0).contains(&low.1), "{low:?}");
+    assert!((3000.0..3150.0).contains(&high.1), "{high:?}");
+}
+
+/// Apex above the floor of the jump out of a pound from `height`.
+fn pound_jump_apex(height: f32, share: f32) -> Option<f32> {
+    let mut s = Scene::flat();
+    s.sim.mario.options.pound_jump = share;
+    pound_from(&mut s, height);
+    s.press_a();
+    if s.mario().status != Status::UltraJump {
+        return None;
+    }
+    let mut apex = 0.0f32;
+    while s.mario().vel.y > 0.0 || s.mario().pos.y > apex {
+        apex = apex.max(s.mario().pos.y);
+        s.step(1);
+    }
+    Some(apex)
+}
+
+#[test]
+fn pound_jump_climbs_back_a_share_of_the_fall() {
+    assert_eq!(pound_jump_apex(3000.0, 0.0), None, "the game ignores A");
+    let high = pound_jump_apex(3000.0, 0.75).unwrap();
+    let low = pound_jump_apex(300.0, 0.75).unwrap();
+    println!("pound jump apex: from 3000 {high:.0}, from 300 {low:.0}");
+    assert!((0.7 * 3000.0..0.85 * 3000.0).contains(&high), "{high}");
+    // Never lower than a triple jump (about 800).
+    assert!(low > 700.0, "{low}");
+}
+
+/// How A meets the first stomp.
+#[derive(Debug, Clone, Copy)]
+enum StompA {
+    /// Held since the jump: no fresh press (the game's full bounce).
+    Held,
+    /// Let go before, never pressed again (the game cuts the bounce short).
+    Never,
+    /// Pressed just before landing on the enemy, and held.
+    Early,
+    /// Let go before, pressed this many ticks into the bounce, and held.
+    Late(u32),
+}
+
+/// The first stomp's rise above where the bounce began.
+fn stomp_rise_with_a(a: StompA) -> f32 {
+    let mut s = Scene::new(Enemies(vec![(Vec3::ZERO, 60.0, 100.0)]));
+    s.sim.mario.options.stomp_jump = 2.0;
+    s.pad.a = true;
+    s.step(1);
+    s.pad.a = matches!(a, StompA::Held);
+    for _ in 0..600 {
+        let m = s.mario();
+        if m.status == Status::Trample {
+            break;
+        }
+        // About 8 ticks from the enemy's top (100).
+        if matches!(a, StompA::Early) && m.vel.y < 0.0 && m.pos.y - 100.0 < -m.vel.y * 0.25 * 8.0 {
+            s.pad.a = true;
+        }
+        s.step(1);
+    }
+    assert!(s.mario().status == Status::Trample && s.mario().vel.y > 0.0);
+    let from = s.mario().pos.y;
+    let mut apex = from;
+    let mut t = 0;
+    while s.mario().vel.y > 0.0 {
+        if let StompA::Late(n) = a
+            && t >= n
+        {
+            s.pad.a = true;
+        }
+        s.step(1);
+        t += 1;
+        apex = apex.max(s.mario().pos.y);
+    }
+    apex - from
+}
+
+#[test]
+fn a_well_timed_a_on_a_stomp_bounces_higher() {
+    let rise = |a| (a, stomp_rise_with_a(a));
+    let [held, never, early, late, too_late] = [
+        StompA::Held,
+        StompA::Never,
+        StompA::Early,
+        StompA::Late(3),
+        StompA::Late(40),
+    ]
+    .map(rise);
+    println!("stomp rises: {held:?} {never:?} {early:?} {late:?} {too_late:?}");
+    let base = held.1;
+    assert!(never.1 < base, "letting go cuts the bounce: {never:?}");
+    assert!(early.1 > 1.7 * base, "{early:?} vs {base}");
+    assert!(late.1 > 1.7 * base, "{late:?} vs {base}");
+    assert!(too_late.1 < 1.2 * base, "{too_late:?} vs {base}");
+}
+
+/// How far a belly slide carries Mario from where it starts.
+fn belly_slide_length(wet: bool) -> f32 {
+    let mut s = Scene::flat();
+    s.run_forward();
+    s.secs(1.0);
+    s.press_a();
+    s.step(10);
+    s.pad.b = true;
+    s.step(1);
+    s.pad.b = false;
+    s.pad.stick = Vec2::ZERO;
+    assert!(s.until(600, |m| m.status == Status::Catch));
+    let from = s.mario().pos;
+    s.sim.mario.water_underfoot = wet;
+    assert!(s.until(4000, |m| m.status != Status::Catch));
+    (s.mario().pos - from).length()
+}
+
+#[test]
+fn a_belly_slide_over_fludd_water_glides() {
+    let (dry, wet) = (belly_slide_length(false), belly_slide_length(true));
+    println!("belly slide: dry {dry:.0}, wet {wet:.0}");
+    assert!(wet > 1.6 * dry, "{dry} {wet}");
+}
+
+#[test]
+fn a_spin_jump_calls_out_and_whooshes() {
+    let mut s = Scene::flat();
+    // Two quick turns of the stick, then A.
+    for i in 0..24 {
+        let a = i as f32 * std::f32::consts::TAU / 12.0;
+        s.pad.stick = Vec2::new(a.cos(), a.sin());
+        s.step(1);
+    }
+    s.press_a();
+    assert!(
+        matches!(
+            s.mario().status,
+            Status::LeftRotateJump | Status::RightRotateJump
+        ),
+        "{:?}",
+        s.mario().status
+    );
+    s.step(20);
+    let cue = |name: &str| s.event_count(|e| matches!(e, Event::Sound(c) if c.name == name));
+    assert_eq!(cue("MSD_SE_MV24_JUMP_SPECIAL_01"), 1);
+    assert_eq!(cue("MSD_SE_MA_ROLL_JUMP"), 1);
+}

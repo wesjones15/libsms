@@ -11,8 +11,10 @@ pub enum Event {
     /// Mario touched down. `strong` = fell far/fast enough for the heavy landing effect
     /// (`askStrongGroundTouch`).
     Land { strong: bool },
-    /// Ground pound hit the floor (`hipAttacking`). `super_` after the long wind-up.
-    GroundPound { super_: bool },
+    /// Ground pound hit the floor (`hipAttacking`). `super_`: it fell for longer than
+    /// `mSuperHipAttackCt` ticks and came down faster (the game's flaming super pound). `drop`:
+    /// units fallen, from the top of the wind-up (`unk104`) to the floor.
+    GroundPound { super_: bool, drop: f32 },
     /// Hit a wall hard enough to bounce off (`playerRefrection`).
     WallBump,
     /// FLUDD fired water. The host spawns/simulates the water particles and applies damage;

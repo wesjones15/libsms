@@ -359,7 +359,9 @@ impl Host for World {
         match e {
             Event::Jump(k) => self.note(format!("jump: {k:?}")),
             Event::Land { strong: true } => self.note("hard landing".into()),
-            Event::GroundPound { super_ } => self.note(format!("ground pound (super: {super_})")),
+            Event::GroundPound { super_, drop } => {
+                self.note(format!("ground pound (super: {super_}, fell {drop:.0})"))
+            }
             Event::WallBump => self.note("wall bump".into()),
             Event::TriggerFired(n) => self.note(format!("{n:?} fired")),
             Event::NozzleChanged(n) => self.note(format!("nozzle: {n:?}")),
@@ -1064,6 +1066,7 @@ async fn main() {
 
         // Simulate. Water events are drained into droplets right after each frame's ticks.
         let t0 = std::time::Instant::now();
+        sim.mario.water_underfoot = water.on_ground_near(sim.mario.pos);
         let ticks = sim.advance_observed(&mut world, &pad, camera_yaw, dt, |mario, world| {
             world.tick_fruits();
             world.tick_stus();
@@ -1097,6 +1100,9 @@ async fn main() {
         while water_ticks >= 4 {
             water_ticks -= 4;
             water.step(&world, sim.mario.pos);
+            if sim.mario.wet_sliding() {
+                water.slide_splashes(sim.mario.pos);
+            }
             if let Some(v) = water_view.as_mut() {
                 v.step(&water.events);
             }

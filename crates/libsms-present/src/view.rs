@@ -329,14 +329,20 @@ impl View {
     /// Loads Mario's models, rig and clips from the extracted `assets/` folder.
     pub fn load(dir: &Path) -> Result<View, String> {
         let assets = libsms::Assets::load(dir);
-        let skeleton = assets
-            .skeleton
-            .clone()
-            .ok_or("no rig (bmd/ma_mdl1.bmd)")?;
+        let skeleton = assets.skeleton.clone().ok_or("no rig (bmd/ma_mdl1.bmd)")?;
         let mut textures = Textures::default();
         let none = |_: usize, _: &str| None;
-        let body = build(load_bmd(dir, paths::BODY)?, &none, models::BODY, &mut textures)?;
-        let body_tex0 = body.bmd.textures.first().map(|t| Tex::new(t.image.clone(), t.wrap_s, t.wrap_t));
+        let body = build(
+            load_bmd(dir, paths::BODY)?,
+            &none,
+            models::BODY,
+            &mut textures,
+        )?;
+        let body_tex0 = body
+            .bmd
+            .textures
+            .first()
+            .map(|t| Tex::new(t.image.clone(), t.wrap_s, t.wrap_t));
         let fludd_bmd = load_bmd(dir, paths::FLUDD_BODY)?;
         let fludd_tex1 = fludd_bmd
             .textures
@@ -346,7 +352,11 @@ impl View {
         // The nozzles ship an 8x8 stand-in for FLUDD's env-map texture; the game points it at
         // FLUDD's own (`SMS_ChangeTextureAll(.., "H_watergun_main_dummy", ..)`, `TWaterGun::init`).
         let fludd_env = |_: usize, name: &str| {
-            if name == "H_watergun_main_dummy" { fludd_tex1.clone() } else { None }
+            if name == "H_watergun_main_dummy" {
+                fludd_tex1.clone()
+            } else {
+                None
+            }
         };
         let mut list = vec![body];
         for (i, rel) in [
@@ -359,7 +369,12 @@ impl View {
         .into_iter()
         .enumerate()
         {
-            list.push(build(load_bmd(dir, rel)?, &body_first, i as u32 + 1, &mut textures)?);
+            list.push(build(
+                load_bmd(dir, rel)?,
+                &body_first,
+                i as u32 + 1,
+                &mut textures,
+            )?);
         }
         list.push(build(fludd_bmd, &none, models::FLUDD, &mut textures)?);
         for (i, rel) in [
@@ -372,12 +387,25 @@ impl View {
         .into_iter()
         .enumerate()
         {
-            list.push(build(load_bmd(dir, rel)?, &fludd_env, models::NOZZLES[i], &mut textures)?);
+            list.push(build(
+                load_bmd(dir, rel)?,
+                &fludd_env,
+                models::NOZZLES[i],
+                &mut textures,
+            )?);
         }
 
         let mut fludd_clips = HashMap::new();
-        for folder in std::fs::read_dir(dir.join("watergun2")).into_iter().flatten().flatten() {
-            for f in std::fs::read_dir(folder.path()).into_iter().flatten().flatten() {
+        for folder in std::fs::read_dir(dir.join("watergun2"))
+            .into_iter()
+            .flatten()
+            .flatten()
+        {
+            for f in std::fs::read_dir(folder.path())
+                .into_iter()
+                .flatten()
+                .flatten()
+            {
                 let path = f.path();
                 if path.extension().and_then(|e| e.to_str()) != Some("bck") {
                     continue;
@@ -467,12 +495,15 @@ impl View {
         let flags = (m.invincible > 0) as u8;
 
         // The body clip, with the pumping arm over the chest while pumping.
-        let upper = m.upper_layer().and_then(|(c, f)| {
-            Some((self.clips.get(c)?, f, self.skeleton.find("jnt_chest")?))
-        });
-        let joints = self
-            .skeleton
-            .pose_layered(self.clips.get(m.anim.clip).map(|c| (c, m.anim.frame_before(back))), upper);
+        let upper = m
+            .upper_layer()
+            .and_then(|(c, f)| Some((self.clips.get(c)?, f, self.skeleton.find("jnt_chest")?)));
+        let joints = self.skeleton.pose_layered(
+            self.clips
+                .get(m.anim.clip)
+                .map(|c| (c, m.anim.frame_before(back))),
+            upper,
+        );
 
         // Blink every few seconds (the game runs `ma_wink_tx` on idle; 30 frames a second).
         if self.time > self.blink_at + 2.0 {
@@ -483,7 +514,8 @@ impl View {
             let frame = (self.time - self.blink_at) * 30.0;
             if frame >= 0.0 {
                 for (i, t) in w.tracks.iter().enumerate() {
-                    if let (Some(&mat), Some(tex)) = (self.eye_materials.get(i), w.tex_no(i, frame)) {
+                    if let (Some(&mat), Some(tex)) = (self.eye_materials.get(i), w.tex_no(i, frame))
+                    {
                         let e = body_inputs.entry(mat).or_default();
                         if (t.tex_map as usize) < 8 {
                             e.tex[t.tex_map as usize] = Some(tex);
@@ -506,10 +538,13 @@ impl View {
         // the nozzle on `nozzle_center` with its own clip and the aiming callbacks.
         let look = m.fludd_look();
         let deg = |a: f32| a * std::f32::consts::PI / 32768.0;
-        let fludd_base = look.and(self.chest).and_then(|c| joints.get(c)).map(|chest| {
-            let lean = chest.x_axis.truncate().normalize_or_zero().y.abs();
-            *chest * Mat4::from_rotation_z(deg(lean * 6144.0 - 6144.0))
-        });
+        let fludd_base = look
+            .and(self.chest)
+            .and_then(|c| joints.get(c))
+            .map(|chest| {
+                let lean = chest.x_axis.truncate().normalize_or_zero().y.abs();
+                *chest * Mat4::from_rotation_z(deg(lean * 6144.0 - 6144.0))
+            });
         let fludd = &self.models[models::FLUDD as usize].bmd;
         let fludd_joints = fludd.pose(
             |j| {
@@ -565,9 +600,14 @@ impl View {
         };
 
         // (model, its root in Mario's model space, its joints)
-        let mut parts: Vec<(u32, Mat4, Vec<Mat4>)> = vec![(models::BODY, Mat4::IDENTITY, joints.clone())];
+        let mut parts: Vec<(u32, Mat4, Vec<Mat4>)> =
+            vec![(models::BODY, Mat4::IDENTITY, joints.clone())];
         if let Some(h) = self.head.and_then(|h| joints.get(h)) {
-            parts.push((models::CAP, *h, self.models[models::CAP as usize].bind.clone()));
+            parts.push((
+                models::CAP,
+                *h,
+                self.models[models::CAP as usize].bind.clone(),
+            ));
         }
         let set = match hands {
             Hands::Open => Some(models::HAND_OPEN),
@@ -689,7 +729,10 @@ mod tests {
             return;
         };
         let cap = shown(&v, models::CAP, 0);
-        assert!(cap[0] > 0.45 && cap[0] > 2.0 * cap[1] && cap[0] > 2.0 * cap[2], "cap {cap:?}");
+        assert!(
+            cap[0] > 0.45 && cap[0] > 2.0 * cap[1] && cap[0] > 2.0 * cap[2],
+            "cap {cap:?}"
+        );
         // The overalls (the body's biggest batch by vertices) are blue somewhere: the body
         // has a batch whose colour is mostly blue.
         let body = &v.models[models::BODY as usize];
@@ -724,10 +767,18 @@ mod tests {
         assert!(kinds.contains(&(models::BODY as u8)), "{kinds:?}");
         assert!(kinds.contains(&(models::CAP as u8)), "{kinds:?}");
         assert!(kinds.contains(&(models::FLUDD as u8)), "{kinds:?}");
-        let total: usize = v.draws.iter().map(|d| v.models[d.model as usize].vertex_count).sum();
+        let total: usize = v
+            .draws
+            .iter()
+            .map(|d| v.models[d.model as usize].vertex_count)
+            .sum();
         assert_eq!(v.positions.len(), total);
         assert_eq!(v.uvs.len(), total);
-        let batches: usize = v.draws.iter().map(|d| v.models[d.model as usize].batches.len()).sum();
+        let batches: usize = v
+            .draws
+            .iter()
+            .map(|d| v.models[d.model as usize].batches.len())
+            .sum();
         assert_eq!(v.colors.len(), batches);
         assert_eq!(v.texture_ids.len(), batches);
         // Mario stands about 160 tall: the body's vertices reach well above his feet.

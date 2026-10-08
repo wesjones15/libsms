@@ -450,8 +450,11 @@ impl Mario {
                 };
                 match self.jump_process(host, 0) {
                     1 => {
+                        let drop = (self.jump_peak_y - self.pos.y).max(0.0);
+                        self.last_pound_drop = drop;
                         host.event(Event::GroundPound {
                             super_: self.status_state == 3,
+                            drop,
                         });
                         self.change_status(Status::HipAttackEnd, 0, false);
                     }

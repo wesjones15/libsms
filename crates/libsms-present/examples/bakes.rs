@@ -33,7 +33,11 @@ fn main() {
         let path = out.join(format!("bake{i:03}.png"));
         std::fs::write(&path, png(t.width, t.height, &t.rgba)).unwrap();
     }
-    println!("{} textures written to {}", v.textures.list.len(), out.display());
+    println!(
+        "{} textures written to {}",
+        v.textures.list.len(),
+        out.display()
+    );
 }
 
 /// A minimal PNG: RGBA8, zlib "stored" blocks (no compression).
@@ -80,7 +84,11 @@ fn crc(d: &[u8]) -> u32 {
     for &b in d {
         c ^= b as u32;
         for _ in 0..8 {
-            c = if c & 1 != 0 { 0xEDB8_8320 ^ (c >> 1) } else { c >> 1 };
+            c = if c & 1 != 0 {
+                0xEDB8_8320 ^ (c >> 1)
+            } else {
+                c >> 1
+            };
         }
     }
     !c
@@ -88,7 +96,17 @@ fn crc(d: &[u8]) -> u32 {
 
 #[allow(dead_code)]
 fn dump(m: &libsms_assets::bmd::Material) {
-    println!("{} chans {:?} mat {:?} amb {:?} konst {:?} regs {:?} swap {:?} gens {:?}", m.name, m.chans, m.mat_colors, m.amb_colors, m.konst, m.tev_colors, m.swap_tables, m.tex_gens);
+    println!(
+        "{} chans {:?} mat {:?} amb {:?} konst {:?} regs {:?} swap {:?} gens {:?}",
+        m.name,
+        m.chans,
+        m.mat_colors,
+        m.amb_colors,
+        m.konst,
+        m.tev_colors,
+        m.swap_tables,
+        m.tex_gens
+    );
     for s in &m.stages {
         println!("  {:?}", s);
     }

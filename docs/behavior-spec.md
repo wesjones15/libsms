@@ -138,7 +138,13 @@ and so the run animation, stay the game's), for a host's speed buffs. `enemy_pus
 multiplies a stomp's (`Trample`) take-off `vel.y` by its square root, on top of `jump_height`.
 `rocket_thrust` multiplies the Rocket nozzle's vertical recoil (`mReactionY`); the apex grows
 about as its 1.9th power (`examples/report.rs`: x1.25 flies 1.52 times as high, x1.5 2.16, x2
-3.76), and `sms_sim_set_tuning` takes a height multiplier and converts.
+3.76), and `sms_sim_set_tuning` takes a height multiplier and converts. `pound_jump`: A during
+`HipAttackEnd` (which the game ignores) takes off as the triple jump (`UltraJump`, never cut short)
+at `max(triple, sqrt(8 g h))`, `h` being that share of the pound's fall: the apex of a take-off at
+`v`, moving `v/4` a tick under `g` a tick, is about `v^2/8g`. `stomp_jump`: an A press within 15
+ticks of a stomp, before it or after, makes its take-off `vel.y` that factor's square root as
+fast; a late press sets the boosted speed less the gravity since (so letting go of A before
+pressing, which cuts the bounce short as the game does, costs nothing).
 
 Air control (`doJumping`): `forward *= mJumpSpeedBrake` (0.999); with the stick, `forward +=
 mag * cos(d) * mJumpAccelControl (0.008)`, sideways `mag * sin(d) * mJumpSlideControl (0.3)`;
@@ -150,7 +156,24 @@ A head-on wall hit at speed > `mClashSpeed` bumps; > 16 reflects and starts a wa
 
 Dive (`JumpCatch`) lands into `Catch` (belly slide), which jumps out (`CatchStop`) or gets up
 (`CatchLost`). Ground pound (`HipDrop`): 60 ticks of hover, then falls at `mHipAttackSpeedY` (-80);
-becomes "super" after `mSuperHipAttackCt` (80) ticks.
+becomes "super" after `mSuperHipAttackCt` (80) ticks, falling at `mSuperHipAttackSpeedY` in flames
+(`emitBlurHipDropSuper`, `MS_M_SPHIPD_A..D`; `Mario::pounding` 2 for hosts to draw), and lands
+with the super hit (`HIT_MESSAGE_SUPER_HIP_DROP`, `MS_M_SPHIPD_HIT_*`). `Event::GroundPound`
+carries the drop from the top of the hover (`unk104`) to the floor.
+
+**Wet belly slide** (`checkCurrentPlane` → `askHitWaterParticleOnGround`, `catching`,
+`doSliding`). Touching ground (`isTouchGround4cm`) within 300 (summed over the axes) of a FLUDD
+particle stuck to the ground sets `MARIO_FLAG_RECENTLY_LEFT_WATER` (misnamed); `catching` then
+sets state 1, and on normal ground `doSliding` uses `mWasOnWaterSlip` (0.97) for the belly
+slide's friction instead of the normal slip's (`mInWaterSlip` 0.9 in water): about twice as far.
+The host feeds `Mario::water_underfoot` from `WaterManager::on_ground_near` each step. The game's
+spray off the slide (`frontSlipEffect`, `MS_M_WATSLIDE_A..C`) isn't ported; hosts throw the
+water's splash sprites instead (`WaterManager::slide_splashes`).
+
+**Spin jump sounds** (`soundMovement`, MarioSound.cpp, every tick off Yoshi): entering a spin jump
+by any route (take-off or `considerJumpRotate` mid-air) starts `MV24_JUMP_SPECIAL` once (on top of
+the take-off's `MV23`), and its 10th tick `MA_ROLL_JUMP`. A stomp starts `MA_KICK_ENEMY`
+(`trampleExec`).
 
 **Ledges** (MarioSpecial.cpp `hanging`/`ascend`/`descend`/`hangJumping`, MarioPhysics.cpp
 `hangonCheck`/`checkDescent`; ported: `hang.rs`). A jump step that touches a wall at waist height
@@ -224,7 +247,9 @@ Slots: 0 Spray (`NozzleDeform.prm`), 1 Rocket, 2 Underwater, 3 Yoshi, 4 Hover, 5
   by trigger pressure) and `PO_WATER_HI` (pitch by output; JALModSe curves), Turbo
   `PO_WATER_HI`, Hover/Underwater `PO_HOVER`, trigger charge `SY_NEWP_AIR_TAME`, Rocket/Turbo
   firing `PO_ROCKET_TRIGGER`/`PO_SNIPER_TRIGGER`, refilling `PO_SUCK_WATER_B`, X
-  `SY_SELECT_POMP(_BACK)`.
+  `SY_SELECT_POMP(_BACK)`. **Not the game:** the game gives Turbo's `PO_WATER_HI` the nozzle's
+  output (`unk378`), which `TNozzleTrigger::movement` never sets, so the jet's pitch curve gates
+  it silent; libsms passes the trigger's pressure (`unk388 / mInsidePressureMax`) while it fires.
 
 **Water particles** (`TModelWaterManager`, ModelWaterManager.cpp; ported: `water.rs`, stepped by
 the host once per 30 Hz frame). 256 slots. `makeEmit` adds the trembles to direction, power and

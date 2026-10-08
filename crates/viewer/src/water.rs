@@ -18,10 +18,10 @@ use std::path::Path;
 use libsms::water::{SLOTS, State, WaterEvent, WaterManager};
 use libsms_assets::texture::read_bti;
 use macroquad::miniquad::{
-    self, BlendFactor, BlendState, BlendValue, BufferLayout, BufferSource, BufferType,
-    BufferUsage, Comparison, Equation, PassAction, Pipeline, PipelineParams, RenderingBackend,
-    ShaderMeta, TextureId, TextureParams, TextureWrap, UniformBlockLayout, UniformDesc,
-    UniformType, UniformsSource, VertexAttribute, VertexFormat,
+    self, BlendFactor, BlendState, BlendValue, BufferLayout, BufferSource, BufferType, BufferUsage,
+    Comparison, Equation, PassAction, Pipeline, PipelineParams, RenderingBackend, ShaderMeta,
+    TextureId, TextureParams, TextureWrap, UniformBlockLayout, UniformDesc, UniformType,
+    UniformsSource, VertexAttribute, VertexFormat,
 };
 use macroquad::prelude::*;
 
@@ -376,8 +376,7 @@ impl WaterView {
                 .into_iter()
                 .zip([(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)])
             {
-                self.scratch
-                    .extend_from_slice(&[v.x, v.y, v.z, uv.0, uv.1]);
+                self.scratch.extend_from_slice(&[v.x, v.y, v.z, uv.0, uv.1]);
             }
         }
         let quads = self.scratch.len() / (4 * FLOATS);
@@ -459,7 +458,12 @@ impl WaterView {
         let tint = match juice {
             1..=3 => {
                 let c = libsms::yoshi::JUICE_COLORS[juice as usize];
-                [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0, 0.75]
+                [
+                    c[0] as f32 / 255.0,
+                    c[1] as f32 / 255.0,
+                    c[2] as f32 / 255.0,
+                    0.75,
+                ]
             }
             _ => [0.60, 0.76, 0.94, 0.35],
         };

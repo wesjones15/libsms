@@ -78,7 +78,14 @@ pub struct Baked {
 impl Baked {
     /// The lowest alpha anywhere, 0..1.
     pub fn min_alpha(&self) -> f32 {
-        self.rgba.as_chunks::<4>().0.iter().map(|p| p[3]).min().unwrap_or(255) as f32 / 255.0
+        self.rgba
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|p| p[3])
+            .min()
+            .unwrap_or(255) as f32
+            / 255.0
     }
 }
 
@@ -89,7 +96,10 @@ pub fn env_uv(nx: f32, ny: f32, mtx: Option<[[f32; 3]; 2]>) -> [f32; 2] {
     match mtx {
         Some(m) => {
             let (x, y) = (0.5 * nx + 0.5, 0.5 - 0.5 * ny);
-            [m[0][0] * x + m[0][1] * y + m[0][2], m[1][0] * x + m[1][1] * y + m[1][2]]
+            [
+                m[0][0] * x + m[0][1] * y + m[0][2],
+                m[1][0] * x + m[1][1] * y + m[1][2],
+            ]
         }
         None => [nx, ny],
     }
@@ -195,7 +205,11 @@ fn combine_color(c: &TevCombiner, a: [f32; 3], b: [f32; 3], cc: [f32; 3], d: [f3
         return std::array::from_fn(|i| {
             let l = a[i] + (b[i] - a[i]) * cc[i];
             let v = (d[i] + if c.op == 1 { -l } else { l } + bias(c.bias)) * scale(c.scale);
-            if c.clamp { v.clamp(0.0, 1.0) } else { v.clamp(-4.0, 4.0) }
+            if c.clamp {
+                v.clamp(0.0, 1.0)
+            } else {
+                v.clamp(-4.0, 4.0)
+            }
         });
     }
     let gr16 = |v: [f32; 3]| b8(v[1]) << 8 | b8(v[0]);
@@ -212,7 +226,11 @@ fn combine_color(c: &TevCombiner, a: [f32; 3], b: [f32; 3], cc: [f32; 3], d: [f3
     match hit {
         Some(h) => std::array::from_fn(|i| (d[i] + if h { cc[i] } else { 0.0 }).clamp(0.0, 1.0)),
         None => std::array::from_fn(|i| {
-            let m = if c.op == 14 { b8(a[i]) > b8(b[i]) } else { b8(a[i]) == b8(b[i]) };
+            let m = if c.op == 14 {
+                b8(a[i]) > b8(b[i])
+            } else {
+                b8(a[i]) == b8(b[i])
+            };
             (d[i] + if m { cc[i] } else { 0.0 }).clamp(0.0, 1.0)
         }),
     }
@@ -223,9 +241,17 @@ fn combine_alpha(c: &TevCombiner, a: f32, b: f32, cc: f32, d: f32) -> f32 {
     if c.op <= 1 {
         let l = a + (b - a) * cc;
         let v = (d + if c.op == 1 { -l } else { l } + bias(c.bias)) * scale(c.scale);
-        return if c.clamp { v.clamp(0.0, 1.0) } else { v.clamp(-4.0, 4.0) };
+        return if c.clamp {
+            v.clamp(0.0, 1.0)
+        } else {
+            v.clamp(-4.0, 4.0)
+        };
     }
-    let hit = if c.op.is_multiple_of(2) { b8(a) > b8(b) } else { b8(a) == b8(b) };
+    let hit = if c.op.is_multiple_of(2) {
+        b8(a) > b8(b)
+    } else {
+        b8(a) == b8(b)
+    };
     (d + if hit { cc } else { 0.0 }).clamp(0.0, 1.0)
 }
 
@@ -261,9 +287,15 @@ enum Read {
     /// No texture: white.
     None,
     /// Texture `tex` over the mesh's first coordinates, through a texture matrix.
-    Uv { tex: usize, mtx: Option<[[f32; 3]; 2]> },
+    Uv {
+        tex: usize,
+        mtx: Option<[[f32; 3]; 2]>,
+    },
     /// An environment map (`GX_TG_NRM`) through a texture matrix.
-    Env { tex: usize, mtx: Option<[[f32; 3]; 2]> },
+    Env {
+        tex: usize,
+        mtx: Option<[[f32; 3]; 2]>,
+    },
     /// A colour channel's red and green as coordinates (`GX_TG_SRTG`): Mario's toon ramps,
     /// read where the channel's baked colour points.
     Srtg { tex: usize, channel: usize },
@@ -289,7 +321,10 @@ impl Source<'_> {
 
     /// A texture read at a colour channel's red and green (`GX_TG_SRTG`).
     fn srtg(&self, mi: usize, tex: usize, channel: usize) -> C4 {
-        let ch = self.channels.get(mi).map_or([1.0; 4], |c| c[channel.min(1)]);
+        let ch = self
+            .channels
+            .get(mi)
+            .map_or([1.0; 4], |c| c[channel.min(1)]);
         self.tex(tex)
             .map_or([1.0; 4], |t| sample(&t.image, t.wrap, ch[0], ch[1]))
     }

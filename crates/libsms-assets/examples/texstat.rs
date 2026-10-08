@@ -8,7 +8,10 @@ fn main() {
         let px = &t.image.rgba;
         let n = (px.len() / 4).max(1);
         let opaque = px.chunks(4).filter(|p| p[3] > 128).count();
-        let sum: u64 = px.chunks(4).map(|p| p[0] as u64 + p[1] as u64 + p[2] as u64).sum();
+        let sum: u64 = px
+            .chunks(4)
+            .map(|p| p[0] as u64 + p[1] as u64 + p[2] as u64)
+            .sum();
         println!(
             "{i} {} fmt {} {}x{} opaque {:.2} mean rgb {:.0} filter {}/{}",
             t.name,

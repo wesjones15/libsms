@@ -205,7 +205,11 @@ impl AnimState {
     /// their first frame, and one that has run to its end stays there.
     pub fn frame_before(&self, ticks: f32) -> f32 {
         let len = self.info.frames;
-        let ticks = if ticks.is_finite() { ticks.max(0.0) } else { 0.0 };
+        let ticks = if ticks.is_finite() {
+            ticks.max(0.0)
+        } else {
+            0.0
+        };
         let f = self.frame - self.rate * 0.5 * ticks;
         match self.info.mode {
             LoopMode::Loop | LoopMode::MirrorLoop if len > 0.0 => f.rem_euclid(len),

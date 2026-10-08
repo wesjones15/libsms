@@ -133,12 +133,25 @@ impl WaterLook {
     /// Builds this frame's quads facing a camera at `eye` with `right` and `up` (sim axes).
     /// `frac` is how far into the next 30 Hz water frame the display is (-1..1; below 0 when
     /// the host draws behind the sim): flying drops are drawn that far along their velocity. `juice` is [`libsms::Mario::juice_color`].
-    pub fn build(&mut self, water: &WaterManager, frac: f32, eye: Vec3, right: Vec3, up: Vec3, juice: u8) {
+    pub fn build(
+        &mut self,
+        water: &WaterManager,
+        frac: f32,
+        eye: Vec3,
+        right: Vec3,
+        up: Vec3,
+        juice: u8,
+    ) {
         self.vertices.clear();
         self.tint = match juice {
             1..=3 => {
                 let c = libsms::yoshi::JUICE_COLORS[juice as usize];
-                [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0, 0.75]
+                [
+                    c[0] as f32 / 255.0,
+                    c[1] as f32 / 255.0,
+                    c[2] as f32 / 255.0,
+                    0.75,
+                ]
             }
             _ => [0.60, 0.76, 0.94, 0.35],
         };
@@ -171,7 +184,12 @@ impl WaterLook {
                             at(-ny, nx),
                         ]
                     } else {
-                        [at(-half, half), at(half, half), at(half, -half), at(-half, -half)]
+                        [
+                            at(-half, half),
+                            at(half, half),
+                            at(half, -half),
+                            at(-half, -half),
+                        ]
                     }
                 }
                 // A flat drop on the surface it clings to.
@@ -204,7 +222,12 @@ impl WaterLook {
             let half = age * 100.0 + 50.0;
             let at = |x: f32, y: f32| s.pos + right * x + up * y;
             push(
-                [at(-half, half), at(half, half), at(half, -half), at(-half, -half)],
+                [
+                    at(-half, half),
+                    at(half, half),
+                    at(half, -half),
+                    at(-half, -half),
+                ],
                 s.life as f32 / 16.0,
                 &mut self.vertices,
             );
@@ -250,7 +273,10 @@ mod tests {
             look.build(&water, 0.5, eye, right, up, 0);
             drawn |= look.drop_quads > 0;
             splashed |= look.splash_quads > 0;
-            assert_eq!(look.vertices.len() as u32, 4 * (look.drop_quads + look.splash_quads));
+            assert_eq!(
+                look.vertices.len() as u32,
+                4 * (look.drop_quads + look.splash_quads)
+            );
         }
         assert!(drawn && splashed, "drawn {drawn} splashed {splashed}");
     }

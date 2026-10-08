@@ -27,7 +27,7 @@ use libsms::{
 use view::SmsView;
 
 /// ABI version, bumped when the C interface changes.
-pub const SMS_ABI_VERSION: u32 = 5;
+pub const SMS_ABI_VERSION: u32 = 6;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sms_abi_version() -> u32 {
@@ -102,7 +102,8 @@ pub struct SmsEvent {
     /// pounds, damage for hits, the enemy's id for enemy and water hits.
     pub arg: i32,
     /// Kind-specific: the sound's info value, health left after a hit, how Mario hit an enemy
-    /// (0 stomp, 1 ground pound, 2 dive or slide), a water particle's attack.
+    /// (0 stomp, 1 ground pound, 2 dive or slide), a water particle's attack, the units a
+    /// ground pound fell.
     pub value: f32,
     /// Where it happened (sounds, water); otherwise zero.
     pub pos: SmsVec3,
@@ -256,6 +257,9 @@ pub struct SmsState {
     pub health: i16,
     pub on_ground: u8,
     pub has_fludd: u8,
+    /// 1 falling in a ground pound, 2 in a super pound (the game draws flames), else 0.
+    pub pounding: u8,
+    pub _pad: [u8; 3],
 }
 
 /// Host tuning that departs from the game on purpose ([`libsms::Options`]); zeroes and ones
@@ -277,6 +281,12 @@ pub struct SmsTuning {
     pub stomp_bounce: f32,
     /// The Rocket nozzle flies about this many times as high (1: the game's).
     pub rocket_height: f32,
+    /// A on a ground pound's landing leaps back up this share of the fall, at least a triple
+    /// jump (0: the game's, no pound jump).
+    pub pound_jump: f32,
+    /// A timed within a few ticks of a stomp makes the bounce this many times as high (0 or 1:
+    /// the game's).
+    pub stomp_jump: f32,
     /// 1: enemies are solid to Mario (`keepDistance`); 0: the game's (most aren't).
     pub enemy_push: u8,
     /// 1: X steps through Spray, Hover, Rocket and Turbo; 0: the game's (Spray and one).
@@ -398,9 +408,10 @@ impl Host for FfiHost<'_> {
                 e.kind = SmsEventKind::Land as u32;
                 e.arg = strong as i32;
             }
-            Event::GroundPound { super_ } => {
+            Event::GroundPound { super_, drop } => {
                 e.kind = SmsEventKind::GroundPound as u32;
                 e.arg = super_ as i32;
+                e.value = drop;
             }
             Event::WallBump => e.kind = SmsEventKind::WallBump as u32,
             Event::WaterEmit(w) => {
@@ -565,6 +576,8 @@ pub unsafe extern "C" fn sms_sim_step(
     let pad = pad.to_pad(camera_yaw);
     let ran = catch_unwind(AssertUnwindSafe(|| {
         let mut h = FfiHost(host, Vec::new());
+        // Water on the ground under Mario makes a belly slide glide.
+        s.sim.mario.water_underfoot = s.water.on_ground_near(s.sim.mario.pos);
         let mut emits: Vec<WaterEmit> = Vec::new();
         let n = s
             .sim
@@ -592,6 +605,9 @@ pub unsafe extern "C" fn sms_sim_step(
         while s.water_ticks >= 4 {
             s.water_ticks -= 4;
             s.water.step(&h, s.sim.mario.pos);
+            if s.sim.mario.wet_sliding() {
+                s.water.slide_splashes(s.sim.mario.pos);
+            }
             water_hits(host, &s.water.events);
             // SAFETY: as above.
             unsafe {
@@ -638,6 +654,8 @@ pub unsafe extern "C" fn sms_sim_state(sim: *const SmsSim, out: *mut SmsState) -
         health: m.health,
         on_ground: m.on_ground() as u8,
         has_fludd: m.fludd.is_some() as u8,
+        pounding: m.pounding(),
+        _pad: [0; 3],
     };
     1
 }
@@ -719,6 +737,16 @@ pub unsafe extern "C" fn sms_sim_set_tuning(sim: *mut SmsSim, tuning: *const Sms
         // The rocket's apex grows about as its lift to the power 1.9 (examples/report.rs:
         // x1.25 lift 1.52 times as high, x1.5 2.16, x2 3.76).
         o.rocket_thrust = factor(t.rocket_height).powf(1.0 / 1.9);
+        o.pound_jump = if t.pound_jump.is_finite() {
+            t.pound_jump.clamp(0.0, 2.0)
+        } else {
+            0.0
+        };
+        o.stomp_jump = if t.stomp_jump.is_finite() {
+            t.stomp_jump.clamp(1.0, 10.0)
+        } else {
+            1.0
+        };
     }
 }
 
@@ -948,7 +976,7 @@ mod tests {
         assert_eq!(
             &sizes[..n],
             &[
-                12, 20, 8, 16, 32, 48, 24, 48, 40, 24, 12, 64, 48, 32, 24, 24, 24
+                12, 20, 8, 16, 32, 48, 24, 52, 40, 24, 12, 64, 48, 40, 24, 24, 24
             ]
         );
     }

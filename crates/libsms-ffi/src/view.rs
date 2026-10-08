@@ -258,7 +258,11 @@ pub unsafe extern "C" fn sms_view_model_count(view: *mut SmsView) -> u32 {
 /// # Safety
 /// `view` from [`sms_view_new`]; `out` writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sms_view_model(view: *mut SmsView, model: u32, out: *mut SmsModelInfo) -> u8 {
+pub unsafe extern "C" fn sms_view_model(
+    view: *mut SmsView,
+    model: u32,
+    out: *mut SmsModelInfo,
+) -> u8 {
     // SAFETY: as documented.
     unsafe {
         with_view(view, 0, |v| {
@@ -283,7 +287,12 @@ pub unsafe extern "C" fn sms_view_model(view: *mut SmsView, model: u32, out: *mu
 /// # Safety
 /// `view` from [`sms_view_new`]; `out` writable for `max`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sms_view_batches(view: *mut SmsView, model: u32, out: *mut SmsBatch, max: u32) -> u32 {
+pub unsafe extern "C" fn sms_view_batches(
+    view: *mut SmsView,
+    model: u32,
+    out: *mut SmsBatch,
+    max: u32,
+) -> u32 {
     // SAFETY: as documented.
     unsafe {
         with_view(view, 0, |v| {
@@ -322,7 +331,12 @@ pub unsafe extern "C" fn sms_view_batches(view: *mut SmsView, model: u32, out: *
 /// # Safety
 /// `view` from [`sms_view_new`]; `out` writable for `max`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sms_view_indices(view: *mut SmsView, model: u32, out: *mut u32, max: u32) -> u32 {
+pub unsafe extern "C" fn sms_view_indices(
+    view: *mut SmsView,
+    model: u32,
+    out: *mut u32,
+    max: u32,
+) -> u32 {
     // SAFETY: as documented.
     unsafe {
         with_view(view, 0, |v| {
@@ -354,7 +368,12 @@ pub unsafe extern "C" fn sms_view_indices(view: *mut SmsView, model: u32, out: *
 /// # Safety
 /// `view` from [`sms_view_new`]; `out` writable for `max` pairs of floats.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sms_view_uvs(view: *mut SmsView, model: u32, out: *mut [f32; 2], max: u32) -> u32 {
+pub unsafe extern "C" fn sms_view_uvs(
+    view: *mut SmsView,
+    model: u32,
+    out: *mut [f32; 2],
+    max: u32,
+) -> u32 {
     // SAFETY: as documented.
     unsafe {
         with_view(view, 0, |v| {
@@ -436,7 +455,11 @@ fn listener_view(eye: Vec3, forward: Vec3, up: Vec3) -> Mat4 {
 /// # Safety
 /// `view` from [`sms_view_new`]; `sim` from `sms_sim_new`; `frame` readable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sms_view_update(view: *mut SmsView, sim: *mut SmsSim, frame: *const SmsViewFrame) {
+pub unsafe extern "C" fn sms_view_update(
+    view: *mut SmsView,
+    sim: *mut SmsSim,
+    frame: *const SmsViewFrame,
+) {
     // SAFETY: as documented.
     let (Some(s), Some(f)) = (unsafe { sim.as_mut() }, unsafe { frame.as_ref() }) else {
         return;
@@ -452,11 +475,16 @@ pub unsafe extern "C" fn sms_view_update(view: *mut SmsView, sim: *mut SmsSim, f
             let right = Vec3::from(f.up).cross(fwd).normalize_or(Vec3::X);
             let up = fwd.cross(right);
             v.view.set_camera(right, up);
-            v.view.lag = if f.lag.is_finite() { f.lag.clamp(0.0, 16.0) } else { 0.0 };
+            v.view.lag = if f.lag.is_finite() {
+                f.lag.clamp(0.0, 16.0)
+            } else {
+                0.0
+            };
             v.view.update(&mut s.sim, f.dt.clamp(0.0, 0.25));
             let frac = (s.water_ticks as f32 + s.sim.alpha() - f.lag) / 4.0;
             let juice = s.sim.mario.juice_color();
-            v.water.build(&s.water, frac, f.eye.into(), right, up, juice);
+            v.water
+                .build(&s.water, frac, f.eye.into(), right, up, juice);
             if let Some(a) = &v.audio {
                 a.set_volume(f.volume);
                 a.set_listener(listener_view(f.eye.into(), fwd, up), f.eye.into());
@@ -577,7 +605,10 @@ pub unsafe extern "C" fn sms_view_texture_ids(view: *mut SmsView, count: *mut u3
 /// # Safety
 /// As [`sms_view_positions`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sms_view_frame_uvs(view: *mut SmsView, count: *mut u32) -> *const [f32; 2] {
+pub unsafe extern "C" fn sms_view_frame_uvs(
+    view: *mut SmsView,
+    count: *mut u32,
+) -> *const [f32; 2] {
     // SAFETY: as above.
     unsafe {
         with_view(view, std::ptr::null(), |v| {
@@ -597,7 +628,10 @@ const _: () = assert!(std::mem::size_of::<SmsVec3>() == std::mem::size_of::<Vec3
 /// # Safety
 /// As [`sms_view_positions`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sms_view_water_vertices(view: *mut SmsView, count: *mut u32) -> *const SmsWaterVertex {
+pub unsafe extern "C" fn sms_view_water_vertices(
+    view: *mut SmsView,
+    count: *mut u32,
+) -> *const SmsWaterVertex {
     // SAFETY: as above; the layouts match (checked below).
     unsafe {
         with_view(view, std::ptr::null(), |v| {

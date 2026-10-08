@@ -187,7 +187,11 @@ impl MarioModel {
             let d = -(view * root.w_axis).z;
             let s = (m.ticks as f32 * 0x888 as f32 * std::f32::consts::PI / 32768.0).sin();
             let at = |base: f32, swing: f32| d + (base + (swing - base) * s) * 0.01;
-            ([1.0, 0.0, 128.0 / 255.0], at(-700.0, -400.0), at(500.0, 800.0))
+            (
+                [1.0, 0.0, 128.0 / 255.0],
+                at(-700.0, -400.0),
+                at(500.0, 800.0),
+            )
         });
         let mut body_look = Look {
             hidden: vec![HIDDEN_SHAPE],

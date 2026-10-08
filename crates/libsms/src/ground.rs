@@ -229,6 +229,11 @@ impl Mario {
             }
             HipAttackEnd => {
                 self.status_state = 1;
+                // Host tuning: A leaps back up (`Options::pound_jump`); the game ignores it.
+                if self.options.pound_jump > 0.0 && self.input.jump {
+                    self.pound_rebound = Some(self.last_pound_drop);
+                    return self.change_status(UltraJump, 0, false);
+                }
                 if self.input.airborne {
                     self.change_status(Landing, 0, false)
                 } else if self.input.slip {
@@ -860,6 +865,10 @@ impl Mario {
                 return self.change_status(Status::RotateBroadJump, 0, false);
             }
             return self.change_status(Status::CatchStop, 0, false);
+        }
+        // FLUDD's water on the ground: the belly slide glides (`do_sliding`).
+        if self.wet_ground {
+            self.status_state = 1;
         }
         let stop = self.slip_params().slide_stop_catch;
         if self.do_sliding(stop) {

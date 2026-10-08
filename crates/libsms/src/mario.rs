@@ -203,7 +203,16 @@ pub struct Options {
     pub stomp_bounce: f32,
     /// The Rocket nozzle's lift (its recoil, `mReactionY`) times this. 1: the game's.
     pub rocket_thrust: f32,
+    /// A on landing from a ground pound leaps (as the triple jump) back up this share of the
+    /// height fallen, never lower than a triple jump. 0: the game's (the landing ignores A).
+    pub pound_jump: f32,
+    /// A pressed within [`STOMP_JUMP_WINDOW`] ticks of a stomp, before or after, makes the
+    /// bounce this many times as high. 1: the game's (A does nothing).
+    pub stomp_jump: f32,
 }
+
+/// Ticks either side of a stomp in which A counts for [`Options::stomp_jump`].
+pub const STOMP_JUMP_WINDOW: u32 = 15;
 
 impl Default for Options {
     fn default() -> Options {
@@ -217,6 +226,8 @@ impl Default for Options {
             move_speed: 1.0,
             stomp_bounce: 1.0,
             rocket_thrust: 1.0,
+            pound_jump: 0.0,
+            stomp_jump: 1.0,
         }
     }
 }
@@ -266,6 +277,10 @@ pub struct Mario {
     pub(crate) jump_peak_y: f32,
     /// Y at take-off, for the hard-landing check (`unk2A8.y`).
     pub(crate) fall_start_y: f32,
+    /// `soundMovement`'s spin jump state: the voice is due on the next spin (`unk04 & 0x10`),
+    /// and ticks spent spinning (`unk22`).
+    spin_voice_due: bool,
+    spin_ticks: u16,
     pub(crate) short_hop: bool,
 
     pub anim: AnimState,
@@ -296,6 +311,19 @@ pub struct Mario {
     pub(crate) fludd_emitting: bool,
     pub(crate) hover_target_y: f32,
     pub(crate) in_water: bool,
+    /// Set by the host each step: FLUDD water stuck to the ground is near Mario's feet
+    /// (`TModelWaterManager::askHitWaterParticleOnGround`, [`crate::water::WaterManager::on_ground_near`]).
+    pub water_underfoot: bool,
+    /// `MARIO_FLAG_RECENTLY_LEFT_WATER` (misnamed): touching that water this tick.
+    pub(crate) wet_ground: bool,
+    /// Units the last ground pound fell, for [`Options::pound_jump`].
+    pub(crate) last_pound_drop: f32,
+    /// A pound jump's drop, consumed by its take-off.
+    pub(crate) pound_rebound: Option<f32>,
+    /// Ticks since A was pressed, and a stomp's late-press window ([`Options::stomp_jump`]):
+    /// ticks since the bounce and the boosted take-off speed.
+    pub(crate) a_age: u32,
+    pub(crate) stomp_late: Option<(u32, f32)>,
     /// `mHealth`, out of `mHPMax`.
     pub health: i16,
     /// `mInvincibilityFrames`: ticks left of the flashing after a hit.
@@ -359,6 +387,8 @@ impl Mario {
             radius: WALL_RADIUS,
             jump_peak_y: pos.y,
             fall_start_y: pos.y,
+            spin_voice_due: true,
+            spin_ticks: 0,
             short_hop: false,
             anim,
             fludd: None,
@@ -382,6 +412,12 @@ impl Mario {
             fludd_emitting: false,
             hover_target_y: pos.y,
             in_water: false,
+            water_underfoot: false,
+            wet_ground: false,
+            last_pound_drop: 0.0,
+            pound_rebound: None,
+            a_age: u32::MAX,
+            stomp_late: None,
             health,
             invincible: 0,
             coins: 0,
@@ -412,6 +448,21 @@ impl Mario {
     /// Current floor height under Mario (`mFloorPosition.y`).
     pub fn floor_y(&self) -> f32 {
         self.floor_y
+    }
+
+    /// 1 while falling in a ground pound, 2 once it's a super pound (`hipAttacking` state 3,
+    /// where the game draws Mario in flames: `emitBlurHipDropSuper`), else 0.
+    pub fn pounding(&self) -> u8 {
+        match (self.status, self.status_state) {
+            (Status::HipDrop, 2) => 1,
+            (Status::HipDrop, 3) => 2,
+            _ => 0,
+        }
+    }
+
+    /// Belly sliding over FLUDD's water (`catching` with `MARIO_FLAG_RECENTLY_LEFT_WATER`).
+    pub fn wet_sliding(&self) -> bool {
+        self.status == Status::Catch && self.status_state == 1
     }
 
     pub fn on_ground(&self) -> bool {
@@ -453,11 +504,44 @@ impl Mario {
             f.nozzle_frame_update();
         }
         self.yoshi_calc_anim();
+        self.sound_movement();
         self.pad_prev = *pad;
         for e in self.events.drain(..) {
             host.event(e);
         }
         self.ticks += 1;
+    }
+
+    /// `soundMovement` (MarioSound.cpp), off Yoshi: a spin jump, however it started (a take-off
+    /// or `considerJumpRotate` in the air), calls out once and whooshes on its 10th tick.
+    fn sound_movement(&mut self) {
+        if self.on_yoshi() {
+            return;
+        }
+        let spinning = matches!(
+            self.status,
+            Status::LeftRotateJump | Status::RightRotateJump
+        );
+        let mut cue = |name| {
+            self.events.push(Event::Sound(crate::event::SoundCue {
+                name,
+                pos: self.pos,
+                info: None,
+            }))
+        };
+        if spinning {
+            if self.spin_voice_due {
+                cue("MSD_SE_MV24_JUMP_SPECIAL_01");
+                self.spin_voice_due = false;
+            }
+            self.spin_ticks = self.spin_ticks.saturating_add(1);
+            if self.spin_ticks == 10 {
+                cue("MSD_SE_MA_ROLL_JUMP");
+            }
+        } else {
+            self.spin_voice_due = true;
+            self.spin_ticks = 0;
+        }
     }
 
     /// `checkPlayerAction`: controller, stick history, ground/roof/wall probes.
@@ -487,6 +571,24 @@ impl Mario {
 
         let prev = self.pad_prev;
         let a_edge = pad.a && !prev.a;
+        self.a_age = if a_edge {
+            0
+        } else {
+            self.a_age.saturating_add(1)
+        };
+        // A late press for a stomp jump: the boosted bounce, less the gravity since (and
+        // whatever letting go of A cut off before the press).
+        if let Some((ticks, boosted)) = self.stomp_late.take()
+            && self.status == Status::Trample
+        {
+            if a_edge {
+                let v = boosted - self.params.jump.gravity * ticks as f32;
+                self.vel.y = self.vel.y.max(v);
+                self.events.push(Event::Jump(JumpKind::Triple));
+            } else if ticks < STOMP_JUMP_WINDOW {
+                self.stomp_late = Some((ticks + 1, boosted));
+            }
+        }
         let b_edge = pad.b && !prev.b;
         let l_edge = pad.l && !prev.l;
         let r_edge = pad.r && !prev.r;
@@ -592,6 +694,9 @@ impl Mario {
         let (ry, r) = self.check_roof_plane(host, Vec3::new(p.x, p.y + 80.0, p.z));
         self.roof_y = ry;
         self.roof = r;
+
+        // `checkCurrentPlane`'s `isTouchGround4cm` water check.
+        self.wet_ground = self.water_underfoot && self.pos.y <= self.floor_y + 4.0;
 
         if !self.ground.flags.has(SurfaceFlags::ILLEGAL) {
             self.slope_angle = math::matan(self.ground.normal.z, self.ground.normal.x);
@@ -808,6 +913,12 @@ impl Mario {
                     _ => (self.params.mario.trample_pow_step3, JumpKind::Triple),
                 };
                 self.set_player_jump_speed(0.25, pow);
+                // `trampleExec`'s kick (every enemy here takes it).
+                self.events.push(Event::Sound(crate::event::SoundCue {
+                    name: "MSD_SE_MA_KICK_ENEMY",
+                    pos: self.pos,
+                    info: None,
+                }));
                 if self.options.stomp_bounce != 1.0 && self.vel.y > 0.0 {
                     // A height multiplier: the take-off speed by its square root.
                     self.vel.y *= self.options.stomp_bounce.max(0.0).sqrt();
@@ -823,13 +934,33 @@ impl Mario {
         {
             self.vel.y *= self.options.jump_height.max(0.0).sqrt();
         }
+        // Host tuning: a stomp with A timed well bounces higher, now or on a late press.
+        self.stomp_late = None;
+        if st == Status::Trample && self.options.stomp_jump > 1.0 && self.vel.y > 0.0 {
+            let boosted = self.vel.y * self.options.stomp_jump.sqrt();
+            if self.a_age <= STOMP_JUMP_WINDOW {
+                self.vel.y = boosted;
+                event = Some(JumpKind::Triple);
+            } else {
+                self.stomp_late = Some((0, boosted));
+            }
+        }
+        // Host tuning: the pound jump climbs back a share of the fall. The apex of a take-off
+        // at `v` under `g` a tick, moving `v / 4` a tick, is about `v^2 / 8g`.
+        let pound = self.pound_rebound.take();
+        if let Some(drop) = pound {
+            let h = drop * self.options.pound_jump;
+            let v = (8.0 * self.params.jump.gravity * h).sqrt();
+            self.vel.y = self.vel.y.max(v);
+        }
         if self.on_yoshi() {
             self.vel.y *= self.params.yoshi.jump_yoshi_mult;
             self.yoshi.flutter = 0;
             self.yoshi.flutter_timer_reset();
         }
         self.jump_peak_y = self.pos.y;
-        self.short_hop = st.allows_short_hop();
+        // A pound jump always goes full height.
+        self.short_hop = st.allows_short_hop() && pound.is_none();
         if let Some(k) = event {
             self.events.push(Event::Jump(k));
         }

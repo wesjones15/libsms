@@ -153,6 +153,8 @@ params! {
         trample_pow_step3: f32 = 50.0, "mTramplePowStep3";
         jump_wall_height: f32 = 1000.0, "mJumpWallHeight";
         slip_start: f32 = 0.34202015, "mSlipStart";
+        was_on_water_slip: f32 = 0.97, "mWasOnWaterSlip";
+        in_water_slip: f32 = 0.9, "mInWaterSlip";
         force_slip_angle: f32 = 0.5, "mForceSlipAngle";
         clash_speed: f32 = 50.0, "mClashSpeed";
         damage_fall_height: f32 = 1000.0, "mDamageFallHeight";
