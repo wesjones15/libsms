@@ -133,11 +133,13 @@ fn main() {
         s.mario.give_fludd();
         let mut water = libsms::water::WaterManager::new(&s.mario.params);
         water.reach = reach;
-        let (mut far, mut ticks) = (0.0f32, 0u32);
+        let (mut far, mut ticks, mut emitted, mut attack) = (0.0f32, 0u32, 0u32, 0i32);
         for _ in 0..3 * TICK_HZ {
             step(&mut s, &mut h, &spray, 1);
             for e in h.0.drain(..) {
                 if let Event::WaterEmit(w) = e {
+                    emitted += w.count;
+                    attack += w.attack as i32 * w.count as i32;
                     water.emit(&w);
                 }
             }
@@ -152,8 +154,10 @@ fn main() {
             }
         }
         println!(
-            "spray reach x{reach}: lands up to {far:.0} units ({:.1} heights)",
-            far / 160.0
+            "spray reach x{reach}: lands up to {far:.0} units ({:.1} heights); {:.0} particles/s, attack {:.1} each",
+            far / 160.0,
+            emitted as f32 / 3.0,
+            attack as f32 / emitted.max(1) as f32
         );
     }
 
