@@ -111,13 +111,15 @@ pub const EXTRACTS: [(&str, &str, &str); 8] = [
 /// Item.cpp; `eggYoshi` in MapObjInit.cpp). `hamukuri*` is the Strollin' Stu (`THamuKuri`,
 /// hamukuri.cpp): `hamukuri/default.bmd` and its clips in `hamukurianm/`, a small enemy Yoshi
 /// can eat. `mapobj/coin*` are the coins (`coin.bmd`, `coin_red`, `coin_blue`; `coin_data` in
-/// MapObjInit.cpp).
-pub const SCENE_FOLDERS: [(&str, &str); 5] = [
+/// MapObjInit.cpp). `kagemario/` is Shadow Mario (`TEnemyMario`, enemyMario.cpp loads
+/// `/scene/kagemario/kagemario_model.bmd`): his body's look, for hosts that draw a dark Mario.
+pub const SCENE_FOLDERS: [(&str, &str); 6] = [
     ("monte", "npc"),
     ("mapobj/fruit", "scene"),
     ("mapobj/eggyoshi", "scene"),
     ("hamukuri", "enemy"),
     ("mapobj/coin", "scene"),
+    ("kagemario", "enemy"),
 ];
 
 /// Disc folders copied as they are: `AudioRes/` holds the wave archives (`Banks/*.aw`), the
@@ -127,7 +129,7 @@ pub const DISC_FOLDERS: [&str; 1] = ["AudioRes/"];
 
 /// Files that must exist for the library and viewer to work. Adding one here makes an older
 /// `assets/` incomplete, so hosts re-extract it on the next run.
-pub const REQUIRED: [&str; 29] = [
+pub const REQUIRED: [&str; 30] = [
     "params_mario/run.prm",
     "params_mario/jump.prm",
     "params_mario/mario.prm",
@@ -157,6 +159,7 @@ pub const REQUIRED: [&str; 29] = [
     "params_mario/dmghamukuri.prm",
     "particle/ms_m_sphipd_a.jpa",
     "game_6/scrn/standard_1.blo",
+    "enemy/kagemario/default.bmd",
 ];
 
 pub const GAME_IDS: [(&str, &str); 3] = [

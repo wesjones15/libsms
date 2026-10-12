@@ -54,6 +54,18 @@ struct Slot {
 /// The secondary nozzles in [`crate::Options::cycle_nozzles`]' order (after Spray).
 pub const CYCLE: [NozzleKind; 3] = [NozzleKind::Hover, NozzleKind::Rocket, NozzleKind::Turbo];
 
+/// Where the game's L-button camera looks (`TNozzleBase::calcGunAngle`: while it's on, the
+/// nozzle takes the camera's pitch as it is). `yaw` is the camera's heading, which the host
+/// also turns a crouching Mario to (in the game the camera turns with him; a host whose
+/// camera the player steers turns him with it).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Aim {
+    /// Heading, Mario's facing angle units.
+    pub yaw: i16,
+    /// The nozzle's pitch, angle units (0x8000 = half a turn), up positive.
+    pub pitch: i16,
+}
+
 #[derive(Debug, Clone)]
 pub struct Fludd {
     pub nozzle: NozzleKind,
@@ -584,6 +596,8 @@ impl Mario {
         let squatting = self.status == Status::Squat;
         let fades = self.options.spray_pressure_fades;
         let hover_time = self.limits.hover_time;
+        let spray_fade = self.limits.spray_fade;
+        let aim = self.aim;
         let upper = self.upper;
         let in_water = self.in_water;
         let p = self.params.clone();
@@ -660,7 +674,11 @@ impl Mario {
                 } else if var1 > s.gate as i32 {
                     s.amount = (var1 - s.gate as i32) as f32 * 0.000_015_258_789;
                     s.pressure = s.amount;
-                    s.gate = s.gate.wrapping_add(np.trigger_rate as u16);
+                    s.gate = s.gate.wrapping_add(crate::limits::gate_rate(
+                        kind,
+                        np.trigger_rate,
+                        spray_fade,
+                    ));
                     if var1 < s.gate as i32 {
                         s.gate = var1 as u16;
                     }
@@ -677,12 +695,17 @@ impl Mario {
 
         // calcGunAngle
         let s = &mut f.slots[kind as usize];
-        let target = if squatting {
-            (s.gun_angle + pad.stick.y * 10_000.0).clamp(np_min(&p, kind), np_max(&p, kind))
+        if let Some(a) = aim {
+            // The L-button camera: the nozzle takes its pitch, unclamped and at once.
+            s.gun_angle = a.pitch as f32;
         } else {
-            (-np_base(&p, kind)).clamp(np_min(&p, kind), np_max(&p, kind))
-        };
-        s.gun_angle += (target - s.gun_angle) * np_chase(&p, kind);
+            let target = if squatting {
+                (s.gun_angle + pad.stick.y * 10_000.0).clamp(np_min(&p, kind), np_max(&p, kind))
+            } else {
+                (-np_base(&p, kind)).clamp(np_min(&p, kind), np_max(&p, kind))
+            };
+            s.gun_angle += (target - s.gun_angle) * np_chase(&p, kind);
+        }
         if charging {
             self.sound("MSD_SE_SY_NEWP_AIR_TAME", None);
         }

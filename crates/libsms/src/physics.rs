@@ -456,7 +456,7 @@ impl Mario {
             self.slip_params().slip_friction
         };
         let stick = self.intended_mag * 0.03125;
-        let mult = 0.02 * (stick * cs) + slip_friction;
+        let mult = 0.02 * self.limit_slide_push(stick, cs) + slip_friction;
         let old_mag = (self.slide_x * self.slide_x + self.slide_z * self.slide_z).sqrt();
 
         let sm = self.slip_params().stick_slide_mult;

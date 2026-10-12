@@ -479,14 +479,24 @@ nothing limited, nothing stretched, and every scenario that doesn't set limits p
   R is let go.
 - `hover_time`: the Hover's `mTriggerTime` times this. `turbo_speed`: ground covered while the
   Turbo dashes times this, on top of `Options::move_speed`.
-- `wet_slide`: a belly slide turns wet (`mWasOnWaterSlip` friction, as over FLUDD's water) only
-  with a charge (`ready`), over FLUDD's water or (`anywhere`) on any ground; it glides for
-  `max_ticks` then turns plain. Without a charge it stays plain, even over water. `WetSlide`.
+- `spray_fade`: a Spray press lasts this many times as long before it fades (the pressure
+  gate climbs `mTriggerRate / spray_fade` a tick; see section 9).
+- `wet_slide`: a belly slide turns wet (`mWasOnWaterSlip` friction, as over FLUDD's water) with
+  a charge (`ready`), over FLUDD's water or (`anywhere`) on any ground; it glides for
+  `max_ticks` then turns plain. Without a charge it stays plain, unless `water_free`: then a
+  slide over FLUDD's water glides as in the game, free and uncapped. `glide`: a wet slide keeps
+  its speed as if the stick were held forward (`doSliding`'s stick term at full) unless the
+  stick pulls back. `WetSlide` reports a charge spent.
 - `PoundStart`: a ground pound's wind-up began (for hosts that charge for pounds).
 - `Mario::launch(vel)`: the host's world throws Mario (jump pads, knockback): `mVel = vel`,
   facing along its horizontal part (or away from it, flying backwards, when that's mostly behind
   him), status `FORCE_JUMP` until he lands. `Mario::boost_jump(k)`: horizontal travel in the air
   times `k` until landing (a sprint-jump item). `Mario::add_water(share)`: tops up the tank.
+- `Mario::aim` (the game's, from the host's camera): `calcGunAngle` points the nozzle at the
+  L-button camera's pitch while it's on. Not the game's: a crouching Mario turns to its
+  heading (half the way a tick), since the host's player steers that camera; the stick then
+  side-steps (L) as in the game, and no longer turns him (R).
+- `Mario::knock_out()`: the host's health ran out; `loserExec` as at 0 health.
 
 ## 8. Verified numbers (disc tuning, headless, `cargo run -p libsms --example report`)
 
@@ -506,8 +516,10 @@ The viewer now routes animation and game-event sounds through `libsms-audio`; se
 
 1. **Spray fades to nothing.** `TNozzleBase::movement` (99.8% match) computes output as
    `(pressedLevel - gate) / 65536` where `gate` ramps up at `mTriggerRate` (50/tick), so a held
-   full press decays to zero after ~6 s. We default to a steady output
-   (`Options::spray_pressure_fades = false`). If the game really fades, flip it.
+   full press decays to zero after ~6 s, and a light press is a short burst that lands just
+   ahead (raw R 15: 0.23 s of water landing 0.6-2.4 m out; raw 25: 0.8 s; 40 and up: full
+   reach). Play memory of light-press bursts backs it, so this is now the default
+   (`Options::spray_pressure_fades = true`); a host can still ask for a steady output.
 2. **Tank drain is slow.** Spray costs `emitted * mDecRate` = about 1 unit per tick against a
    10000 tank: ~83 s of continuous spray at 120 Hz. Might be right, might not.
 3. **Rocket height.** 17 body heights looks too high versus play memory; the thrust is the

@@ -77,4 +77,6 @@ pub mod paths {
     pub const NOZZLE_YOSHI: &str = "watergun2/dummy_wg/dummy_wg.bmd";
     /// Blinking (`marioAnimeTexPatternFilenames[0]`, MarioDraw.cpp).
     pub const WINK: &str = "btp/ma_wink_tx.btp";
+    /// Shadow Mario's model (`/scene/kagemario/`, gathered from the stage archives).
+    pub const SHADOW_MARIO: &str = "enemy/kagemario/default.bmd";
 }

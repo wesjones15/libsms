@@ -213,6 +213,21 @@ pub struct SmsView {
 /// `assets_dir` a nul-terminated UTF-8 path.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_view_new(assets_dir: *const c_char, sound: u8) -> *mut SmsView {
+    // SAFETY: as documented.
+    unsafe { sms_view_new_look(assets_dir, sound, 0) }
+}
+
+/// [`sms_view_new`] drawing `look`: 0 Mario, 1 Mario in Shadow Mario's colours (a host's dark
+/// double; [`libsms_present::Look::Shadow`]).
+///
+/// # Safety
+/// `assets_dir` a nul-terminated UTF-8 path.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_new_look(
+    assets_dir: *const c_char,
+    sound: u8,
+    look: u8,
+) -> *mut SmsView {
     if assets_dir.is_null() {
         return std::ptr::null_mut();
     }
@@ -222,7 +237,12 @@ pub unsafe extern "C" fn sms_view_new(assets_dir: *const c_char, sound: u8) -> *
         .into_owned();
     let made = catch_unwind(|| {
         let dir = PathBuf::from(dir);
-        let view = View::load(&dir).ok()?;
+        let look = if look == 1 {
+            libsms_present::Look::Shadow
+        } else {
+            libsms_present::Look::Mario
+        };
+        let view = View::load_look(&dir, look).ok()?;
         let (audio, sound_status) = if sound != 0 {
             match Audio::open(&dir, false) {
                 Ok(a) => {

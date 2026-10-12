@@ -23,6 +23,13 @@ pub struct WetSlide {
     pub anywhere: bool,
     /// Ticks a wet slide glides before it turns back into a plain one. 0: as long as it lasts.
     pub max_ticks: u32,
+    /// A slide over FLUDD's water glides for free, as in the game (to the slide's end, with no
+    /// cap): the charge is only for slides without water under them.
+    pub water_free: bool,
+    /// A wet slide keeps its speed as if the stick were held forward (`doSliding`'s stick
+    /// term at full), unless the stick pulls back against it. false: the game's (the stick
+    /// decides).
+    pub glide: bool,
 }
 
 /// See the module docs. `Default` is the game.
@@ -49,6 +56,10 @@ pub struct Limits {
     pub spray_ticks: u32,
     /// The Hover nozzle's burst (its trigger time, `mTriggerTime`) times this. 1: the game's.
     pub hover_time: f32,
+    /// A Spray press lasts this many times as long before it fades
+    /// ([`crate::Options::spray_pressure_fades`]: the gate climbs this much slower). 1: the
+    /// game's.
+    pub spray_fade: f32,
     /// Ground covered on the Turbo nozzle's dash times this, on top of `Options::move_speed`.
     /// 1: the game's.
     pub turbo_speed: f32,
@@ -65,6 +76,7 @@ impl Default for Limits {
             spray_rate: 1.0,
             spray_ticks: 0,
             hover_time: 1.0,
+            spray_fade: 1.0,
             turbo_speed: 1.0,
             wet_slide: None,
         }
@@ -86,8 +98,10 @@ pub(crate) struct LimitState {
     spray_ticks: u32,
     /// Mid-air jumps made since the last landing.
     air_jumps: u32,
-    /// This belly slide has decided whether it's wet, and its wet ticks left.
+    /// This belly slide has decided whether it's wet, whether a charge paid for it, and its
+    /// wet ticks left.
     pub(crate) wet_decided: bool,
+    wet_charged: bool,
     wet_left: u32,
     /// Horizontal travel in the air times this until Mario lands ([`Mario::boost_jump`]).
     jump_boost: f32,
@@ -103,9 +117,21 @@ impl Default for LimitState {
             spray_ticks: 0,
             air_jumps: 0,
             wet_decided: false,
+            wet_charged: false,
             wet_left: 0,
             jump_boost: 1.0,
         }
+    }
+}
+
+/// How far the continuous nozzles' pressure gate climbs a tick (`mTriggerRate`), the Spray's
+/// slowed by [`Limits::spray_fade`].
+pub(crate) fn gate_rate(kind: NozzleKind, rate: i16, spray_fade: f32) -> u16 {
+    let rate = rate.max(0) as f32;
+    if kind == NozzleKind::Spray && spray_fade != 1.0 && spray_fade.is_finite() && spray_fade > 0.0 {
+        (rate / spray_fade.clamp(0.1, 10.0)).round().clamp(1.0, u16::MAX as f32) as u16
+    } else {
+        rate as u16
     }
 }
 
@@ -223,26 +249,49 @@ impl Mario {
             return self.wet_ground || self.status_state == 1;
         };
         if !self.lim.wet_decided {
+            if w.water_free && self.wet_ground {
+                // The game's: over FLUDD's water it glides, and stays wet to the end.
+                self.lim.wet_decided = true;
+                self.lim.wet_charged = false;
+                return true;
+            }
             if w.ready && (w.anywhere || self.wet_ground) {
                 self.lim.wet_decided = true;
+                self.lim.wet_charged = true;
                 self.lim.wet_left = w.max_ticks;
                 w.ready = false;
                 self.limits.wet_slide = Some(w);
                 self.events.push(Event::WetSlide);
                 return true;
             }
-            // Without a charge it stays plain; it may still turn wet on reaching water if one
-            // comes back mid-slide.
+            // Without a charge it stays plain; it may still turn wet on reaching water, or if
+            // a charge comes back mid-slide.
             return false;
         }
         if self.status_state != 1 {
             return false;
+        }
+        if !self.lim.wet_charged {
+            return true;
         }
         if w.max_ticks == 0 {
             return true;
         }
         self.lim.wet_left = self.lim.wet_left.saturating_sub(1);
         self.lim.wet_left > 0
+    }
+
+    /// `doSliding`'s stick term for a wet slide under [`WetSlide::glide`]: full ahead unless
+    /// the stick pulls back. `stick * cs` otherwise (the game's).
+    pub(crate) fn limit_slide_push(&self, stick: f32, cs: f32) -> f32 {
+        let glide = self.status == Status::Catch
+            && self.status_state == 1
+            && self.limits.wet_slide.is_some_and(|w| w.glide);
+        if glide && (stick < 0.1 || cs >= 0.0) {
+            1.0
+        } else {
+            stick * cs
+        }
     }
 
     /// The Spray's drops a tick, and the water each takes, with [`Limits::spray_rate`].

@@ -97,6 +97,67 @@ impl Model {
 pub struct Textures {
     pub list: Vec<Baked>,
     by_key: HashMap<(u32, usize, Inputs), i32>,
+    /// Every bake and plain colour recoloured ([`Look::Shadow`]).
+    shade: Option<Shade>,
+}
+
+/// Which Mario a view draws.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Look {
+    #[default]
+    Mario,
+    /// Mario's models in Shadow Mario's colours, for a host's dark double. The game draws
+    /// Shadow Mario (`TEMario`, emario.cpp) with his own model, `kagemario/default.bmd`,
+    /// whose material lays a dark-to-light ramp (TEV registers 0 and 1) over a warped copy of
+    /// the screen; here Mario's own textures are put through that ramp by brightness.
+    Shadow,
+}
+
+/// [`Look::Shadow`]'s ramp: dark where Mario's colours are dark, light where they're light.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Shade {
+    pub dark: [f32; 3],
+    pub light: [f32; 3],
+}
+
+impl Shade {
+    /// Shadow Mario's ramp from his model on the disc (`_mat_head`'s TEV registers 0 and 1),
+    /// or a dark blue stand-in without it.
+    pub fn load(dir: &Path) -> Shade {
+        let reg = |c: [i16; 4]| [0, 1, 2].map(|i| (c[i] as f32 / 255.0).clamp(0.0, 1.0));
+        load_bmd(dir, paths::SHADOW_MARIO)
+            .ok()
+            .and_then(|b| {
+                let m = b.material("_mat_head").map(|i| &b.materials[i])?;
+                Some(Shade {
+                    dark: reg(m.tev_colors[0]),
+                    light: reg(m.tev_colors[1]),
+                })
+            })
+            .unwrap_or(Shade {
+                dark: [0.1, 0.08, 0.3],
+                light: [0.6, 0.75, 1.0],
+            })
+    }
+
+    /// One colour through the ramp (alpha kept).
+    pub fn color(&self, c: C4) -> C4 {
+        let l = (0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]).clamp(0.0, 1.0);
+        // Squared: Mario's mid tones (red cap and shirt, blue overalls) read dark, white
+        // gloves and eyes light.
+        let t = l * l;
+        let mix = |i: usize| self.dark[i] + (self.light[i] - self.dark[i]) * t;
+        [mix(0), mix(1), mix(2), c[3]]
+    }
+
+    fn apply(&self, rgba: &mut [u8]) {
+        for p in rgba.as_chunks_mut::<4>().0 {
+            let c = self.color([0, 1, 2, 3].map(|i| p[i] as f32 / 255.0));
+            for i in 0..3 {
+                p[i] = (c[i] * 255.0).round() as u8;
+            }
+        }
+    }
 }
 
 /// One posed instance.
@@ -290,7 +351,8 @@ fn build(
         let color = if tex >= 0 {
             [1.0; 4]
         } else {
-            model.source().flat_color(mi, &inputs)
+            let c = model.source().flat_color(mi, &inputs);
+            textures.shade.map_or(c, |s| s.color(c))
         };
         model.batch_texture.push(tex);
         model.batch_blend.push(blend);
@@ -326,7 +388,10 @@ impl Textures {
         let src = model.source();
         let id = if src.textured(mi, inputs) {
             match src.bake(mi, inputs, MAX_BAKE) {
-                Some(b) => {
+                Some(mut b) => {
+                    if let Some(s) = self.shade {
+                        s.apply(&mut b.rgba);
+                    }
                     self.list.push(b);
                     self.list.len() as i32 - 1
                 }
@@ -343,9 +408,17 @@ impl Textures {
 impl View {
     /// Loads Mario's models, rig and clips from the extracted `assets/` folder.
     pub fn load(dir: &Path) -> Result<View, String> {
+        View::load_look(dir, Look::Mario)
+    }
+
+    /// [`View::load`] drawing `look`.
+    pub fn load_look(dir: &Path, look: Look) -> Result<View, String> {
         let assets = libsms::Assets::load(dir);
         let skeleton = assets.skeleton.clone().ok_or("no rig (bmd/ma_mdl1.bmd)")?;
-        let mut textures = Textures::default();
+        let mut textures = Textures {
+            shade: (look == Look::Shadow).then(|| Shade::load(dir)),
+            ..Textures::default()
+        };
         let none = |_: usize, _: &str| None;
         let body = build(
             load_bmd(dir, paths::BODY)?,
@@ -786,6 +859,23 @@ mod tests {
         assert!(blue, "no blue batch on the body");
         for t in &v.textures.list {
             assert_eq!(t.rgba.len(), (t.width * t.height * 4) as usize);
+        }
+    }
+
+    /// Shadow Mario's look: the red cap comes out in his dark blue, and nothing keeps red.
+    #[test]
+    fn a_shadow_view_is_shadow_marios_blues() {
+        let Some(dir) = libsms::assets::find(None) else {
+            eprintln!("skipping: no assets/");
+            return;
+        };
+        let v = View::load_look(&dir, Look::Shadow).unwrap();
+        let cap = shown(&v, models::CAP, 0);
+        assert!(cap[2] > cap[0] && cap[0] < 0.3, "cap {cap:?}");
+        for t in &v.textures.list {
+            for p in t.rgba.as_chunks::<4>().0 {
+                assert!(p[2] >= p[0], "{p:?}");
+            }
         }
     }
 

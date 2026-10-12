@@ -209,6 +209,12 @@ impl Mario {
         }
     }
 
+    /// Out of health from the host's side (its own health ran out): Mario falls down for good
+    /// as at 0 health (`loserExec`), with its sound and voices. Nothing if he's already down.
+    pub fn knock_out(&mut self) {
+        self.loser_exec();
+    }
+
     /// `loserExec`: out of health. Yoshi, if any, runs off.
     fn loser_exec(&mut self) {
         if self.is_down() {

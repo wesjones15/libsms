@@ -173,11 +173,13 @@ pub enum UpperState {
 /// tuning that departs from the game on purpose. The defaults are the game.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Options {
-    /// Literal reading of `TNozzleBase::movement` (WaterGun.cpp): the continuous nozzles' output
-    /// is `(pressed - gate)` where the gate ramps up to the pressed level at `mTriggerRate`
-    /// per tick, so a held trigger fades to nothing after about 6 s. That function matches the
-    /// binary 99.8%, but it contradicts how the game plays as far as we know, so the default
-    /// is a steady output set by trigger pressure. Needs in-game verification; see the spec.
+    /// `TNozzleBase::movement` (WaterGun.cpp): the continuous nozzles' output is
+    /// `(pressed - gate)` where the gate climbs toward the pressed level at `mTriggerRate`
+    /// per tick, so each press is a burst. A light press (the trigger's first tenth, under the
+    /// Spray's `mEmitPowScale` of 10) is a short burst that lands a few metres ahead; a full
+    /// press fires at full reach for about 5 s, then fades to nothing until the trigger is let
+    /// go or pressed deeper. true (the default): the game's. false: a steady output set by
+    /// the trigger's depth, for hosts that want to hold the Spray on.
     pub spray_pressure_fades: bool,
     /// Jump heights times this (1: the game's), for hosts whose worlds are built bigger. The
     /// take-off speed scales by its square root, so arcs keep their shape and last longer.
@@ -222,7 +224,7 @@ pub const STOMP_JUMP_WINDOW: u32 = 15;
 impl Default for Options {
     fn default() -> Options {
         Options {
-            spray_pressure_fades: false,
+            spray_pressure_fades: true,
             jump_height: 1.0,
             jump_buffer_ticks: 0,
             chain_grace_ticks: 0,
@@ -248,6 +250,9 @@ pub struct Mario {
     /// game's: none.
     pub limits: crate::limits::Limits,
     pub(crate) lim: crate::limits::LimitState,
+    /// The game's L-button camera (`CPolarSubCamera::isLButtonCamera`), as the host's camera
+    /// sees it: set while it's on, None otherwise. Sent by the host before each step.
+    pub aim: Option<crate::fludd::Aim>,
 
     pub pos: Vec3,
     pub prev_pos: Vec3,
@@ -370,6 +375,7 @@ impl Mario {
             options: Options::default(),
             limits: crate::limits::Limits::default(),
             lim: crate::limits::LimitState::default(),
+            aim: None,
             pos,
             prev_pos: pos,
             vel: Vec3::ZERO,

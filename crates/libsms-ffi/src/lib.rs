@@ -27,7 +27,7 @@ use libsms::{
 use view::SmsView;
 
 /// ABI version, bumped when the C interface changes.
-pub const SMS_ABI_VERSION: u32 = 9;
+pub const SMS_ABI_VERSION: u32 = 10;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sms_abi_version() -> u32 {
@@ -311,7 +311,9 @@ pub struct SmsTuning {
     pub cycle_nozzles: u8,
     /// 1: FLUDD's tank never runs dry; 0: the game's.
     pub unlimited_water: u8,
-    pub _pad: u8,
+    /// 1: the Spray holds a steady output set by the trigger's depth; 0: the game's (each
+    /// press a burst that fades, `Options::spray_pressure_fades`).
+    pub spray_steady: u8,
 }
 
 /// A host's own limits on FLUDD and the slide ([`libsms::Limits`]), for games that bill them
@@ -332,6 +334,8 @@ pub struct SmsLimits {
     pub turbo_speed: f32,
     /// Seconds a wet slide glides before turning plain (0: as long as it lasts).
     pub wet_slide_seconds: f32,
+    /// A Spray press lasts this many times as long before it fades (0 or 1: the game's).
+    pub spray_fade: f32,
     /// Mid-air FLUDD uses on hand beyond the free one ([`Self::air_uses`]).
     pub air_extra: u32,
     /// Jumps in mid-air, each the next of the double/triple chain; back on landing.
@@ -344,7 +348,9 @@ pub struct SmsLimits {
     pub wet_slide: u8,
     /// A wet slide charge is ready.
     pub wet_slide_ready: u8,
-    pub _pad: u8,
+    /// Bit 0: a wet slide keeps its speed as if the stick were held forward. Bit 1: a slide
+    /// over FLUDD's water glides for free (the game's), the charge only for dry ones.
+    pub wet_slide_flags: u8,
 }
 
 /// An opaque sim handle.
@@ -818,13 +824,46 @@ pub unsafe extern "C" fn sms_sim_set_limits(sim: *mut SmsSim, limits: *const Sms
         spray_rate: factor(l.spray_rate),
         spray_ticks: ticks(l.spray_seconds),
         hover_time: factor(l.hover_time),
+        spray_fade: factor(l.spray_fade),
         turbo_speed: factor(l.turbo_speed),
         wet_slide: (l.wet_slide != 0).then_some(libsms::WetSlide {
             ready: l.wet_slide_ready != 0,
             anywhere: l.wet_slide == 2,
             max_ticks: ticks(l.wet_slide_seconds),
+            glide: l.wet_slide_flags & 1 != 0,
+            water_free: l.wet_slide_flags & 2 != 0,
         }),
     };
+}
+
+/// The host's camera as the game's L-button camera (`isLButtonCamera`): while `on`, FLUDD's
+/// nozzle points at `pitch` (radians, up positive) and a crouching Mario turns to `yaw`
+/// (facing angle units). Send before each step; 0 turns it off.
+///
+/// # Safety
+/// `sim` from [`sms_sim_new`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_sim_set_aim(sim: *mut SmsSim, on: u8, yaw: i16, pitch: f32) {
+    // SAFETY: the caller promised a valid pointer.
+    if let Some(s) = unsafe { sim.as_mut() } {
+        s.sim.mario.aim = (on != 0 && pitch.is_finite()).then(|| libsms::Aim {
+            yaw,
+            pitch: (pitch.clamp(-1.5, 1.5) * (32768.0 / std::f32::consts::PI)) as i16,
+        });
+    }
+}
+
+/// The host's health ran out: Mario falls down for good (`loserExec`: the "die" clip and his
+/// voices) and lies there until the host starts him again.
+///
+/// # Safety
+/// `sim` from [`sms_sim_new`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_sim_down(sim: *mut SmsSim) {
+    // SAFETY: the caller promised a valid pointer.
+    if let Some(s) = unsafe { sim.as_mut() } {
+        s.sim.mario.knock_out();
+    }
 }
 
 /// Adds `share` of a full tank to FLUDD's (a host's own water: healing, pickups).
@@ -893,6 +932,7 @@ pub unsafe extern "C" fn sms_sim_set_tuning(sim: *mut SmsSim, tuning: *const Sms
         o.enemy_push = t.enemy_push != 0;
         o.cycle_nozzles = t.cycle_nozzles != 0;
         o.unlimited_water = t.unlimited_water != 0;
+        o.spray_pressure_fades = t.spray_steady == 0;
         s.water.reach = factor(t.spray_reach);
         o.stomp_bounce = factor(t.stomp_bounce);
         // The rocket's apex grows about as its lift to the power 1.9 (examples/report.rs:
@@ -1151,7 +1191,7 @@ mod tests {
             &sizes[..n],
             &[
                 12, 20, 8, 16, 32, 56, 24, 52, 40, 24, 12, 64, 48, 44, 24, 24, 24, 36, 16, 12, 32,
-                32
+                36
             ]
         );
     }

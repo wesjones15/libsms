@@ -12,5 +12,5 @@ pub mod view;
 pub mod water;
 
 pub use audio::Audio;
-pub use view::View;
+pub use view::{Look, View};
 pub use water::WaterLook;

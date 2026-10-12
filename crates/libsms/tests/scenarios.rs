@@ -2197,6 +2197,8 @@ fn a_wet_slide_charge_makes_any_slide_glide_once() {
             ready,
             anywhere,
             max_ticks,
+            water_free: false,
+            glide: false,
         }),
         ..Limits::default()
     };
@@ -2287,4 +2289,112 @@ fn add_water_tops_up_the_tank() {
     assert!((f.water - max / 4).abs() <= 1, "{} of {max}", f.water);
     s.sim.mario.add_water(5.0);
     assert_eq!(s.mario().fludd.as_ref().unwrap().water, max);
+}
+
+// ---- light-press bursts, glides, the L-button camera, knock-outs ---------------------------
+
+/// Spray presses at raw R `raw` for `hold` ticks: (ticks that emitted, farthest landing from
+/// Mario), the water flown through libsms's own particle manager.
+fn spray_burst(raw: u8, hold: u32, limits: libsms::Limits) -> (u32, f32) {
+    let mut s = Scene::flat();
+    s.sim.mario.give_fludd();
+    s.sim.mario.limits = limits;
+    s.secs(0.5);
+    let (params, _) = params();
+    let mut w = libsms::water::WaterManager::new(&params);
+    let (mut emitting, mut far) = (0, 0.0f32);
+    for t in 0..(hold + 600) {
+        s.pad.r_analog = if t < hold { raw } else { 0 };
+        s.host.events.clear();
+        s.step(1);
+        let mut any = false;
+        for e in &s.host.events {
+            if let Event::WaterEmit(we) = e {
+                w.emit(we);
+                any = true;
+            }
+        }
+        emitting += any as u32;
+        w.step(&s.host.world, s.mario().pos);
+        for p in w.particles.iter_mut() {
+            if p.state == libsms::water::State::Ground && p.life > 0.0 && p.size > 0.0 {
+                far = far.max(Vec2::new(p.pos.x, p.pos.z).length());
+                p.life = 0.0;
+            }
+        }
+    }
+    (emitting, far)
+}
+
+#[test]
+fn a_light_press_is_a_short_burst_and_a_held_one_fades() {
+    if need_disc() {
+        return;
+    }
+    let none = libsms::Limits::default();
+    let light = spray_burst(15, 1200, none);
+    let full = spray_burst(255, 1200, none);
+    let stretched = spray_burst(255, 2400, libsms::Limits {
+        spray_fade: 2.0,
+        ..none
+    });
+    println!("light {light:?}, full {full:?}, fade x2 {stretched:?}");
+    // A light press: a quarter second of water that lands a few metres out.
+    assert!(light.0 < 60, "{light:?}");
+    assert!(light.1 < 0.4 * full.1, "{light:?} {full:?}");
+    // A held full press stops by itself, after about 5 s.
+    assert!(full.0 > 480 && full.0 < 800, "{full:?}");
+    assert!(stretched.0 as f32 > 1.6 * full.0 as f32, "{stretched:?} {full:?}");
+}
+
+fn charged(water_free: bool, glide: bool) -> libsms::Limits {
+    libsms::Limits {
+        wet_slide: Some(libsms::WetSlide {
+            ready: true,
+            anywhere: true,
+            max_ticks: 180,
+            water_free,
+            glide,
+        }),
+        ..libsms::Limits::default()
+    }
+}
+
+#[test]
+fn a_slide_over_fludd_water_is_wet_for_free_and_a_glide_carries_on() {
+    let (dry, _) = slide_length(libsms::Limits::default(), false);
+    let (on_water, spent) = slide_length(charged(true, false), true);
+    let (charged_plain, _) = slide_length(charged(false, false), false);
+    let (glide, _) = slide_length(charged(false, true), false);
+    println!("dry {dry:.0}, on water {on_water:.0} ({spent} spent), charged {charged_plain:.0}, glide {glide:.0}");
+    assert_eq!(spent, 0, "water's free");
+    assert!(on_water > 1.6 * dry);
+    assert!(glide > 3.0 * charged_plain, "{charged_plain} {glide}");
+}
+
+#[test]
+fn the_l_camera_aims_the_nozzle_and_turns_a_crouching_mario() {
+    let mut s = Scene::flat();
+    s.sim.mario.give_fludd();
+    s.sim.mario.face_yaw = 0;
+    s.sim.mario.aim = Some(libsms::Aim {
+        yaw: 0x4000,
+        pitch: 0x1000,
+    });
+    s.pad.l = true;
+    s.pad.l_analog = 255;
+    s.step(60);
+    let m = s.mario();
+    assert_eq!(m.status, Status::Squat);
+    assert!((m.face_yaw as i32 - 0x4000).abs() < 0x100, "{:#x}", m.face_yaw);
+    assert_eq!(m.fludd.as_ref().unwrap().gun_angle(), 0x1000 as f32);
+}
+
+#[test]
+fn a_knock_out_lays_mario_down() {
+    let mut s = Scene::flat();
+    s.sim.mario.knock_out();
+    s.step(240);
+    assert_eq!(s.mario().status, Status::DownLoser);
+    assert_eq!(s.event_count(|e| matches!(e, Event::Down)), 1);
 }

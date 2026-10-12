@@ -1,15 +1,20 @@
 //! Writes every baked texture to PNG and lists each model's batches, to eyeball the TEV bake:
-//! `cargo run -p libsms-present --example bakes -- <out dir>`.
+//! `cargo run -p libsms-present --example bakes -- <out dir> [shadow]`.
 
 use std::io::Write;
 
-use libsms_present::View;
+use libsms_present::{Look, View};
 
 fn main() {
     let out = std::path::PathBuf::from(std::env::args().nth(1).unwrap_or_else(|| "bakes".into()));
     std::fs::create_dir_all(&out).unwrap();
     let dir = libsms::assets::find(None).expect("no assets/");
-    let v = View::load(&dir).expect("models");
+    let look = if std::env::args().nth(2).as_deref() == Some("shadow") {
+        Look::Shadow
+    } else {
+        Look::Mario
+    };
+    let v = View::load_look(&dir, look).expect("models");
     for (mi, m) in v.models.iter().enumerate() {
         for (bi, b) in m.batches.iter().enumerate() {
             let mat = &m.bmd.materials[b.material];

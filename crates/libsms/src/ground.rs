@@ -348,6 +348,12 @@ impl Mario {
             return self.change_status(Status::Rocket, 0, false);
         }
 
+        if let Some(a) = self.aim {
+            // The host's L-button camera: Mario turns to where it looks (half the way a tick),
+            // and the stick side-steps.
+            let d = diff(a.yaw, self.face_yaw);
+            self.face_yaw = self.face_yaw.wrapping_add(d / 2);
+        }
         if self.pad.l {
             // Side-step while crouched (getSideWalkValues).
             let d = diff(self.intended_yaw, self.face_yaw);
@@ -359,7 +365,7 @@ impl Mario {
             }
             self.pos.x += side * cos(self.face_yaw);
             self.pos.z -= side * sin(self.face_yaw);
-        } else if self.pad.r {
+        } else if self.pad.r && self.aim.is_none() {
             // Turn on the spot with the stick (aiming).
             let h = self.pad.stick.x;
             let abs_h = h.abs();
