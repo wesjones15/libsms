@@ -27,7 +27,7 @@ use libsms::{
 use view::SmsView;
 
 /// ABI version, bumped when the C interface changes.
-pub const SMS_ABI_VERSION: u32 = 8;
+pub const SMS_ABI_VERSION: u32 = 9;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sms_abi_version() -> u32 {
@@ -132,6 +132,15 @@ pub enum SmsEventKind {
     EnemyHit = 12,
     /// A water particle hit the enemy `arg` at `pos` with attack `value`, and was spent.
     WaterHit = 13,
+    /// A ground pound began (its wind-up).
+    PoundStart = 14,
+    /// [`SmsLimits`]: FLUDD started in mid-air and spent a use; `arg` 1 if it was one of the
+    /// host's extras, 0 the free one.
+    AirNozzle = 15,
+    /// [`SmsLimits`]: a mid-air jump was spent.
+    AirJump = 16,
+    /// [`SmsLimits`]: a belly slide turned wet and spent the charge.
+    WetSlide = 17,
 }
 
 /// An enemy the host reports ([`libsms::Enemy`]): a standing cylinder.
@@ -305,6 +314,39 @@ pub struct SmsTuning {
     pub _pad: u8,
 }
 
+/// A host's own limits on FLUDD and the slide ([`libsms::Limits`]), for games that bill them
+/// as abilities with charges and cooldowns. Not the game's: all zeroes is the game (no limits;
+/// factors of 0 read as 1). Send it before each step: the sim counts `air_extra` and
+/// `wet_slide_ready` down as it spends them (with [`SmsEventKind::AirNozzle`] and
+/// [`SmsEventKind::WetSlide`]), and the host hands back what it has left.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SmsLimits {
+    /// The Spray fires this many times as many drops, each taking that much less water.
+    pub spray_rate: f32,
+    /// Seconds the Spray fires before R must be let go (0: no limit).
+    pub spray_seconds: f32,
+    /// The Hover's burst lasts this many times as long.
+    pub hover_time: f32,
+    /// The Turbo's dash covers this many times as much ground.
+    pub turbo_speed: f32,
+    /// Seconds a wet slide glides before turning plain (0: as long as it lasts).
+    pub wet_slide_seconds: f32,
+    /// Mid-air FLUDD uses on hand beyond the free one ([`Self::air_uses`]).
+    pub air_extra: u32,
+    /// Jumps in mid-air, each the next of the double/triple chain; back on landing.
+    pub air_jumps: u32,
+    /// 1: each start of a nozzle in mid-air spends a use: one free per time off the ground,
+    /// then `air_extra`. 0: the game's (the tank is the only limit).
+    pub air_uses: u8,
+    /// 0: the game's (a belly slide over FLUDD's water glides); 1: that, only with a charge;
+    /// 2: any belly slide glides, with a charge.
+    pub wet_slide: u8,
+    /// A wet slide charge is ready.
+    pub wet_slide_ready: u8,
+    pub _pad: u8,
+}
+
 /// An opaque sim handle.
 pub struct SmsSim {
     pub(crate) sim: Sim,
@@ -457,6 +499,13 @@ impl Host for FfiHost<'_> {
                     EnemyHitKind::Punch => 2.0,
                 };
             }
+            Event::PoundStart => e.kind = SmsEventKind::PoundStart as u32,
+            Event::AirNozzle { extra } => {
+                e.kind = SmsEventKind::AirNozzle as u32;
+                e.arg = extra as i32;
+            }
+            Event::AirJump => e.kind = SmsEventKind::AirJump as u32,
+            Event::WetSlide => e.kind = SmsEventKind::WetSlide as u32,
             Event::Sound(s) => {
                 e.kind = SmsEventKind::Sound as u32;
                 e.value = s.info.unwrap_or(0.0);
@@ -738,6 +787,84 @@ pub unsafe extern "C" fn sms_sim_refill(sim: *mut SmsSim) {
     }
 }
 
+/// Sets the host's limits (see [`SmsLimits`]); a new sim has none, as the game.
+///
+/// # Safety
+/// `sim` from [`sms_sim_new`]; `limits` readable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_sim_set_limits(sim: *mut SmsSim, limits: *const SmsLimits) {
+    // SAFETY: the caller promised valid pointers.
+    let (Some(s), Some(l)) = (unsafe { sim.as_mut() }, unsafe { limits.as_ref() }) else {
+        return;
+    };
+    let factor = |v: f32| {
+        if v.is_finite() && v > 0.0 {
+            v.clamp(0.1, 10.0)
+        } else {
+            1.0
+        }
+    };
+    let ticks = |secs: f32| {
+        if secs.is_finite() && secs > 0.0 {
+            ((secs * TICK_HZ as f32).round() as u32).clamp(1, 1_000_000)
+        } else {
+            0
+        }
+    };
+    s.sim.mario.limits = libsms::Limits {
+        air_uses: l.air_uses != 0,
+        air_extra: l.air_extra.min(1000),
+        air_jumps: l.air_jumps.min(1000),
+        spray_rate: factor(l.spray_rate),
+        spray_ticks: ticks(l.spray_seconds),
+        hover_time: factor(l.hover_time),
+        turbo_speed: factor(l.turbo_speed),
+        wet_slide: (l.wet_slide != 0).then_some(libsms::WetSlide {
+            ready: l.wet_slide_ready != 0,
+            anywhere: l.wet_slide == 2,
+            max_ticks: ticks(l.wet_slide_seconds),
+        }),
+    };
+}
+
+/// Adds `share` of a full tank to FLUDD's (a host's own water: healing, pickups).
+///
+/// # Safety
+/// `sim` from [`sms_sim_new`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_sim_add_water(sim: *mut SmsSim, share: f32) {
+    // SAFETY: the caller promised a valid pointer.
+    if let Some(s) = unsafe { sim.as_mut() } {
+        s.sim.mario.add_water(share);
+    }
+}
+
+/// The host's world throws Mario: his velocity becomes `*vel` (units per 30 Hz frame, as
+/// [`SmsState::vel`]) and he flies as from a spring until he lands (jump pads, knockback).
+///
+/// # Safety
+/// `sim` from [`sms_sim_new`]; `vel` readable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_sim_launch(sim: *mut SmsSim, vel: *const SmsVec3) {
+    // SAFETY: the caller promised valid pointers.
+    if let (Some(s), Some(v)) = (unsafe { sim.as_mut() }, unsafe { vel.as_ref() }) {
+        s.sim.mario.launch((*v).into());
+    }
+}
+
+/// Boosts the jump Mario is in: horizontal travel times `factor` until he lands (a host's
+/// sprint-jump item). Ignored on the ground.
+///
+/// # Safety
+/// `sim` from [`sms_sim_new`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_sim_boost_jump(sim: *mut SmsSim, factor: f32) {
+    // SAFETY: the caller promised a valid pointer.
+    if let Some(s) = unsafe { sim.as_mut() } {
+        s.sim.mario.boost_jump(factor);
+    }
+}
+
 /// Sets host tuning (see [`SmsTuning`]); a new sim has the game's.
 ///
 /// # Safety
@@ -793,7 +920,7 @@ pub unsafe extern "C" fn sms_sim_set_tuning(sim: *mut SmsSim, tuning: *const Sms
 /// `SmsGroundHit`, `SmsRoofHit`, `SmsWallHit`, `SmsEvent`, `SmsHost`, `SmsPad`, `SmsState`,
 /// `SmsModelInfo`, `SmsBatch`, `SmsTexture`, `SmsDraw`, `SmsViewFrame`, `SmsTuning`,
 /// `SmsWaterVertex`, `SmsWaterInfo`, `SmsEnemy`, `SmsFxVertex`, `SmsFxBatch`, `SmsFxInfo`,
-/// `SmsHudInfo`. Writes up to `max`;
+/// `SmsHudInfo`, `SmsLimits`. Writes up to `max`;
 /// returns how many there are.
 ///
 /// # Safety
@@ -823,6 +950,7 @@ pub unsafe extern "C" fn sms_struct_sizes(out: *mut u32, max: u32) -> u32 {
         size_of::<view::SmsFxBatch>(),
         size_of::<view::SmsFxInfo>(),
         size_of::<view::SmsHudInfo>(),
+        size_of::<SmsLimits>(),
     ];
     if !out.is_null() {
         for (i, s) in sizes.iter().take(max as usize).enumerate() {
@@ -1016,13 +1144,14 @@ mod tests {
 
     #[test]
     fn struct_sizes_are_what_hosts_mirror() {
-        let mut sizes = [0u32; 21];
-        let n = unsafe { sms_struct_sizes(sizes.as_mut_ptr(), 21) } as usize;
+        let mut sizes = [0u32; 22];
+        let n = unsafe { sms_struct_sizes(sizes.as_mut_ptr(), 22) } as usize;
         // ror2-mario's Native.cs and ror2-common's view structs check these at load.
         assert_eq!(
             &sizes[..n],
             &[
-                12, 20, 8, 16, 32, 56, 24, 52, 40, 24, 12, 64, 48, 44, 24, 24, 24, 36, 16, 12, 32
+                12, 20, 8, 16, 32, 56, 24, 52, 40, 24, 12, 64, 48, 44, 24, 24, 24, 36, 16, 12, 32,
+                32
             ]
         );
     }

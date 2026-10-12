@@ -40,6 +40,8 @@ struct Slot {
     pressure: f32,
     /// Fractional particle accumulator (`unk37C`).
     emit_acc: f32,
+    /// Water owed for drops at a host's spray rate (`limits.rs`), less than one unit.
+    water_carry: f32,
     /// Trigger nozzles.
     state: TriggerState,
     timer: i16,
@@ -581,6 +583,7 @@ impl Mario {
     fn nozzle_movement(&mut self, host: &mut dyn Host, r_level: f32, pad: &Pad) {
         let squatting = self.status == Status::Squat;
         let fades = self.options.spray_pressure_fades;
+        let hover_time = self.limits.hover_time;
         let upper = self.upper;
         let in_water = self.in_water;
         let p = self.params.clone();
@@ -626,7 +629,7 @@ impl Mario {
                 s.fill = np.inside_pressure_max;
                 if s.state == TriggerState::Inactive {
                     s.state = TriggerState::Active;
-                    s.timer = np.trigger_time;
+                    s.timer = crate::limits::trigger_time(kind, np.trigger_time, hover_time);
                     host.event(Event::TriggerFired(kind));
                     // `unk38C`, set in `TWaterGun::init`; Hover has none.
                     fired = match kind {
@@ -726,6 +729,7 @@ impl Mario {
 
     fn emit_one(&mut self, host: &mut dyn Host, kind: NozzleKind, index: usize, p: &Params) {
         let np = p.nozzle(kind).clone();
+        let rate = self.limit_spray_rate(kind);
         // `getEmitPosDirSpeed`: the drawn muzzle when the host reported it; riding, Yoshi's
         // tongue joint (`getEmitMtx`).
         let (pos, dir) = match self.fludd.as_ref().and_then(|f| f.emitter(index)) {
@@ -773,7 +777,7 @@ impl Mario {
                 if !(a > 0.0) {
                     return;
                 }
-                s.emit_acc += a * (np.num - np.num_min) + np.num_min;
+                s.emit_acc += (a * (np.num - np.num_min) + np.num_min) * rate;
                 let n = s.emit_acc as i32;
                 if n == 0 {
                     return;
@@ -812,8 +816,17 @@ impl Mario {
                 power = np.emit_pow * a * np.emit_ctrl + np.emit_pow * (1.0 - np.emit_ctrl);
                 reaction = np.reaction_pow * power;
             }
-            // emitRequest accepts every particle in this model.
-            f.water = (f.water - count * np.dec_rate as i32).max(0);
+            // emitRequest accepts every particle in this model. A host's spray rate
+            // (`limits.rs`) takes that much less water a drop, so the tank lasts as long.
+            let cost = if rate == 1.0 {
+                count * np.dec_rate as i32
+            } else {
+                let c = count as f32 * np.dec_rate as f32 / rate + s.water_carry;
+                let whole = c.floor();
+                s.water_carry = c - whole;
+                whole as i32
+            };
+            f.water = (f.water - cost).max(0);
             f.emitted += count as u32;
         }
 

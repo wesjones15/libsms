@@ -461,6 +461,33 @@ when running into it faster than `mClashSpeed`.
 Not yet: `SUPER_HIP_DROP` from below (`MARIO_FLAG_UNK200`), pick-up enemies, the fence and
 roof punches, NPCs.
 
+## 7d. Host limits and host forces (`limits.rs`, `Mario::launch`/`add_water`; not the game)
+
+None of this is Sunshine's. It exists for hosts that bill some of Mario's moves as abilities
+with charges and cooldowns (Risk of Rain 2's skills and items). `Limits::default()` is the game:
+nothing limited, nothing stretched, and every scenario that doesn't set limits plays as before.
+
+- `air_uses`: each start of a nozzle while airborne (R pressed, or another nozzle fitted while
+  R stays down) spends a use; one is free per time off the ground, then `air_extra` (handed in
+  by the host and counted down). With none left R reads as up until it's let go. A use lasts
+  while R stays down; starting on the ground is free. Reported as `AirNozzle { extra }`.
+- `air_jumps`: A in the air does the next jump of the chain as if timed perfectly on a landing
+  (from a fall a plain jump, then the double, then triples), unless a stick spin makes it a
+  spin jump or a stomp's late window wants it. Back on landing. Reported as `AirJump`.
+- `spray_rate`: the Spray's drops a tick times this, each taking that much less water (a
+  fractional carry keeps the total exact). `spray_ticks`: the Spray stops after that long until
+  R is let go.
+- `hover_time`: the Hover's `mTriggerTime` times this. `turbo_speed`: ground covered while the
+  Turbo dashes times this, on top of `Options::move_speed`.
+- `wet_slide`: a belly slide turns wet (`mWasOnWaterSlip` friction, as over FLUDD's water) only
+  with a charge (`ready`), over FLUDD's water or (`anywhere`) on any ground; it glides for
+  `max_ticks` then turns plain. Without a charge it stays plain, even over water. `WetSlide`.
+- `PoundStart`: a ground pound's wind-up began (for hosts that charge for pounds).
+- `Mario::launch(vel)`: the host's world throws Mario (jump pads, knockback): `mVel = vel`,
+  facing along its horizontal part (or away from it, flying backwards, when that's mostly behind
+  him), status `FORCE_JUMP` until he lands. `Mario::boost_jump(k)`: horizontal travel in the air
+  times `k` until landing (a sprint-jump item). `Mario::add_water(share)`: tops up the tank.
+
 ## 8. Verified numbers (disc tuning, headless, `cargo run -p libsms --example report`)
 
 | What | Sim |

@@ -417,7 +417,8 @@ impl Host for World {
                     f.throw(pos, yaw, power, vel);
                 }
             }
-            Event::Land { .. } | Event::Sound(_) => {}
+            Event::Land { .. } | Event::Sound(_) | Event::PoundStart => {}
+            Event::AirNozzle { .. } | Event::AirJump | Event::WetSlide => {}
         }
     }
 }

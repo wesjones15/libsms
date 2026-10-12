@@ -244,6 +244,10 @@ pub struct Mario {
     pub params: Params,
     pub anims: AnimTable,
     pub options: Options,
+    /// A host's own limits on FLUDD and the slide (charges, cooldowns); the default is the
+    /// game's: none.
+    pub limits: crate::limits::Limits,
+    pub(crate) lim: crate::limits::LimitState,
 
     pub pos: Vec3,
     pub prev_pos: Vec3,
@@ -364,6 +368,8 @@ impl Mario {
             params,
             anims,
             options: Options::default(),
+            limits: crate::limits::Limits::default(),
+            lim: crate::limits::LimitState::default(),
             pos,
             prev_pos: pos,
             vel: Vec3::ZERO,
@@ -468,6 +474,50 @@ impl Mario {
         }
     }
 
+    /// Adds `share` of a full tank to FLUDD's (a host's own source of water: healing, a
+    /// pickup); the full-tank chime plays as it fills. Not the game's.
+    pub fn add_water(&mut self, share: f32) {
+        if !(share > 0.0) {
+            return;
+        }
+        let p = &self.params;
+        if let Some(f) = self.fludd.as_mut() {
+            let max = f.max_water(p);
+            let add = (share.min(1.0) * max as f32).round() as i32;
+            f.water = (f.water + add.max(1)).min(max);
+        }
+    }
+
+    /// The host's world throws Mario: his velocity becomes `vel` (units per 30 Hz frame,
+    /// `mVel`) and he flies as from a spring (`FORCE_JUMP`), facing along the throw, or away
+    /// from it when it's mostly backwards (he flies back, as from a hit). For jump pads,
+    /// knockback and the like; not the game's own (its springs set their own speeds).
+    pub fn launch(&mut self, vel: Vec3) {
+        if !vel.is_finite() {
+            return;
+        }
+        let flat = Vec3::new(vel.x, 0.0, vel.z);
+        let speed = flat.length();
+        if speed > 0.5 {
+            let yaw = math::matan(vel.z, vel.x);
+            let ahead = (-0x4000..=0x4000).contains(&math::diff(yaw, self.face_yaw));
+            if ahead {
+                self.face_yaw = yaw;
+                self.forward_vel = speed;
+            } else {
+                self.face_yaw = yaw.wrapping_add(i16::MIN);
+                self.forward_vel = -speed;
+            }
+            self.model_yaw = self.face_yaw;
+        } else {
+            self.forward_vel = 0.0;
+        }
+        self.slide_x = vel.x;
+        self.slide_z = vel.z;
+        self.change_status(Status::ForceJump, 0, true);
+        self.vel = vel;
+    }
+
     /// Standing in shallow water ([`Host::water_level`] above his feet).
     pub fn in_water(&self) -> bool {
         self.in_water
@@ -506,11 +556,16 @@ impl Mario {
 
     /// One 120 Hz step (`TMario::playerControl`).
     pub fn tick(&mut self, host: &mut dyn Host, pad: &Pad, camera_yaw: Angle) {
+        // The host's limits may hold R back (`limits.rs`); the game's never do.
+        let pad = &self.limit_pad(pad);
         self.camera_yaw = camera_yaw;
         self.pad = *pad;
         self.prev_pos = self.pos;
 
         self.check_player_action(host, pad);
+        if self.limit_air_jump() {
+            self.input.jump = false;
+        }
         self.check_yoshi_collision(host);
         self.check_enemy_collision(host);
         self.check_yoshi_get_off();
@@ -817,10 +872,14 @@ impl Mario {
             Kind::Jumping => self.set_status_to_jumping(to, arg),
             _ => to,
         };
+        if to == Status::HipDrop && self.status != Status::HipDrop {
+            self.events.push(Event::PoundStart);
+        }
         self.prev_status = self.status;
         self.status = to;
         self.status_arg = arg;
         self.enemies_hit.clear();
+        self.lim.wet_decided = false;
         self.status_state = 0;
         self.status_timer = 0;
         true

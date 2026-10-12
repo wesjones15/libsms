@@ -183,7 +183,7 @@ impl Mario {
         if self.ground_illegal() {
             return 2;
         }
-        let ny = self.ground.normal.y * self.options.move_speed;
+        let ny = self.ground.normal.y * self.limit_ground_speed();
         let next = Vec3::new(
             self.pos.x + self.vel.x / 4.0 * ny,
             self.pos.y,
@@ -330,7 +330,7 @@ impl Mario {
             self.vel.z *= max / speed;
         }
 
-        let k = self.options.move_speed;
+        let k = self.limit_air_speed();
         let next = self.pos + Vec3::new(self.vel.x * k, self.vel.y, self.vel.z * k) * 0.25;
         let ret = self.check_ground_at_jumping(host, next, arg);
 

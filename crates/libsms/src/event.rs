@@ -56,6 +56,15 @@ pub enum Event {
     },
     /// Out of health (`loserExec`): Mario lies down for good until the host restarts him.
     Down,
+    /// A ground pound began (its wind-up, `changePlayerStatus(HIP_ATTACK)`).
+    PoundStart,
+    /// Host limits ([`crate::Limits`]): FLUDD started in mid-air and spent a use; `extra`:
+    /// one of the host's extras, not the free one.
+    AirNozzle { extra: bool },
+    /// Host limits: a mid-air jump was spent.
+    AirJump,
+    /// Host limits: a belly slide turned wet and spent the charge.
+    WetSlide,
     /// A sound the game starts at this point (`startSoundActor` and friends), by its
     /// `MSD_SE_*` name. Ids without the `0x800` bit are held sounds the game re-requests every
     /// frame while they last; hosts keep them alive rather than restarting them.

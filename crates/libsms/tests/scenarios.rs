@@ -1974,3 +1974,317 @@ fn short_hop_option_keeps_a_tapped_jump_high() {
     // Held, it changes nothing.
     assert!((apex(0.5, 200) - full).abs() < 1.0);
 }
+
+// ---- host limits (limits.rs): none of this is the game's ------------------------------------
+
+fn emits(s: &Scene<FlatHost>) -> u32 {
+    s.host
+        .events
+        .iter()
+        .map(|e| match e {
+            Event::WaterEmit(w) => w.count,
+            _ => 0,
+        })
+        .sum()
+}
+
+/// Mario in the air with FLUDD's Spray, well clear of the ground.
+fn airborne_with_fludd(s: &mut Scene<FlatHost>) {
+    s.sim.mario.give_fludd();
+    s.pad.a = true;
+    s.press_a();
+    s.pad.a = true;
+    s.step(10);
+    assert!(s.mario().status.is_jumping());
+}
+
+fn tap_r(s: &mut Scene<FlatHost>) {
+    s.pad.r_analog = 200;
+    s.step(3);
+    s.pad.r_analog = 0;
+    s.step(1);
+}
+
+fn air_uses(s: &Scene<FlatHost>, extra: bool) -> usize {
+    s.event_count(|e| matches!(e, Event::AirNozzle { extra: x } if *x == extra))
+}
+
+#[test]
+fn limited_air_uses_spend_the_free_one_then_extras_then_refuse() {
+    let mut s = Scene::flat();
+    s.sim.mario.limits.air_uses = true;
+    s.sim.mario.limits.air_extra = 1;
+    airborne_with_fludd(&mut s);
+    tap_r(&mut s);
+    assert_eq!((air_uses(&s, false), air_uses(&s, true)), (1, 0));
+    tap_r(&mut s);
+    assert_eq!((air_uses(&s, false), air_uses(&s, true)), (1, 1));
+    assert_eq!(s.mario().limits.air_extra, 0);
+    // None left: R does nothing.
+    let before = emits(&s);
+    s.pad.r_analog = 200;
+    s.step(40);
+    assert_eq!(emits(&s), before, "sprayed without a use");
+    assert_eq!(air_uses(&s, false) + air_uses(&s, true), 2);
+    // Let go and land, and the free use is back.
+    s.pad.r_analog = 0;
+    s.pad.a = false;
+    assert!(s.until(600, |m| !m.status.is_jumping()));
+    s.step(5);
+    s.press_a();
+    s.step(10);
+    tap_r(&mut s);
+    assert_eq!(air_uses(&s, false), 2);
+}
+
+#[test]
+fn air_uses_are_free_on_the_ground_and_unlimited_by_default() {
+    let mut s = Scene::flat();
+    airborne_with_fludd(&mut s);
+    for _ in 0..3 {
+        tap_r(&mut s);
+    }
+    assert_eq!(s.event_count(|e| matches!(e, Event::AirNozzle { .. })), 0);
+    let mut s = Scene::flat();
+    s.sim.mario.limits.air_uses = true;
+    s.sim.mario.give_fludd();
+    s.pad.r_analog = 200;
+    s.step(20);
+    assert_eq!(s.event_count(|e| matches!(e, Event::AirNozzle { .. })), 0);
+}
+
+#[test]
+fn air_jumps_climb_the_chain() {
+    let mut s = Scene::flat();
+    s.sim.mario.limits.air_jumps = 3;
+    s.run_forward();
+    s.secs(1.0);
+    s.press_a();
+    assert_eq!(s.mario().status, Status::Jump);
+    s.step(20);
+    s.press_a();
+    assert_eq!(s.mario().status, Status::SecondJump);
+    s.step(20);
+    s.press_a();
+    assert_eq!(s.mario().status, Status::UltraJump);
+    let y = s.mario().pos.y;
+    s.step(20);
+    s.press_a();
+    assert_eq!(s.mario().status, Status::UltraJump);
+    assert!(s.mario().vel.y > 0.0 && s.mario().pos.y > y);
+    // All three spent.
+    s.step(20);
+    s.press_a();
+    assert_eq!(s.event_count(|e| matches!(e, Event::AirJump)), 3);
+    // Back on landing.
+    s.pad.stick = Vec2::ZERO;
+    assert!(s.until(2000, |m| !m.status.is_jumping()));
+    s.step(30);
+    s.press_a();
+    s.step(20);
+    s.press_a();
+    assert_eq!(s.event_count(|e| matches!(e, Event::AirJump)), 4);
+}
+
+#[test]
+fn no_air_jumps_by_default() {
+    let mut s = Scene::flat();
+    s.press_a();
+    s.step(20);
+    s.press_a();
+    assert_eq!(s.mario().status, Status::Jump);
+    assert_eq!(s.event_count(|e| matches!(e, Event::AirJump)), 0);
+}
+
+#[test]
+fn spray_rate_fires_more_drops_for_the_same_water() {
+    if need_disc() {
+        return;
+    }
+    let run = |rate: f32| {
+        let mut s = Scene::flat();
+        s.sim.mario.limits.spray_rate = rate;
+        s.sim.mario.give_fludd();
+        let full = s.mario().fludd.as_ref().unwrap().water;
+        s.pad.r_analog = 200;
+        s.secs(2.0);
+        (emits(&s), full - s.mario().fludd.as_ref().unwrap().water)
+    };
+    let (n1, w1) = run(1.0);
+    let (n2, w2) = run(2.0);
+    println!("spray: rate 1 {n1} drops {w1} water, rate 2 {n2} drops {w2} water");
+    assert!(n2 as f32 > 1.8 * n1 as f32, "{n1} {n2}");
+    assert!((w2 - w1).abs() as f32 <= 0.05 * w1 as f32 + 2.0, "{w1} {w2}");
+}
+
+#[test]
+fn spray_stops_at_its_limit_until_r_is_let_go() {
+    let mut s = Scene::flat();
+    s.sim.mario.limits.spray_ticks = TICK_HZ;
+    s.sim.mario.give_fludd();
+    s.pad.r_analog = 200;
+    s.secs(1.2);
+    let at_limit = emits(&s);
+    assert!(at_limit > 0);
+    s.secs(1.0);
+    assert_eq!(emits(&s), at_limit, "kept spraying past the limit");
+    s.pad.r_analog = 0;
+    s.step(2);
+    s.pad.r_analog = 200;
+    s.secs(0.5);
+    assert!(emits(&s) > at_limit);
+}
+
+fn hover_ticks(hover_time: f32) -> u32 {
+    let mut s = Scene::flat();
+    s.sim.mario.limits.hover_time = hover_time;
+    s.sim.mario.give_fludd();
+    {
+        let p = s.sim.mario.params.clone();
+        let f = s.sim.mario.fludd.as_mut().unwrap();
+        f.change_nozzle(NozzleKind::Hover, false, &p);
+        f.refill(&p);
+    }
+    s.press_a();
+    s.step(20);
+    s.pad.r_analog = 255;
+    let mut ticks = 0;
+    for _ in 0..(10 * TICK_HZ) {
+        s.step(1);
+        if s.mario().status == Status::Rocket {
+            ticks += 1;
+        }
+    }
+    ticks
+}
+
+#[test]
+fn hover_time_stretches_the_hover() {
+    if need_disc() {
+        return;
+    }
+    let (one, two) = (hover_ticks(1.0), hover_ticks(2.0));
+    println!("hover: {one} ticks, x2 {two}");
+    assert!(two as f32 > 1.6 * one as f32, "{one} {two}");
+}
+
+fn slide_length(limits: libsms::Limits, wet: bool) -> (f32, usize) {
+    let mut s = Scene::flat();
+    s.sim.mario.limits = limits;
+    s.run_forward();
+    s.secs(1.0);
+    s.press_a();
+    s.step(10);
+    s.pad.b = true;
+    s.step(1);
+    s.pad.b = false;
+    s.pad.stick = Vec2::ZERO;
+    assert!(s.until(600, |m| m.status == Status::Catch));
+    let from = s.mario().pos;
+    s.sim.mario.water_underfoot = wet;
+    assert!(s.until(4000, |m| m.status != Status::Catch));
+    (
+        (s.mario().pos - from).length(),
+        s.event_count(|e| matches!(e, Event::WetSlide)),
+    )
+}
+
+#[test]
+fn a_wet_slide_charge_makes_any_slide_glide_once() {
+    use libsms::{Limits, WetSlide};
+    let charged = |ready, anywhere, max_ticks| Limits {
+        wet_slide: Some(WetSlide {
+            ready,
+            anywhere,
+            max_ticks,
+        }),
+        ..Limits::default()
+    };
+    let dry = slide_length(Limits::default(), false).0;
+    let game_wet = slide_length(Limits::default(), true).0;
+    let (anywhere, spent) = slide_length(charged(true, true, 0), false);
+    let (no_charge, none) = slide_length(charged(false, true, 0), true);
+    let (needs_water, _) = slide_length(charged(true, false, 0), false);
+    let (capped, _) = slide_length(charged(true, true, 60), false);
+    println!(
+        "slides: dry {dry:.0}, game wet {game_wet:.0}, charged {anywhere:.0}, no charge on water \
+         {no_charge:.0}, charged dry needing water {needs_water:.0}, capped {capped:.0}"
+    );
+    assert_eq!((spent, none), (1, 0));
+    assert!(anywhere > 1.6 * dry, "{dry} {anywhere}");
+    assert!((no_charge - dry).abs() < 0.05 * dry, "{dry} {no_charge}");
+    assert!((needs_water - dry).abs() < 0.05 * dry, "{dry} {needs_water}");
+    assert!(capped > dry && capped < anywhere, "{dry} {capped} {anywhere}");
+}
+
+#[test]
+fn a_pound_reports_its_start() {
+    let mut s = Scene::flat();
+    s.pad.a = true;
+    s.press_a();
+    s.step(40);
+    s.pad.l = true;
+    s.step(1);
+    s.pad.l = false;
+    assert_eq!(s.event_count(|e| matches!(e, Event::PoundStart)), 1);
+    assert!(s.until(1500, |m| !m.status.is_jumping()));
+    assert_eq!(s.event_count(|e| matches!(e, Event::PoundStart)), 1);
+}
+
+#[test]
+fn a_launch_throws_mario_and_he_lands() {
+    let mut s = Scene::flat();
+    s.sim.mario.face_yaw = 0;
+    // Up and back (-Z, behind him): he flies backwards, still facing +Z.
+    s.sim.mario.launch(Vec3::new(0.0, 60.0, -30.0));
+    assert_eq!(s.mario().status, Status::ForceJump);
+    assert!(s.mario().forward_vel < 0.0);
+    let mut apex = 0.0f32;
+    for _ in 0..600 {
+        s.step(1);
+        apex = apex.max(s.mario().pos.y);
+        if !s.mario().status.is_jumping() {
+            break;
+        }
+    }
+    assert!(apex > 300.0, "apex {apex}");
+    assert!(s.mario().pos.z < -100.0, "{:?}", s.mario().pos);
+    assert!(!s.mario().status.is_jumping());
+}
+
+#[test]
+fn a_jump_boost_carries_further_until_landing() {
+    let run = |boost: f32| {
+        let mut s = Scene::flat();
+        s.run_forward();
+        s.secs(1.0);
+        s.press_a();
+        s.sim.mario.boost_jump(boost);
+        let from = s.mario().pos.z;
+        assert!(s.until(600, |m| !m.status.is_jumping()));
+        let air = s.mario().pos.z - from;
+        // Gone once he's down.
+        let z = s.mario().pos.z;
+        s.pad.stick = Vec2::ZERO;
+        s.step(1);
+        (air, s.mario().pos.z - z)
+    };
+    let (plain, _) = run(1.0);
+    let (boosted, after) = run(2.0);
+    assert!(boosted > 1.8 * plain, "{plain} {boosted}");
+    assert!(after < 40.0, "{after}");
+}
+
+#[test]
+fn add_water_tops_up_the_tank() {
+    let mut s = Scene::flat();
+    s.sim.mario.give_fludd();
+    let p = s.sim.mario.params.clone();
+    s.sim.mario.fludd.as_mut().unwrap().water = 0;
+    s.sim.mario.add_water(0.25);
+    let f = s.mario().fludd.as_ref().unwrap();
+    let max = f.max_water(&p);
+    assert!((f.water - max / 4).abs() <= 1, "{} of {max}", f.water);
+    s.sim.mario.add_water(5.0);
+    assert_eq!(s.mario().fludd.as_ref().unwrap().water, max);
+}

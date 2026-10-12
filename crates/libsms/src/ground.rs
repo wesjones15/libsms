@@ -866,10 +866,9 @@ impl Mario {
             }
             return self.change_status(Status::CatchStop, 0, false);
         }
-        // FLUDD's water on the ground: the belly slide glides (`do_sliding`).
-        if self.wet_ground {
-            self.status_state = 1;
-        }
+        // FLUDD's water on the ground: the belly slide glides (`do_sliding`); a host's limits
+        // may ask a charge for it, or let any slide glide (`limits.rs`).
+        self.status_state = self.limit_wet_slide() as u32;
         let stop = self.slip_params().slide_stop_catch;
         if self.do_sliding(stop) {
             self.set_player_velocity(0.0);

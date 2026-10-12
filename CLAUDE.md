@@ -66,7 +66,10 @@ Workspace:
   (`libsms::water`, through the same callbacks; its enemy hits come back as `WaterHit` events)
   and takes host tuning (`sms_sim_set_tuning`: jump height, A buffer, chain grace, move speed,
   spray reach, solid enemies, nozzle cycling, stomp bounce, rocket height, pound jump, stomp jump,
-  short hop, unlimited water; `Options`), `sms_sim_refill` and an optional `water` callback
+  short hop, unlimited water; `Options`), host limits (`sms_sim_set_limits`, `libsms::Limits` in
+  `limits.rs`: mid-air FLUDD uses, mid-air jumps, spray rate and limit, hover time, Turbo speed,
+  charged wet slides; all off by default, so the core stays the game's), `sms_sim_launch` (jump
+  pads, knockback), `sms_sim_boost_jump`, `sms_sim_add_water`, `sms_sim_refill` and an optional `water` callback
   (shallow water's surface, `Host::water_level`). `SmsState::pounding` says when to draw the super pound's flames; a `GroundPound`
   event's value is the drop. Each step the FFI tells Mario about water on the ground for the
   wet belly slide; the view builds the water's quads
