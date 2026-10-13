@@ -65,10 +65,39 @@ pub enum Event {
     AirJump,
     /// Host limits: a belly slide turned wet and spent the charge.
     WetSlide,
+    /// A particle effect the game starts at this point (`TMarioParticleManager`), by its
+    /// `.jpa` name: dust, stars, blurs. The sim doesn't draw; a view runs the effect.
+    Particle(ParticleCue),
     /// A sound the game starts at this point (`startSoundActor` and friends), by its
     /// `MSD_SE_*` name. Ids without the `0x800` bit are held sounds the game re-requests every
     /// frame while they last; hosts keep them alive rather than restarting them.
     Sound(SoundCue),
+}
+
+/// One `TMarioParticleManager` request.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ParticleCue {
+    /// The effect's file name, `ms_*` (`/scene/mario/particle/<name>.jpa` and the common
+    /// ones).
+    pub name: &'static str,
+    pub at: FxAt,
+    /// `setGlobalScale` (1 unless the game shrinks it).
+    pub scale: f32,
+}
+
+/// Where a [`ParticleCue`] goes.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FxAt {
+    /// `emit` / `emitWithRotate(id, pos, 0, yaw, 0)`: started once at `pos` (sim world),
+    /// turned `yaw` about up; it runs out by itself.
+    Once { pos: Vec3, yaw: i16 },
+    /// `emitAndBindToMtxPtr(id, getCenterAnmMtx(), 1, this)`, asked for again every tick it
+    /// lasts: on Mario's middle as drawn, let go the first frame it isn't asked for.
+    Center,
+    /// The same on the body's joint `n` (`getAnmMtx(n)`).
+    Joint(u16),
+    /// `emitAndBindToPosPtr(id, &mPosition, 1, this)`: held, at Mario's feet.
+    Feet,
 }
 
 /// How Mario hit an enemy (the `HIT_MESSAGE_*` he sent).

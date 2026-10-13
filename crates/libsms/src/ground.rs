@@ -284,6 +284,7 @@ impl Mario {
             let rot = self.params.mario.waiting_rot_sp as i32;
             self.face_yaw = math::turn_toward(self.face_yaw, self.intended_yaw, rot);
             if self.intended_mag > self.params.controller.start_to_walk_level {
+                self.emit_smoke(self.face_yaw);
                 return self.change_status(Status::Run, 0, false);
             }
         }
@@ -548,6 +549,11 @@ impl Mario {
             return self.change_status(Status::WalkEnd, 0, false);
         }
         if self.is_running_turning() && self.forward_vel >= self.params.run.turn_need_sp {
+            // The skid's dust, kicked up behind.
+            let back = self.face_yaw.wrapping_add(i16::MIN);
+            self.fx_once("ms_mariwalk1_a", back);
+            self.fx_once("ms_mariwalk1_c", back);
+            self.fx_once("ms_mariwalk1_b", back);
             return self.change_status(Status::Turn, 0, false);
         }
         if self.can_squat() {
@@ -571,6 +577,7 @@ impl Mario {
             2 if self.on_yoshi() => self.set_player_velocity(0.0),
             2 => {
                 if self.forward_vel > self.params.mario.clash_speed {
+                    self.bump_stars();
                     host.event(Event::WallBump);
                     return self.change_status(Status::JumpShortBackDown, 0, false);
                 }
@@ -798,10 +805,12 @@ impl Mario {
             }
             1 => {
                 self.set_anim(anim, 1.0);
+                self.front_slip_effect();
             }
             2 if self.on_yoshi() => self.set_player_velocity(0.0),
             2 => {
                 if self.forward_vel.abs() > self.params.mario.clash_speed {
+                    self.bump_stars();
                     host.event(Event::WallBump);
                 }
                 if self.is_slip_start() {
@@ -964,6 +973,7 @@ impl Mario {
     fn downing(&mut self, host: &mut dyn Host, c: ClipName, limit: f32) -> bool {
         if self.status_timer == 0 {
             self.status_timer += 1;
+            self.bump_stars();
             host.event(Event::WallBump);
         }
         let frame = self.set_anim(c, 1.0);

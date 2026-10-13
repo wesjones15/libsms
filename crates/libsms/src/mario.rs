@@ -544,6 +544,71 @@ impl Mario {
         }
     }
 
+    /// Starts particle effect `name` (a view draws it; MarioParticle.cpp).
+    pub(crate) fn fx(&mut self, name: &'static str, at: crate::event::FxAt) {
+        self.fx_scaled(name, at, 1.0);
+    }
+
+    pub(crate) fn fx_scaled(&mut self, name: &'static str, at: crate::event::FxAt, scale: f32) {
+        self.events
+            .push(Event::Particle(crate::event::ParticleCue { name, at, scale }));
+    }
+
+    /// `emitParticle(id)` / `emitParticle(id, rot)`: once, at Mario's feet.
+    pub(crate) fn fx_once(&mut self, name: &'static str, yaw: i16) {
+        let pos = self.pos;
+        self.fx(name, crate::event::FxAt::Once { pos, yaw });
+    }
+
+    /// `emitSmoke`: a puff of dust as Mario sets off, unless he stands in a pool.
+    pub(crate) fn emit_smoke(&mut self, yaw: i16) {
+        if !self.in_water {
+            self.fx_once("ms_mariwalk1_a", yaw);
+        }
+    }
+
+    /// `strongTouchDownEffect`: a heavy landing's dust ring and puff.
+    pub(crate) fn strong_touch_down_effect(&mut self) {
+        let yaw = self.face_yaw;
+        self.fx_once("ms_jump_ed_a", yaw);
+        self.fx_once("ms_jump_ed_b", yaw);
+    }
+
+    /// `smallTouchDownEffect`: a light landing's puff, at 0.7.
+    pub(crate) fn small_touch_down_effect(&mut self) {
+        let pos = self.pos;
+        self.fx_scaled(
+            "ms_jump_ed_b",
+            crate::event::FxAt::Once { pos, yaw: 0 },
+            0.7,
+        );
+    }
+
+    /// `emitParticle(PARTICLE_MS_DMG_C)`: the stars of bumping into something.
+    pub(crate) fn bump_stars(&mut self) {
+        self.fx_once("ms_dmg_c", 0);
+    }
+
+    /// `frontSlipEffect`, every tick of a belly slide: a wet one throws up spray, a dry one
+    /// dust (not under water; sand's own dust isn't modelled).
+    pub(crate) fn front_slip_effect(&mut self) {
+        use crate::event::FxAt;
+        if self.wet_sliding() || self.water_underfoot {
+            self.fx("ms_m_watslide_a", FxAt::Center);
+            self.fx("ms_m_watslide_b", FxAt::Center);
+            self.fx("ms_m_watslide_c", FxAt::Center);
+        } else if !self.in_water {
+            self.fx("ms_m_slipsmoke", FxAt::Joint(0));
+        }
+    }
+
+    /// `emitBlurSpinJump`: the spin jump's swirl.
+    pub(crate) fn emit_blur_spin_jump(&mut self) {
+        use crate::event::FxAt;
+        self.fx("ms_m_blur2", FxAt::Center);
+        self.fx("ms_m_blur2sp", FxAt::Center);
+    }
+
     /// Belly sliding over FLUDD's water (`catching` with `MARIO_FLAG_RECENTLY_LEFT_WATER`).
     pub fn wet_sliding(&self) -> bool {
         self.status == Status::Catch && self.status_state == 1

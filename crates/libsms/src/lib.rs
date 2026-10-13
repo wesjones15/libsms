@@ -38,7 +38,7 @@ pub use assets::Assets;
 pub use clock::{FixedClock, TICK_DT, TICK_HZ};
 pub use damage::{Coin, DamageKind};
 pub use egg::{Egg, EggLook, EggState};
-pub use event::{EnemyHitKind, Event, JumpKind, SoundCue, WaterEmit};
+pub use event::{EnemyHitKind, Event, FxAt, JumpKind, ParticleCue, SoundCue, WaterEmit};
 pub use fludd::{Aim, Fludd, TriggerState};
 pub use fludd_anim::FluddLook;
 pub use glam::{Vec2, Vec3};

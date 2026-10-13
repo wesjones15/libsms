@@ -171,11 +171,31 @@ impl Mario {
             1 => {
                 let strong = self.ask_strong_ground_touch();
                 host.event(Event::Land { strong });
+                // `jumpingBasic`: a hard landing with FLUDD on (but the Hover) shakes him
+                // with the heavy dust; then a spin jump's landing is heavy, any other light.
+                if strong
+                    && self
+                        .fludd
+                        .as_ref()
+                        .is_some_and(|f| f.nozzle != crate::params::NozzleKind::Hover)
+                {
+                    self.strong_touch_down_effect();
+                }
+                let spun = matches!(
+                    self.status,
+                    Status::UTurnJump | Status::LeftRotateJump | Status::RightRotateJump
+                );
                 self.fall_start_y = self.pos.y;
                 self.change_status(on_ground, 0, false);
+                if spun {
+                    self.strong_touch_down_effect();
+                } else {
+                    self.small_touch_down_effect();
+                }
             }
             2 => {
                 if self.forward_vel > self.params.mario.clash_speed {
+                    self.bump_stars();
                     host.event(Event::WallBump);
                     self.change_status(Status::JumpShortBackDown, 0, false);
                     return r;
@@ -369,6 +389,7 @@ impl Mario {
             return true;
         }
         self.set_anim(clip::SPIN, 1.0);
+        self.emit_blur_spin_jump();
         self.jumping_basic(host, Status::SecJumpSlip, clip::SPIN, 0);
         self.status_timer += 1;
         let t = (self.status_timer * 4096) as i16;
@@ -399,6 +420,8 @@ impl Mario {
                 if self.vel.y > 0.0 {
                     self.vel.y = 0.0;
                 }
+                // A dive into a wall: stars.
+                self.bump_stars();
                 self.change_status(Status::JumpShortBackDown, 0, false);
             }
             _ => {}
@@ -454,6 +477,11 @@ impl Mario {
                 } else {
                     j.super_hip_attack_speed_y
                 };
+                // `emitBlurHipDrop`: the fall's smear (the super pound's flames are the view's,
+                // from `pounding`).
+                if self.status_state == 2 {
+                    self.fx("ms_m_blur3", crate::event::FxAt::Center);
+                }
                 match self.jump_process(host, 0) {
                     1 => {
                         let drop = (self.jump_peak_y - self.pos.y).max(0.0);
@@ -462,6 +490,19 @@ impl Mario {
                             super_: self.status_state == 3,
                             drop,
                         });
+                        let names: &[&'static str] = if self.status_state == 2 {
+                            &["ms_hipdrop_c", "ms_hipdrop_b", "ms_hipdrop_a"]
+                        } else {
+                            &[
+                                "ms_m_sphipd_hit_a",
+                                "ms_m_sphipd_hit_b",
+                                "ms_m_sphipd_hit_c",
+                                "ms_m_sphipd_hit_d",
+                            ]
+                        };
+                        for &n in names {
+                            self.fx_once(n, 0);
+                        }
                         self.change_status(Status::HipAttackEnd, 0, false);
                     }
                     2 => {
@@ -535,11 +576,20 @@ impl Mario {
             return self.change_status(Status::Landing, 0, false);
         }
         self.set_anim(clip::WALL_SLIDE, 1.0);
+        // `wallSlipEffect`: dust off the wall while sliding down it fast.
+        if self.vel.y < -10.0 {
+            self.fx("ms_mariwallsl1", crate::event::FxAt::Feet);
+        }
         false
     }
 
     /// `startJumpWall`.
     fn start_jump_wall(&mut self) -> bool {
+        if let Some(w) = self.wall {
+            let yaw = crate::math::matan(w.normal.z, w.normal.x).wrapping_add(i16::MIN);
+            self.fx_once("ms_wallkick_a", yaw);
+            self.fx_once("ms_wallkick_b", yaw);
+        }
         self.vel.y = 52.0;
         self.face_yaw = self.face_yaw.wrapping_add(i16::MIN);
         if self.vel.y + (HEIGHT + self.pos.y) >= self.roof_y {

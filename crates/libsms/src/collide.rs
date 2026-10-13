@@ -76,6 +76,10 @@ impl Mario {
         // The bounce changes status, which clears `enemies_hit`: stomping the same enemy
         // again on the way back down counts again.
         self.report_hit(host, e.id, EnemyHitKind::Trample);
+        // The stomp's burst.
+        for n in ["ms_fumi_a", "ms_fumi_b", "ms_fumi_c"] {
+            self.fx_once(n, 0);
+        }
         if self.status == Status::BroadJump {
             self.change_status(Status::BackJump, 0, false);
             return true;
