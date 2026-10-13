@@ -325,6 +325,9 @@ pub struct SmsTuning {
     /// 1: standing in the host's shallow water wets the ground as FLUDD's water does, so a belly
     /// slide there glides wet; 0: the game's (only FLUDD's water does).
     pub shallow_wet: u8,
+    /// 1: a wet belly slide also throws the old stand-in splashes, on top of the game's own
+    /// spray effect; 0: only the game's.
+    pub slide_splashes: u8,
 }
 
 /// A host's own limits on FLUDD and the slide ([`libsms::Limits`]), for games that bill them
@@ -371,6 +374,9 @@ pub struct SmsSim {
     pub(crate) water: WaterManager,
     /// Ticks since the water last moved.
     pub(crate) water_ticks: u32,
+    /// Also throw the host stand-in splashes during a wet belly slide
+    /// ([`WaterManager::slide_splashes`]), on top of the game's own `ms_m_watslide_*` spray.
+    pub(crate) slide_splashes: bool,
     status: CString,
     clip: CString,
     pub(crate) poisoned: bool,
@@ -634,6 +640,7 @@ pub unsafe extern "C" fn sms_sim_new(
         Ok(Some(sim)) => Box::into_raw(Box::new(SmsSim {
             water: WaterManager::new(&sim.mario.params),
             water_ticks: 0,
+            slide_splashes: false,
             sim,
             status: CString::default(),
             clip: CString::default(),
@@ -714,7 +721,7 @@ pub unsafe extern "C" fn sms_sim_step(
         while s.water_ticks >= 4 {
             s.water_ticks -= 4;
             s.water.step(&h, s.sim.mario.pos);
-            if s.sim.mario.wet_sliding() {
+            if s.slide_splashes && s.sim.mario.wet_sliding() {
                 s.water.slide_splashes(s.sim.mario.pos);
             }
             water_hits(host, &s.water.events);
@@ -975,6 +982,7 @@ pub unsafe extern "C" fn sms_sim_set_tuning(sim: *mut SmsSim, tuning: *const Sms
         o.unlimited_water = t.unlimited_water != 0;
         o.spray_pressure_fades = t.spray_steady == 0;
         o.shallow_water_wets = t.shallow_wet != 0;
+        s.slide_splashes = t.slide_splashes != 0;
         o.slide_fx_scale = if t.slide_fx_scale.is_finite() && t.slide_fx_scale > 0.0 {
             t.slide_fx_scale.clamp(0.1, 5.0)
         } else {

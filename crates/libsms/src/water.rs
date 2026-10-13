@@ -238,8 +238,9 @@ impl WaterManager {
         })
     }
 
-    /// Host effect for a belly slide over water (the game's `frontSlipEffect` water spray,
-    /// `MS_M_WATSLIDE_*`, which isn't ported): splashes thrown off either side of `pos`.
+    /// A stand-in for a belly slide over water, from before the game's own `frontSlipEffect`
+    /// spray (`MS_M_WATSLIDE_*`, now a particle effect: `Mario::front_slip_effect`) was ported:
+    /// splashes thrown off either side of `pos`. Hosts leave it off (`SmsTuning::slide_splashes`).
     pub fn slide_splashes(&mut self, pos: Vec3) {
         for _ in 0..2 {
             let off = Vec3::new(self.rand() * 120.0 - 60.0, 10.0, self.rand() * 120.0 - 60.0);
