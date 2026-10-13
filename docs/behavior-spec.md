@@ -20,6 +20,12 @@ This event leaves Sunshine health alone. RoR2 chooses its own height thresholds:
 half damage; ground pounds are always safe. Presentation omits super-pound landing
 stars (`ms_m_sphipd_hit_d`) while keeping smoke/ring.
 
+Host extension: `Mario::launch_pad` uses the host's complete ballistic velocity and
+gravity until collision. Unlike ordinary `launch` knockback, it suspends air steering,
+Sunshine speed caps, short-hop cuts and terminal-speed clamps. Velocity remains in
+units per 30 Hz frame; gravity is velocity lost per 120 Hz tick. RoR2 supplies its
+world gravity, so pads reach their intended target instead of a shortened Sunshine arc.
+
 ## 1. Time and units
 
 Host presentation: ground-pound landing effects stay at their impact position through a

@@ -2355,6 +2355,31 @@ fn a_launch_throws_mario_and_he_lands() {
 }
 
 #[test]
+fn host_jump_pad_preserves_ballistics_without_sunshine_speed_caps() {
+    let mut s = Scene::flat();
+    // 160 mVel exceeds Sunshine's horizontal cap. 0.5 gravity is deliberately
+    // different from both the shipped tuning and code defaults.
+    let velocity = Vec3::new(160.0, 100.0, 0.0);
+    let gravity = 0.5;
+    s.sim.mario.launch_pad(velocity, gravity);
+    s.pad.stick = Vec2::new(-1.0, 0.0);
+    s.pad.b = true; // Air actions must not divert a pad flight before collision.
+    for tick in 1..=300 {
+        s.step(1);
+        let n = tick as f32;
+        let expected = Vec3::new(velocity.x * 0.25 * n,
+            0.25 * (velocity.y * n - 0.5 * gravity * n * n), 0.0);
+        assert!((s.mario().pos - expected).length() < 0.1,
+            "tick {tick}: {:?}, expected {expected}", s.mario().pos);
+    }
+    assert!(s.until(150, |m| !m.status.is_jumping()));
+    s.pad = Pad::default();
+    s.run_forward();
+    s.step(120);
+    assert!(s.mario().vel.z > 0.0, "normal control returns after landing");
+}
+
+#[test]
 fn a_jump_boost_carries_further_until_landing() {
     let run = |boost: f32| {
         let mut s = Scene::flat();

@@ -300,6 +300,8 @@ pub struct Mario {
     spin_voice_due: bool,
     spin_ticks: u16,
     pub(crate) short_hop: bool,
+    /// Host extension: gravity per 120 Hz tick during an unsteered jump-pad flight.
+    pub(crate) pad_gravity: Option<f32>,
     /// Height a jump rises before letting go of A cuts it ([`Options::short_hop`]).
     pub(crate) hop_floor_y: f32,
 
@@ -417,6 +419,7 @@ impl Mario {
             spin_voice_due: true,
             spin_ticks: 0,
             short_hop: false,
+            pad_gravity: None,
             hop_floor_y: 0.0,
             anim,
             fludd: None,
@@ -503,6 +506,7 @@ impl Mario {
             return;
         }
         self.pos = pos;
+        self.pad_gravity = None;
         self.prev_pos = pos;
         self.vel = Vec3::ZERO;
         self.forward_vel = 0.0;
@@ -517,6 +521,7 @@ impl Mario {
         if !vel.is_finite() {
             return;
         }
+        self.pad_gravity = None;
         let flat = Vec3::new(vel.x, 0.0, vel.z);
         let speed = flat.length();
         if speed > 0.5 {
@@ -537,6 +542,16 @@ impl Mario {
         self.slide_z = vel.z;
         self.change_status(Status::ForceJump, 0, true);
         self.vel = vel;
+    }
+
+    /// Host extension: preserve a world jump pad's full velocity and gravity until collision.
+    /// Velocity is mVel (units per 30 Hz frame), gravity is mVel lost per 120 Hz tick.
+    pub fn launch_pad(&mut self, vel: Vec3, gravity: f32) {
+        if !vel.is_finite() || !gravity.is_finite() || gravity <= 0.0 { return; }
+        self.launch(vel);
+        self.pad_gravity = Some(gravity);
+        // jumpProcess moves before gravity: centre the first velocity on the tick.
+        self.vel.y -= 0.5 * gravity;
     }
 
     /// Standing in shallow water ([`Host::water_level`] above his feet).
@@ -642,6 +657,7 @@ impl Mario {
 
     /// One 120 Hz step (`TMario::playerControl`).
     pub fn tick(&mut self, host: &mut dyn Host, pad: &Pad, camera_yaw: Angle) {
+        let pad = if self.pad_gravity.is_some() { &Pad::default() } else { pad };
         // The host's limits may hold R back (`limits.rs`); the game's never do.
         let pad = &self.limit_pad(pad);
         self.camera_yaw = camera_yaw;
@@ -963,6 +979,7 @@ impl Mario {
         }
         self.prev_status = self.status;
         self.status = to;
+        if to != Status::ForceJump { self.pad_gravity = None; }
         self.status_arg = arg;
         self.enemies_hit.clear();
         self.lim.wet_decided = false;

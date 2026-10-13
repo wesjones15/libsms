@@ -27,7 +27,7 @@ use libsms::{
 use view::SmsView;
 
 /// ABI version, bumped when the C interface changes.
-pub const SMS_ABI_VERSION: u32 = 11;
+pub const SMS_ABI_VERSION: u32 = 12;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sms_abi_version() -> u32 {
@@ -917,6 +917,16 @@ pub unsafe extern "C" fn sms_sim_launch(sim: *mut SmsSim, vel: *const SmsVec3) {
     }
 }
 
+/// A world jump-pad flight: mVel velocity, gravity in mVel per 120 Hz tick.
+/// # Safety
+/// `sim` from [`sms_sim_new`]; `vel` readable (null is ignored).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_sim_launch_pad(sim: *mut SmsSim, vel: *const SmsVec3, gravity: f32) {
+    if let (Some(s), Some(v)) = (unsafe { sim.as_mut() }, unsafe { vel.as_ref() }) {
+        s.sim.mario.launch_pad((*v).into(), gravity);
+    }
+}
+
 /// Boosts the jump Mario is in: horizontal travel times `factor` until he lands (a host's
 /// sprint-jump item). Ignored on the ground.
 ///
@@ -1161,6 +1171,16 @@ mod tests {
             assert_eq!(jumps, 1);
             let name = CStr::from_ptr(sms_sim_status_name(sim)).to_str().unwrap();
             assert!(name.contains("Jump"), "{name}");
+            sms_sim_teleport(sim, &SmsVec3::default());
+            let launch = SmsVec3 { x: 160.0, y: 100.0, z: 0.0 };
+            sms_sim_launch_pad(sim, &launch, 0.5);
+            sms_sim_launch_pad(sim, std::ptr::null(), 0.5);
+            sms_sim_launch_pad(sim, &launch, f32::NAN);
+            sms_sim_launch_pad(std::ptr::null_mut(), &launch, 0.5);
+            sms_sim_step(sim, &host, &SmsPad::default(), 0, 1.0 / 60.0, std::ptr::null_mut());
+            sms_sim_state(sim, &mut st);
+            assert!((st.pos.x - 80.0).abs() < 0.01, "{:?}", st.pos);
+            assert!((st.pos.y - 49.75).abs() < 0.01, "{:?}", st.pos);
             sms_sim_free(sim);
         }
     }

@@ -20,7 +20,7 @@ impl Mario {
                 false
             }
             ForceJump | Jump => {
-                if self.jumping_common_events() {
+                if self.pad_gravity.is_none() && self.jumping_common_events() {
                     return true;
                 }
                 let anim = if self.status == ForceJump {
@@ -162,7 +162,7 @@ impl Mario {
         c: ClipName,
         process_arg: u32,
     ) -> i32 {
-        self.do_jumping();
+        if self.pad_gravity.is_none() { self.do_jumping(); }
         let r = self.jump_process(host, process_arg);
         match r {
             0 => {

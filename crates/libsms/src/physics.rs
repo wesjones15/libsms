@@ -304,6 +304,10 @@ impl Mario {
 
     /// `fallProcess`: gravity and terminal velocity.
     pub(crate) fn fall_process(&mut self) {
+        if let Some(gravity) = self.pad_gravity {
+            self.vel.y -= gravity;
+            return;
+        }
         let j = &self.params.jump;
         if self.is_fall_cancel() {
             self.vel.y *= 0.75;
@@ -328,15 +332,16 @@ impl Mario {
     pub(crate) fn jump_process(&mut self, host: &mut dyn Host, arg: u32) -> i32 {
         let speed = (self.vel.x * self.vel.x + self.vel.z * self.vel.z).sqrt();
         let max = self.params.jump.jumping_max;
-        if speed > max {
+        if self.pad_gravity.is_none() && speed > max {
             self.vel.x *= max / speed;
             self.vel.z *= max / speed;
         }
 
-        let k = self.limit_air_speed();
+        let k = if self.pad_gravity.is_some() { 1.0 } else { self.limit_air_speed() };
         self.fall_peak_y = self.fall_peak_y.max(self.pos.y);
         let next = self.pos + Vec3::new(self.vel.x * k, self.vel.y, self.vel.z * k) * 0.25;
         let ret = self.check_ground_at_jumping(host, next, arg);
+        if ret != 0 { self.pad_gravity = None; }
         self.fall_peak_y = self.fall_peak_y.max(self.pos.y);
         if ret == 1 {
             // MarioJump.cpp jumpProcess/askStrongGroundTouch: sample contact before
