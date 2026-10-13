@@ -1268,6 +1268,18 @@ mod tests {
                 most_fx = most_fx.max(fx.vertices);
             }
             assert!(most_fx > 0, "running dust never reached the view");
+            let mut fx = view::SmsFxInfo::default();
+            view::sms_view_fx_info(v, &mut fx);
+            let before = fx.vertices;
+            view::sms_view_set_fx(v, 1, 0);
+            view::sms_view_update(v, sim, &frame);
+            view::sms_view_fx_info(v, &mut fx);
+            assert_eq!(fx.vertices, before, "PoundFlames hid movement dust");
+            view::sms_view_set_fx(v, 0, 0);
+            view::sms_view_update(v, sim, &frame);
+            view::sms_view_fx_info(v, &mut fx);
+            assert_eq!(fx.vertices, 0, "disabled particles still drew");
+            view::sms_view_set_fx(v, 1, 1);
             let mut draws = vec![view::SmsDraw::default(); n as usize];
             view::sms_view_draws(v, draws.as_mut_ptr(), n);
             let mut count = 0;

@@ -795,6 +795,22 @@ const _: () = assert!(std::mem::size_of::<SmsWaterVertex>() == std::mem::size_of
 const _: () = assert!(std::mem::size_of::<SmsFxVertex>() == std::mem::size_of::<FxVertex>());
 const _: () = assert!(std::mem::size_of::<SmsFxBatch>() == std::mem::size_of::<FxBatch>());
 
+/// Independently show movement effects (dust, stars, smears, slides, stomps) and the super
+/// pound's flames/landing burst. Defaults to both on. No ABI struct layouts change.
+///
+/// # Safety
+/// `view` from [`sms_view_new`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_set_fx(view: *mut SmsView, movement: u8, flames: u8) {
+    // SAFETY: as documented.
+    unsafe {
+        with_view(view, (), |v| {
+            v.view.movement_effects = movement != 0;
+            v.view.pound_flames = flames != 0;
+        });
+    }
+}
+
 /// This frame's particle counts (after [`sms_view_update`]).
 ///
 /// # Safety

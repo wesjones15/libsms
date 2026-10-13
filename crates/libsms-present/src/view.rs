@@ -192,6 +192,9 @@ pub struct View {
     center: Option<usize>,
     /// The game's particle effects on Mario: dust, stars, smears, spray and pound flames.
     pub fx: Particles,
+    /// Movement effects and super-pound flames have independent host switches.
+    pub movement_effects: bool,
+    pub pound_flames: bool,
     fx_ticks: Vec<FxTick>,
     fx_binds: Vec<(u32, FxAt)>,
     /// FLUDD's water gauge (the HUD's tank), redrawn as the tank changes; None without the
@@ -584,6 +587,8 @@ impl View {
             chest: b.joint("jnt_chest"),
             center: b.joint("center"),
             fx: Particles::load(dir, MARIO_EFFECTS),
+            movement_effects: true,
+            pound_flames: true,
             fx_ticks: Vec::new(),
             fx_binds: (0..4).map(|s| (s, FxAt::Center)).collect(),
             hud: Hud::load(dir).ok(),
@@ -825,7 +830,15 @@ impl View {
                 self.fx.rebind(slot, mtx);
             }
         }
-        self.fx.build(self.right, self.up);
+        let movement = self.movement_effects;
+        let flames = self.pound_flames;
+        self.fx.build_filtered(self.right, self.up, |name| {
+            if name.starts_with("ms_m_sphipd_") {
+                flames
+            } else {
+                movement
+            }
+        });
 
         // The water gauge, stepped once a game frame (4 ticks).
         let gauge = Gauge::of(m);
@@ -1044,5 +1057,34 @@ mod tests {
             .fold(f32::MIN, f32::max);
         assert!((120.0..220.0).contains(&top), "top of Mario at {top}");
         assert!(v.positions.iter().all(|p| p.is_finite()));
+    }
+
+    #[test]
+    fn movement_and_flames_switch_independently_without_advancing_time() {
+        let Some(mut v) = view() else {
+            return;
+        };
+        let a = libsms::Assets::discover(None).unwrap();
+        let mut sim = Sim::new(a.params, a.anim_table, Vec3::ZERO, 0);
+        v.fx.emit("ms_dmg_c", Mat4::IDENTITY, 1.0);
+        v.fx.emit("ms_m_sphipd_hit_b", Mat4::IDENTITY, 1.0);
+        v.update(&mut sim, 0.0);
+        let all = v.fx.vertices.len();
+        v.pound_flames = false;
+        v.update(&mut sim, 0.0);
+        let movement = v.fx.vertices.len();
+        v.pound_flames = true;
+        v.movement_effects = false;
+        v.update(&mut sim, 0.0);
+        let flames = v.fx.vertices.len();
+        assert!(movement > 0 && flames > 0);
+        assert_eq!(all, movement + flames);
+        v.pound_flames = false;
+        v.update(&mut sim, 0.0);
+        assert!(v.fx.vertices.is_empty());
+        v.movement_effects = true;
+        v.pound_flames = true;
+        v.update(&mut sim, 0.0);
+        assert_eq!(v.fx.vertices.len(), all);
     }
 }

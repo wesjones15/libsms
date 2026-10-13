@@ -418,7 +418,8 @@ impl Host for World {
                 }
             }
             Event::Land { .. } | Event::Sound(_) | Event::PoundStart => {}
-            Event::AirNozzle { .. } | Event::AirJump | Event::WetSlide => {}
+            // The portable host view consumes particle cues; this viewer has its own renderer.
+            Event::Particle(_) | Event::AirNozzle { .. } | Event::AirJump | Event::WetSlide => {}
         }
     }
 }

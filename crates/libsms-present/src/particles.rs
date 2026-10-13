@@ -726,6 +726,11 @@ impl Particles {
 
     /// Builds this frame's quads. `right`, `up`: the camera's axes (sim world) for billboards.
     pub fn build(&mut self, right: Vec3, up: Vec3) {
+        self.build_filtered(right, up, |_| true);
+    }
+
+    /// Drawing switches don't stop simulation or change emitter lifetimes.
+    pub fn build_filtered(&mut self, right: Vec3, up: Vec3, shown: impl Fn(&str) -> bool) {
         self.vertices.clear();
         self.batches.clear();
         let right = right.normalize_or(Vec3::X);
@@ -733,6 +738,9 @@ impl Particles {
         let mut baked: Vec<(u32, Vec<u8>)> = Vec::new();
         for e in &self.emitters {
             let fx = &self.effects[e.effect];
+            if !shown(&fx.name) {
+                continue;
+            }
             let jpa = &fx.jpa;
             let base = &jpa.base;
             if base.kind == 5 || base.kind == 6 {
