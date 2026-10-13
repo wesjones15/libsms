@@ -820,6 +820,17 @@ pub unsafe extern "C" fn sms_view_fx_texture_world_space(view: *mut SmsView, tex
     unsafe { with_view(view, 0, |v| v.view.fx.texture_world_space(texture) as u8) }
 }
 
+/// Host smoke playback rate (0.25..4); defaults to the disc's rate, 1. Layouts are unchanged.
+///
+/// # Safety
+/// `view` from [`sms_view_new`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_set_smoke_speed(view: *mut SmsView, speed: f32) {
+    unsafe {
+        with_view(view, (), |v| v.view.set_smoke_speed(speed));
+    }
+}
+
 /// This frame's particle counts (after [`sms_view_update`]).
 ///
 /// # Safety

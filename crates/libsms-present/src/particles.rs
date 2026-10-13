@@ -255,6 +255,9 @@ struct Particle {
     dead: bool,
     follow: bool,
     look: Look,
+    previous_local: Vec3,
+    previous_global: Vec3,
+    previous_look: Look,
 }
 
 /// `JPAEmitterInfo`: what one emitter's calc shares with its particles.
@@ -313,6 +316,7 @@ struct Emitter {
     /// `setGlobalScale`: dynamics (local positions) and particle sizes together.
     global_scale: f32,
     world_space: bool,
+    time: f32,
     /// `JPADraw::mPrmColor`, `mEnvColor`, `mTexIdx`.
     prm: [u8; 4],
     env: [u8; 4],
@@ -338,6 +342,7 @@ struct Effect {
     jpa: Jpa,
     paint: Paint,
     world_space: bool,
+    speed: f32,
 }
 
 /// Every effect the host may ask for, and the emitters running.
@@ -554,6 +559,7 @@ impl Particles {
             jpa,
             paint,
             world_space: false,
+            speed: 1.0,
         });
     }
 
@@ -563,6 +569,24 @@ impl Particles {
         if let Some(&i) = self.by_name.get(name) {
             self.effects[i].world_space = world_space;
         }
+    }
+
+    /// Host presentation playback rate. Disc timing is unchanged at 1.
+    pub fn set_speed(&mut self, name: &str, speed: f32) {
+        if let Some(&i) = self.by_name.get(name) {
+            self.effects[i].speed = if speed.is_finite() {
+                speed.clamp(0.25, 4.0)
+            } else {
+                1.0
+            };
+        }
+    }
+
+    /// Smooth between the last two particle frames using the host's rendered sim time.
+    pub fn render_fraction(&self, tick: f64) -> f32 {
+        self.last_tick.map_or(1.0, |t| {
+            ((tick - t as f64) / FRAME_TICKS as f64).clamp(0.0, 1.0) as f32
+        })
     }
 
     /// World-anchored textures must not receive the host's current character draw offset.
@@ -698,14 +722,23 @@ impl Particles {
             if let Some(m) = bind {
                 e.bind(m);
             }
-            let jpa = &effects[e.effect].jpa;
-            if !e.check_start_frame() {
-                return true;
+            let effect = &effects[e.effect];
+            for p in &mut e.particles {
+                p.previous_local = p.local;
+                p.previous_global = p.global;
+                p.previous_look = p.look;
             }
-            if e.check_max_frame() && e.particles.is_empty() {
-                return false;
+            e.time += effect.speed;
+            while e.time >= 1.0 {
+                e.time -= 1.0;
+                if !e.check_start_frame() {
+                    continue;
+                }
+                if e.check_max_frame() && e.particles.is_empty() {
+                    return false;
+                }
+                e.calc(&effect.jpa);
             }
-            e.calc(jpa);
             true
         });
     }
@@ -742,6 +775,7 @@ impl Particles {
             global_pos: Vec3::ZERO,
             global_scale: 1.0,
             world_space: self.effects[effect].world_space,
+            time: 0.0,
             prm,
             env,
             texture: base.texture,
@@ -756,6 +790,17 @@ impl Particles {
 
     /// Drawing switches don't stop simulation or change emitter lifetimes.
     pub fn build_filtered(&mut self, right: Vec3, up: Vec3, shown: impl Fn(&str) -> bool) {
+        self.build_interpolated(right, up, 1.0, shown);
+    }
+
+    pub fn build_interpolated(
+        &mut self,
+        right: Vec3,
+        up: Vec3,
+        fraction: f32,
+        shown: impl Fn(&str) -> bool,
+    ) {
+        let fraction = fraction.clamp(0.0, 1.0);
         self.vertices.clear();
         self.batches.clear();
         let right = right.normalize_or(Vec3::X);
@@ -851,6 +896,8 @@ impl Particles {
             // One batch per (texture, basis image); particles append to theirs.
             let mut runs: Vec<(u32, Vec<FxVertex>)> = Vec::new();
             for p in order {
+                let sampled = sample_particle(p, fraction);
+                let p = &sampled;
                 let tex = if base.global_tex_anm {
                     e.texture
                 } else {
@@ -1347,6 +1394,7 @@ impl Emitter {
         let mut i = 0;
         while i < self.particles.len() {
             let p = &mut self.particles[i];
+            let newborn = p.just_born;
             if p.just_born {
                 p.just_born = false;
             } else {
@@ -1397,6 +1445,11 @@ impl Emitter {
             // `JPADraw::calcParticle`.
             p.look.angle = p.look.angle.wrapping_add(p.look.spin);
             calc_draw_particle(self.prm, self.env, p, jpa);
+            // The initial draw parameters must already use ESP1's birth scale/alpha;
+            // interpolating from uninitialised defaults makes new smoke flash full size.
+            if newborn {
+                p.previous_look = p.look;
+            }
             // `calcGlobalPosition`.
             p.local += p.vel;
             // JPAParticle::calcGlobalPosition applies the global dynamics scale after
@@ -1711,8 +1764,31 @@ impl Emitter {
             dead: false,
             follow: !self.world_space && em.flags & FOLLOW_EMITTER != 0,
             look,
+            previous_local: local,
+            previous_global: local * self.global_scale + anchor,
+            previous_look: look,
         }
     }
+}
+
+/// Presentation only: keep JPA's discrete integration, interpolate motion, size, alpha and
+/// spin for high refresh displays. Births begin at their emitted position, not Mario's.
+fn sample_particle(p: &Particle, t: f32) -> Particle {
+    let mut out = *p;
+    out.local = p.previous_local.lerp(p.local, t);
+    out.global = p.previous_global.lerp(p.global, t);
+    let (a, b) = (p.previous_look, p.look);
+    out.look.alpha = a.alpha + (b.alpha - a.alpha) * t;
+    out.look.scale_x = a.scale_x + (b.scale_x - a.scale_x) * t;
+    out.look.scale_y = a.scale_y + (b.scale_y - a.scale_y) * t;
+    out.look.angle = a
+        .angle
+        .wrapping_add((b.angle.wrapping_sub(a.angle) as f32 * t) as i16);
+    for k in 0..4 {
+        out.look.prm[k] = (a.prm[k] as f32 + (b.prm[k] as f32 - a.prm[k] as f32) * t).round() as u8;
+        out.look.env[k] = (a.env[k] as f32 + (b.env[k] as f32 - a.env[k] as f32) * t).round() as u8;
+    }
+    out
 }
 
 /// `JPADraw::initParticle`.
@@ -2049,6 +2125,47 @@ mod tests {
         assert_eq!(p.emitters[0].particles.last().unwrap().global, original);
         p.build(Vec3::X, Vec3::Y);
         assert!(p.batches.iter().all(|b| p.texture_world_space(b.texture)));
+    }
+
+    #[test]
+    fn playback_speed_advances_motion_and_lifetime_together() {
+        let mut original = puff();
+        let mut fast = original.clone();
+        fast.set_speed("puff", 2.0);
+        original.emit("puff", Mat4::IDENTITY, 1.0);
+        fast.emit("puff", Mat4::IDENTITY, 1.0);
+        original.advance(0);
+        fast.advance(0);
+        assert_eq!(original.emitters[0].frame, 1.0);
+        assert_eq!(fast.emitters[0].frame, 2.0);
+        assert!(
+            fast.emitters[0].particles.last().unwrap().global.y
+                > original.emitters[0].particles.last().unwrap().global.y
+        );
+        for tick in [4, 8, 12] {
+            original.advance(tick);
+            fast.advance(tick);
+        }
+        assert!(!fast.active(), "2x smoke lingered");
+        assert!(original.active(), "1x smoke expired too early");
+    }
+
+    #[test]
+    fn rendered_motion_changes_between_particle_frames_without_advancing_simulation() {
+        let mut p = puff();
+        p.emit("puff", Mat4::IDENTITY, 1.0);
+        p.advance(0);
+        let mut positions = Vec::new();
+        for tick in [0.0, 1.0, 2.0, 3.0] {
+            p.build_interpolated(Vec3::X, Vec3::Y, p.render_fraction(tick), |_| true);
+            positions.push(p.vertices[0].pos);
+        }
+        assert!(
+            positions.windows(2).all(|w| w[1].y > w[0].y),
+            "{positions:?}"
+        );
+        assert_eq!(p.emitters[0].frame, 1.0, "rendering advanced simulation");
+        assert_eq!(p.emitters[0].particles[0].age, 0.0);
     }
 
     #[test]

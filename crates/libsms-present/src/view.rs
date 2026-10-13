@@ -643,6 +643,13 @@ impl View {
         self.up = up.normalize_or(Vec3::Y);
     }
 
+    /// Host tuning for smoke only; 1 preserves disc timing, 2 plays it twice as fast.
+    pub fn set_smoke_speed(&mut self, speed: f32) {
+        for &name in SMOKE_EFFECTS {
+            self.fx.set_speed(name, speed);
+        }
+    }
+
     /// Observe every sim tick (`Sim::advance_observed`), even without sound or rendering.
     /// Queue effects until the next pose is available, preserving one-shots and short held
     /// effects between rendered frames. Empty ticks release held emitters at 30 Hz too.
@@ -852,13 +859,17 @@ impl View {
         }
         let movement = self.movement_effects;
         let flames = self.pound_flames;
-        self.fx.build_filtered(self.right, self.up, |name| {
-            if name.starts_with("ms_m_sphipd_") {
-                flames
-            } else {
-                movement
-            }
-        });
+        let fraction = self
+            .fx
+            .render_fraction(m.ticks as f64 + alpha as f64 - self.lag as f64);
+        self.fx
+            .build_interpolated(self.right, self.up, fraction, |name| {
+                if name.starts_with("ms_m_sphipd_") {
+                    flames
+                } else {
+                    movement
+                }
+            });
 
         // The water gauge, stepped once a game frame (4 ticks).
         let gauge = Gauge::of(m);

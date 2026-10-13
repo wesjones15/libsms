@@ -188,6 +188,9 @@ One-shots keep their initial position and yaw and expire using their JPA's durat
 held effects follow the posed center, joint or feet and release when requests stop.
 `setGlobalScale` shrinks motion and drawn sizes together (light landings use 0.7).
 The super pound's flames (`MS_M_SPHIPD_A..D`) bind to the `center` joint as drawn.
+Smoke has a host presentation override: emitted puffs stay anchored in world space,
+with smooth motion between particle frames and optional smoke-only playback speed.
+See [smoke presentation](smoke-presentation.md) for the host API and RoR2 defaults.
 Not ported: children
 (`SSP1`), `KFA1` key frames, indirect textures, the other field kinds.
 
