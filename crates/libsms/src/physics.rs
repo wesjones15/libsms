@@ -471,9 +471,11 @@ impl Mario {
         } else if self.slip_set() == SlipSet::Normal && self.status == Status::Catch {
             // A belly slide over FLUDD's water glides (`mWasOnWaterSlip`), and in water drags
             // (`mInWaterSlip`).
-            if self.in_water {
+            // A host that lets shallow water wet the ground has its wet slide glide through it.
+            let glides = self.status_state == 1;
+            if self.in_water && !(glides && self.options.shallow_water_wets) {
                 self.params.mario.in_water_slip
-            } else if self.status_state == 1 {
+            } else if glides {
                 self.params.mario.was_on_water_slip
             } else {
                 self.params.slip_normal.slip_friction

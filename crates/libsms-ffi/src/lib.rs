@@ -27,7 +27,7 @@ use libsms::{
 use view::SmsView;
 
 /// ABI version, bumped when the C interface changes.
-pub const SMS_ABI_VERSION: u32 = 12;
+pub const SMS_ABI_VERSION: u32 = 13;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sms_abi_version() -> u32 {
@@ -311,6 +311,8 @@ pub struct SmsTuning {
     /// A tapped jump still rises this share of a full one before letting go of A cuts it
     /// (0: the game's).
     pub short_hop: f32,
+    /// The belly slide's spray is this many times as big (0 or 1: the game's).
+    pub slide_fx_scale: f32,
     /// 1: enemies are solid to Mario (`keepDistance`); 0: the game's (most aren't).
     pub enemy_push: u8,
     /// 1: X steps through Spray, Hover, Rocket and Turbo; 0: the game's (Spray and one).
@@ -320,6 +322,9 @@ pub struct SmsTuning {
     /// 1: the Spray holds a steady output set by the trigger's depth; 0: the game's (each
     /// press a burst that fades, `Options::spray_pressure_fades`).
     pub spray_steady: u8,
+    /// 1: standing in the host's shallow water wets the ground as FLUDD's water does, so a belly
+    /// slide there glides wet; 0: the game's (only FLUDD's water does).
+    pub shallow_wet: u8,
 }
 
 /// A host's own limits on FLUDD and the slide ([`libsms::Limits`]), for games that bill them
@@ -969,6 +974,12 @@ pub unsafe extern "C" fn sms_sim_set_tuning(sim: *mut SmsSim, tuning: *const Sms
         o.cycle_nozzles = t.cycle_nozzles != 0;
         o.unlimited_water = t.unlimited_water != 0;
         o.spray_pressure_fades = t.spray_steady == 0;
+        o.shallow_water_wets = t.shallow_wet != 0;
+        o.slide_fx_scale = if t.slide_fx_scale.is_finite() && t.slide_fx_scale > 0.0 {
+            t.slide_fx_scale.clamp(0.1, 5.0)
+        } else {
+            1.0
+        };
         s.water.reach = factor(t.spray_reach);
         o.stomp_bounce = factor(t.stomp_bounce);
         // The rocket's apex grows about as its lift to the power 1.9 (examples/report.rs:
@@ -1279,7 +1290,7 @@ mod tests {
         assert_eq!(
             &sizes[..n],
             &[
-                12, 20, 8, 16, 32, 56, 24, 52, 40, 24, 12, 64, 48, 44, 24, 24, 24, 36, 16, 12, 32,
+                12, 20, 8, 16, 32, 56, 24, 52, 40, 24, 12, 64, 48, 52, 24, 24, 24, 36, 16, 12, 32,
                 36
             ]
         );

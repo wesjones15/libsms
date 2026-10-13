@@ -116,6 +116,14 @@ params! {
 }
 
 params! {
+    /// `/Mario/WaterEffect.prm` (TWaterEffectParams): the splashes and ripples of water.
+    WaterEffect {
+        /// A run through water whose surface is within this of his feet ripples at each step.
+        running_ripple_depth: f32 = 30.0, "mRunningRippleDepth";
+    }
+}
+
+params! {
     /// `/Mario/Yoshi.prm` (TYoshiParams): riding Yoshi.
     YoshiParams {
         run_yoshi_mult: f32 = 1.2, "mRunYoshiMult";
@@ -377,6 +385,7 @@ pub struct Params {
     pub jump: Jump,
     pub mario: Mario,
     pub controller: Controller,
+    pub water_effect: WaterEffect,
     pub upper_body: UpperBody,
     pub hanging: Hanging,
     pub hover: Hover,
@@ -408,6 +417,7 @@ impl Default for Params {
             jump: Jump::default(),
             mario: Mario::default(),
             controller: Controller::default(),
+            water_effect: WaterEffect::default(),
             upper_body: UpperBody::default(),
             hanging: Hanging::default(),
             hover: Hover::default(),
@@ -434,6 +444,7 @@ mod files {
     pub const JUMP: &str = "jump.prm";
     pub const MARIO: &str = "mario.prm";
     pub const CONTROLLER: &str = "controller.prm";
+    pub const WATER_EFFECT: &str = "watereffect.prm";
     pub const UPPER_BODY: &str = "upperbody.prm";
     pub const HANGING: &str = "hanging.prm";
     pub const HOVER: &str = "hhover.prm";
@@ -516,6 +527,9 @@ impl Params {
         }
         if let Some(prm) = get(files::CONTROLLER) {
             p.controller.apply(&prm);
+        }
+        if let Some(prm) = get(files::WATER_EFFECT) {
+            p.water_effect.apply(&prm);
         }
         if let Some(prm) = get(files::UPPER_BODY) {
             p.upper_body.apply(&prm);

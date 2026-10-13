@@ -265,6 +265,9 @@ pub const MARIO_EFFECTS: &[&str] = &[
     "ms_fumi_a",
     "ms_fumi_b",
     "ms_fumi_c",
+    "ms_m_watrun_a",
+    "ms_m_watrun_b",
+    "ms_m_watrun_c",
 ];
 
 /// Host presentation: dust/smoke trails remain where they were emitted when Mario jumps.

@@ -214,6 +214,11 @@ pub struct Options {
     /// Letting go of A early (`isFallCancel`) cuts a jump short only once it has risen this
     /// share of its full height, so a tap still hops this high or a little more. 0: the game's.
     pub short_hop: f32,
+    /// Standing in shallow water (the host's `water_level`) wets the ground as FLUDD's water
+    /// does, so a belly slide there glides wet. false: the game's (only FLUDD's water).
+    pub shallow_water_wets: bool,
+    /// The belly slide's spray (`ms_m_watslide_*`) times this big. 1: the game's.
+    pub slide_fx_scale: f32,
     /// FLUDD's tank never runs dry. false: the game's.
     pub unlimited_water: bool,
 }
@@ -236,6 +241,8 @@ impl Default for Options {
             pound_jump: 0.0,
             stomp_jump: 1.0,
             short_hop: 0.0,
+            shallow_water_wets: false,
+            slide_fx_scale: 1.0,
             unlimited_water: false,
         }
     }
@@ -334,6 +341,8 @@ pub struct Mario {
     pub(crate) hover_target_y: f32,
     /// In shallow water (`MARIO_FLAG_IN_SHALLOW_WATER`, `thinkWaterSurface`).
     pub(crate) in_water: bool,
+    /// The surface over his feet when `in_water` (`mFloorPosition.z`).
+    pub(crate) water_surface: f32,
     /// The tank was full last tick, for the HUD's full-tank chime.
     pub(crate) was_full: bool,
     /// Set by the host each step: FLUDD water stuck to the ground is near Mario's feet
@@ -443,6 +452,7 @@ impl Mario {
             fludd_emitting: false,
             hover_target_y: pos.y,
             in_water: false,
+            water_surface: 0.0,
             was_full: true,
             water_underfoot: false,
             wet_ground: false,
@@ -624,9 +634,10 @@ impl Mario {
     pub(crate) fn front_slip_effect(&mut self) {
         use crate::event::FxAt;
         if self.wet_sliding() || self.water_underfoot {
-            self.fx("ms_m_watslide_a", FxAt::Center);
-            self.fx("ms_m_watslide_b", FxAt::Center);
-            self.fx("ms_m_watslide_c", FxAt::Center);
+            let scale = self.options.slide_fx_scale;
+            self.fx_scaled("ms_m_watslide_a", FxAt::Center, scale);
+            self.fx_scaled("ms_m_watslide_b", FxAt::Center, scale);
+            self.fx_scaled("ms_m_watslide_c", FxAt::Center, scale);
         } else if !self.in_water {
             self.fx("ms_m_slipsmoke", FxAt::Joint(0));
         }
@@ -733,9 +744,37 @@ impl Mario {
     /// `thinkWaterSurface` (MarioMove.cpp), the pool half: Mario is in shallow water while a
     /// pool's surface is above his feet. No swimming: deeper water is still wading.
     fn think_water_surface(&mut self, host: &mut dyn Host) {
-        self.in_water = host
-            .water_level(self.pos)
-            .is_some_and(|level| level > self.pos.y);
+        let level = host.water_level(self.pos).filter(|&level| level > self.pos.y);
+        self.in_water = level.is_some();
+        if let Some(level) = level {
+            self.water_surface = level;
+        }
+        self.running_ripple();
+    }
+
+    /// `runningRippleEffect`, from `thinkWaterSurface`: each footfall of a run (frames 8 and 38)
+    /// through water that barely covers his feet, or over wet ground, ripples at the surface
+    /// (`ms_m_watrun_a` too above a speed of 30).
+    fn running_ripple(&mut self) {
+        use crate::event::FxAt;
+        if self.status != Status::Run || !(self.anim.passed(38.0) || self.anim.passed(8.0)) {
+            return;
+        }
+        let shallow = self.in_water
+            && self.water_surface < self.pos.y + self.params.water_effect.running_ripple_depth;
+        if !shallow && !self.wet_ground {
+            return;
+        }
+        let y = if self.in_water { self.water_surface } else { self.floor_y };
+        let at = FxAt::Once {
+            pos: Vec3::new(self.pos.x, y, self.pos.z),
+            yaw: 0,
+        };
+        if self.forward_vel > 30.0 {
+            self.fx("ms_m_watrun_a", at);
+        }
+        self.fx("ms_m_watrun_b", at);
+        self.fx("ms_m_watrun_c", at);
     }
 
     /// `checkPlayerAction`: controller, stick history, ground/roof/wall probes.
@@ -890,7 +929,8 @@ impl Mario {
         self.roof = r;
 
         // `checkCurrentPlane`'s `isTouchGround4cm` water check.
-        self.wet_ground = self.water_underfoot && self.pos.y <= self.floor_y + 4.0;
+        let wet = self.water_underfoot || (self.options.shallow_water_wets && self.in_water);
+        self.wet_ground = wet && self.pos.y <= self.floor_y + 4.0;
 
         if !self.ground.flags.has(SurfaceFlags::ILLEGAL) {
             self.slope_angle = math::matan(self.ground.normal.z, self.ground.normal.x);

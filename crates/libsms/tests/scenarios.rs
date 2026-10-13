@@ -2600,3 +2600,79 @@ fn a_knock_out_lays_mario_down() {
     assert_eq!(s.mario().status, Status::DownLoser);
     assert_eq!(s.event_count(|e| matches!(e, Event::Down)), 1);
 }
+
+fn dive_slide(shallow_wets: bool, water: Option<f32>) -> f32 {
+    let mut s = Scene::flat();
+    s.sim.mario.options.shallow_water_wets = shallow_wets;
+    s.host.world.water = water;
+    s.run_forward();
+    s.secs(1.0);
+    s.press_a();
+    s.step(10);
+    s.pad.b = true;
+    s.step(1);
+    s.pad.b = false;
+    s.pad.stick = Vec2::ZERO;
+    assert!(s.until(600, |m| m.status == Status::Catch));
+    let from = s.mario().pos;
+    assert!(s.until(4000, |m| m.status != Status::Catch));
+    (s.mario().pos - from).length()
+}
+
+#[test]
+fn shallow_water_wets_a_slide_only_when_the_host_asks() {
+    let dry = dive_slide(false, None);
+    let off = dive_slide(false, Some(15.0));
+    let on = dive_slide(true, Some(15.0));
+    println!("dry {dry:.0}, in water {off:.0}, in water and wet {on:.0}");
+    assert!(off < 0.5 * dry, "water alone drags, as in the game: {dry} {off}");
+    assert!(on > 1.6 * dry, "{dry} {on}");
+}
+
+#[test]
+fn a_run_through_shallow_water_ripples_at_each_footfall() {
+    let ripples = |water: Option<f32>| {
+        let mut s = Scene::flat();
+        s.host.world.water = water;
+        s.run_forward();
+        s.secs(3.0);
+        s.event_count(|e| matches!(e, Event::Particle(c) if c.name == "ms_m_watrun_b"))
+    };
+    let dry = ripples(None);
+    let wet = ripples(Some(10.0));
+    // Deeper than the ripple depth it's a pool's ripple, not a footfall's.
+    let deep = ripples(Some(60.0));
+    println!("dry {dry}, shallow {wet}, deep {deep}");
+    assert_eq!(dry, 0);
+    assert!(wet >= 4, "{wet}");
+    assert_eq!(deep, 0);
+}
+
+#[test]
+fn the_slide_spray_is_as_big_as_the_host_says() {
+    let size = |scale: f32| {
+        let mut s = Scene::flat();
+        s.sim.mario.options.slide_fx_scale = scale;
+        s.sim.mario.water_underfoot = true;
+        s.run_forward();
+        s.secs(1.0);
+        s.press_a();
+        s.step(10);
+        s.pad.b = true;
+        s.step(1);
+        s.pad.b = false;
+        s.pad.stick = Vec2::ZERO;
+        s.sim.mario.water_underfoot = true;
+        s.step(240);
+        s.host
+            .events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Particle(c) if c.name == "ms_m_watslide_a" => Some(c.scale),
+                _ => None,
+            })
+            .fold(0.0f32, f32::max)
+    };
+    assert!((size(1.0) - 1.0).abs() < 1e-4);
+    assert!((size(1.5) - 1.5).abs() < 1e-4);
+}
