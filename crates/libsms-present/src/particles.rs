@@ -312,6 +312,7 @@ struct Emitter {
     global_pos: Vec3,
     /// `setGlobalScale`: dynamics (local positions) and particle sizes together.
     global_scale: f32,
+    world_space: bool,
     /// `JPADraw::mPrmColor`, `mEnvColor`, `mTexIdx`.
     prm: [u8; 4],
     env: [u8; 4],
@@ -336,6 +337,7 @@ struct Effect {
     name: String,
     jpa: Jpa,
     paint: Paint,
+    world_space: bool,
 }
 
 /// Every effect the host may ask for, and the emitters running.
@@ -551,7 +553,29 @@ impl Particles {
             name: name.to_owned(),
             jpa,
             paint,
+            world_space: false,
         });
+    }
+
+    /// Host presentation override: emitted puffs stay in the world while the emitter
+    /// follows Mario to place new particles. This doesn't flatten the puff's own motion.
+    pub fn set_world_space(&mut self, name: &str, world_space: bool) {
+        if let Some(&i) = self.by_name.get(name) {
+            self.effects[i].world_space = world_space;
+        }
+    }
+
+    /// World-anchored textures must not receive the host's current character draw offset.
+    pub fn texture_world_space(&self, texture: u32) -> bool {
+        self.effects.iter().any(|e| {
+            e.world_space
+                && match &e.paint {
+                    Paint::Baked { texture: t } => *t == texture,
+                    Paint::Basis { first, count } => {
+                        first.values().any(|&t| texture >= t && texture < t + count)
+                    }
+                }
+        })
     }
 
     pub fn has(&self, name: &str) -> bool {
@@ -717,6 +741,7 @@ impl Particles {
             global_rot: Mat3::IDENTITY,
             global_pos: Vec3::ZERO,
             global_scale: 1.0,
+            world_space: self.effects[effect].world_space,
             prm,
             env,
             texture: base.texture,
@@ -1684,7 +1709,7 @@ impl Emitter {
             progress: 0.0,
             just_born: true,
             dead: false,
-            follow: em.flags & FOLLOW_EMITTER != 0,
+            follow: !self.world_space && em.flags & FOLLOW_EMITTER != 0,
             look,
         }
     }
@@ -2001,6 +2026,29 @@ mod tests {
                 assert!(((a.pos - origin) * 0.7 - (b.pos - origin)).length() < 0.001);
             }
         }
+    }
+
+    #[test]
+    fn world_smoke_stays_at_birth_height_when_its_emitter_jumps() {
+        let mut p = puff();
+        p.effects[0].jpa.emitter.flags |= FOLLOW_EMITTER;
+        p.effects[0].jpa.emitter.vel_dir = 0.0;
+        p.set_world_space("puff", true);
+        p.request(0, "puff", Mat4::IDENTITY);
+        p.advance(0);
+        let original = p.emitters[0].particles.last().unwrap().global;
+        p.request(0, "puff", Mat4::from_translation(Vec3::Y * 800.0));
+        p.advance(4);
+        assert_eq!(p.emitters[0].particles.last().unwrap().global, original);
+        assert!(
+            p.emitters[0].particles[0].global.y > 800.0,
+            "new smoke didn't follow emitter"
+        );
+        p.rebind(0, Mat4::from_translation(Vec3::Y * 1600.0));
+        p.advance(8); // released, but Mario's matrix continues moving
+        assert_eq!(p.emitters[0].particles.last().unwrap().global, original);
+        p.build(Vec3::X, Vec3::Y);
+        assert!(p.batches.iter().all(|b| p.texture_world_space(b.texture)));
     }
 
     #[test]

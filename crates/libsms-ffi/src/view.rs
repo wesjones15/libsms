@@ -811,6 +811,15 @@ pub unsafe extern "C" fn sms_view_set_fx(view: *mut SmsView, movement: u8, flame
     }
 }
 
+/// Whether this particle texture stays in world space, without Mario's render offset.
+///
+/// # Safety
+/// `view` from [`sms_view_new`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_fx_texture_world_space(view: *mut SmsView, texture: u32) -> u8 {
+    unsafe { with_view(view, 0, |v| v.view.fx.texture_world_space(texture) as u8) }
+}
+
 /// This frame's particle counts (after [`sms_view_update`]).
 ///
 /// # Safety

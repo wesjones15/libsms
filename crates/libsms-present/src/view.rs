@@ -267,6 +267,22 @@ pub const MARIO_EFFECTS: &[&str] = &[
     "ms_fumi_c",
 ];
 
+/// Host presentation: dust/smoke trails remain where they were emitted when Mario jumps.
+pub const SMOKE_EFFECTS: &[&str] = &[
+    "ms_mariwalk1_a",
+    "ms_mariwalk1_b",
+    "ms_mariwalk1_c",
+    "ms_jump_ed_a",
+    "ms_jump_ed_b",
+    "ms_m_slipsmoke",
+    "ms_mariwallsl1",
+    "ms_wallkick_a",
+    "ms_wallkick_b",
+    "ms_hipdrop_a",
+    "ms_hipdrop_b",
+    "ms_hipdrop_c",
+];
+
 struct FxTick {
     tick: u64,
     pos: Vec3,
@@ -581,12 +597,16 @@ impl View {
                     .collect()
             })
             .unwrap_or_default();
+        let mut fx = Particles::load(dir, MARIO_EFFECTS);
+        for &name in SMOKE_EFFECTS {
+            fx.set_world_space(name, true);
+        }
         Ok(View {
             hand_joints: [b.joint("jnt_hand_R"), b.joint("jnt_hand_L")],
             head: b.joint("M_head"),
             chest: b.joint("jnt_chest"),
             center: b.joint("center"),
-            fx: Particles::load(dir, MARIO_EFFECTS),
+            fx,
             movement_effects: true,
             pound_flames: true,
             fx_ticks: Vec::new(),
