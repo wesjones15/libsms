@@ -57,7 +57,10 @@ Workspace:
   quads: Mario's movement dust, stars, smears, slide spray, stomp bursts and super pound flames;
   hosts pass each tick's events to `View::events`, which the FFI does even without sound),
   `hud` (FLUDD's water gauge drawn as `TGCConsole2`
-  draws it into one RGBA image) and `audio` (the viewer's old `sound.rs`: the game's
+  draws it into one RGBA image), `life` (Mario's life meter, the Shine Sprite sun: a hub and eight
+  rays in two layers, lit by health share, a cyan shield after them; `LifeMeter::load(dir, 10, false)`
+  fills the empty arc on top with two more rays for a sun alone; `sms_view_life_*`; `--example life`
+  draws it, `--example blo` in libsms-assets lists a screen's panes) and `audio` (the viewer's old `sound.rs`: the game's
   sounds on cpal, music optional).
   `cargo run -p libsms-present --example bakes -- <dir>` writes every bake to PNG; `--example hud
   -- out.png` draws the water gauge at a few levels.
