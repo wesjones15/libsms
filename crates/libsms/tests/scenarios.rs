@@ -2551,6 +2551,48 @@ fn the_l_camera_aims_the_nozzle_and_turns_a_crouching_mario() {
 }
 
 #[test]
+fn a_host_aim_without_l_turns_a_standing_mario_and_pitches_the_nozzle() {
+    let mut s = Scene::flat();
+    s.sim.mario.give_fludd();
+    s.sim.mario.face_yaw = 0;
+    s.sim.mario.aim = Some(libsms::Aim {
+        yaw: 0x4000,
+        pitch: 0x1000,
+    });
+    s.step(60);
+    let m = s.mario();
+    assert_ne!(m.status, Status::Squat, "no L, no crouch");
+    assert!((m.face_yaw as i32 - 0x4000).abs() < 0x100, "{:#x}", m.face_yaw);
+    assert_eq!(m.fludd.as_ref().unwrap().gun_angle(), 0x1000 as f32);
+}
+
+#[test]
+fn a_host_aim_sends_the_water_its_way_even_while_mario_runs_elsewhere() {
+    let mut s = Scene::flat();
+    s.sim.mario.give_fludd();
+    s.sim.mario.aim = Some(libsms::Aim {
+        yaw: 0x4000,
+        pitch: 0,
+    });
+    // Running forward (+Z of his start facing) while the aim is a quarter turn off.
+    s.pad.stick = Vec2::new(0.0, 1.0);
+    s.pad.r_analog = 140;
+    let mut dir = None;
+    for _ in 0..120 {
+        s.host.events.clear();
+        s.step(1);
+        for e in &s.host.events {
+            if let Event::WaterEmit(we) = e {
+                dir.get_or_insert(we.dir);
+            }
+        }
+    }
+    let d = dir.expect("sprayed");
+    // Yaw 0x4000 faces +X (forward is (sin, cos)).
+    assert!(d.x > 0.7 && d.z.abs() < 0.5, "{d:?}");
+}
+
+#[test]
 fn a_knock_out_lays_mario_down() {
     let mut s = Scene::flat();
     s.sim.mario.knock_out();

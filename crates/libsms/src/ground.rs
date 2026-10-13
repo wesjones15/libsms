@@ -309,6 +309,14 @@ impl Mario {
             clip::PIVOT
         };
         self.set_anim(c, 1.0);
+        // Host aim without a crouch (a lock-on, not the L button): a standing Mario with no
+        // stick turns to face it, so FLUDD sprays at the target. Not in the game.
+        if self.intended_mag == 0.0 {
+            if let Some(a) = self.aim {
+                let d = diff(a.yaw, self.face_yaw);
+                self.face_yaw = self.face_yaw.wrapping_add(d / 2);
+            }
+        }
         self.wait_process(host);
         false
     }

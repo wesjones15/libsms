@@ -15,7 +15,7 @@ use crate::event::{Event, WaterEmit};
 use crate::host::Host;
 use crate::input::{Pad, lr_level};
 use crate::mario::{Mario, Status, UpperState};
-use crate::math::{cos, sin};
+use crate::math::{cos, diff, sin};
 use crate::params::{Nozzle, NozzleKind, Params};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -772,6 +772,16 @@ impl Mario {
                 self.nozzle_pos(kind, index),
                 self.nozzle_pitch_dir(kind, index),
             ),
+        };
+        // A host aim (the lock-on) sends the water where it points, whichever way Mario faces
+        // or runs; not in the game, where the camera turns Mario instead.
+        let dir = match self.aim {
+            Some(a) if !self.on_yoshi() => {
+                let t = diff(a.yaw, self.model_yaw);
+                let (s, c) = (sin(t), cos(t));
+                Vec3::new(dir.x * c + dir.z * s, dir.y, dir.z * c - dir.x * s)
+            }
+            _ => dir,
         };
         let face = self.face_yaw;
         let inherit = Vec3::new(self.vel.x * 0.125, 0.0, self.vel.z * 0.125);
