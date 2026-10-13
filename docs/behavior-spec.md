@@ -13,6 +13,11 @@ Status of each rule: **ported** (implemented and tested), **partial**, **not yet
 
 ## 1. Time and units
 
+Host presentation: ground-pound landing effects stay at their impact position through a
+rebound. This includes both `ms_hipdrop_*` and `ms_m_sphipd_hit_*` from
+`TMario::hipAttacking` (MarioJump.cpp). They exclude the host's current Mario draw offset;
+the separate `ms_m_sphipd_a..d` flames remain attached during the fall.
+
 - **The simulation runs at 120 Hz in both regions.** `TMarDirector::direct`
   (System/MarDirectorDirect.cpp) turns each rendered frame into `600 / vsync` time units
   (`vsync` = `SMSGetVSyncTimesPerSec()` = 30 NTSC, 25 PAL) and burns them in 5-unit ticks:

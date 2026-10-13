@@ -283,6 +283,16 @@ pub const SMOKE_EFFECTS: &[&str] = &[
     "ms_hipdrop_c",
 ];
 
+// MarioJump.cpp, TMario::hipAttacking: these are one-shot impacts at the floor,
+// distinct from the four body-bound flames during the fall. A host's smoothed
+// rebound position must not lift their fading rings/smoke off the landing point.
+const SUPER_POUND_IMPACTS: &[&str] = &[
+    "ms_m_sphipd_hit_a",
+    "ms_m_sphipd_hit_b",
+    "ms_m_sphipd_hit_c",
+    "ms_m_sphipd_hit_d",
+];
+
 struct FxTick {
     tick: u64,
     pos: Vec3,
@@ -598,7 +608,7 @@ impl View {
             })
             .unwrap_or_default();
         let mut fx = Particles::load(dir, MARIO_EFFECTS);
-        for &name in SMOKE_EFFECTS {
+        for &name in SMOKE_EFFECTS.iter().chain(SUPER_POUND_IMPACTS) {
             fx.set_world_space(name, true);
         }
         Ok(View {
@@ -1088,6 +1098,53 @@ mod tests {
             .fold(f32::MIN, f32::max);
         assert!((120.0..220.0).contains(&top), "top of Mario at {top}");
         assert!(v.positions.iter().all(|p| p.is_finite()));
+    }
+
+    #[test]
+    fn pound_impacts_stay_at_landing_when_mario_rebounds() {
+        let Some(mut v) = view() else {
+            return;
+        };
+        let a = libsms::Assets::discover(None).unwrap();
+        let mut sim = Sim::new(a.params, a.anim_table, Vec3::ZERO, 0);
+        let landing = Vec3::new(120.0, 0.0, -80.0);
+        let names = [
+            "ms_hipdrop_a",
+            "ms_hipdrop_b",
+            "ms_hipdrop_c",
+            "ms_m_sphipd_hit_a",
+            "ms_m_sphipd_hit_b",
+            "ms_m_sphipd_hit_c",
+            "ms_m_sphipd_hit_d",
+        ];
+        let cues: Vec<_> = names
+            .iter()
+            .map(|&name| {
+                Event::Particle(ParticleCue {
+                    name,
+                    at: FxAt::Once {
+                        pos: landing,
+                        yaw: 0,
+                    },
+                    scale: 1.0,
+                })
+            })
+            .collect();
+        v.events(&cues, &sim.mario);
+        v.update(&mut sim, 0.0);
+        assert!(!v.fx.batches.is_empty());
+        // This metadata is what makes the host omit Mario's smoothed draw offset.
+        assert!(
+            v.fx.batches
+                .iter()
+                .all(|b| v.fx.texture_world_space(b.texture)),
+            "a landing effect would receive Mario's bounce draw offset"
+        );
+        let at_landing: Vec<_> = v.fx.vertices.iter().map(|v| v.pos).collect();
+        sim.mario.pos = landing + Vec3::new(300.0, 800.0, -200.0);
+        v.update(&mut sim, 0.0);
+        let at_rebound: Vec<_> = v.fx.vertices.iter().map(|v| v.pos).collect();
+        assert_eq!(at_landing, at_rebound, "rebound moved the landing effects");
     }
 
     #[test]
