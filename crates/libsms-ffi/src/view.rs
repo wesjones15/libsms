@@ -16,8 +16,9 @@
 //! drops then the splashes, counted in [`sms_view_water_info`]) over the two textures from
 //! [`sms_view_water_texture`].
 //!
-//! So are the game's particle effects on Mario (`libsms_present::particles`: the super ground
-//! pound's flames): [`sms_view_fx_batches`] are runs of quads in [`sms_view_fx_vertices`], each
+//! So are the game's particle effects on Mario (`libsms_present::particles`: movement dust,
+//! stars, smears, slide spray, stomp bursts and pound flames): [`sms_view_fx_batches`] are
+//! runs of quads in [`sms_view_fx_vertices`], each
 //! over one of the textures counted in [`sms_view_fx_info`] ([`sms_view_fx_texture`]; a
 //! texture whose [`sms_view_fx_texture_version`] changed has new pixels).
 //!
@@ -866,7 +867,11 @@ pub unsafe extern "C" fn sms_view_fx_texture_version(view: *mut SmsView, which: 
     // SAFETY: as documented.
     unsafe {
         with_view(view, 0, |v| {
-            v.view.fx.textures.get(which as usize).map_or(0, |t| t.version)
+            v.view
+                .fx
+                .textures
+                .get(which as usize)
+                .map_or(0, |t| t.version)
         })
     }
 }

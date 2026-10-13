@@ -678,6 +678,7 @@ pub unsafe extern "C" fn sms_sim_step(
                 // SAFETY: the caller promised `view` is null or live.
                 unsafe {
                     view::with_view(view, (), |v| {
+                        v.view.events(&events, mario);
                         if let Some(a) = v.audio.as_mut() {
                             a.events(&events, mario);
                             a.tick(mario);
@@ -1251,6 +1252,22 @@ mod tests {
             }
             let n = view::sms_view_draws(v, std::ptr::null_mut(), 0);
             assert!(n >= 3, "{n} draws");
+            // Running starts dust. It must reach the view with sound disabled, even when
+            // several sim steps happen between renders (events aren't just the last tick).
+            let run = SmsPad {
+                stick_y: 1.0,
+                ..SmsPad::default()
+            };
+            let mut most_fx = 0;
+            for _ in 0..10 {
+                sms_sim_step(sim, &host, &run, 0, 1.0 / 60.0, v);
+                sms_sim_step(sim, &host, &run, 0, 1.0 / 60.0, v);
+                view::sms_view_update(v, sim, &frame);
+                let mut fx = view::SmsFxInfo::default();
+                assert_eq!(view::sms_view_fx_info(v, &mut fx), 1);
+                most_fx = most_fx.max(fx.vertices);
+            }
+            assert!(most_fx > 0, "running dust never reached the view");
             let mut draws = vec![view::SmsDraw::default(); n as usize];
             view::sms_view_draws(v, draws.as_mut_ptr(), n);
             let mut count = 0;

@@ -54,7 +54,9 @@ Workspace:
   light with no specular: Mario's materials light themselves in TEV with a toon ramp read at
   the lit colour (`GX_TG_SRTG`) plus a highlight; env-only materials bake over the env map's
   space), `particles` (the disc's `.jpa` effects run as JParticle runs them and handed out as
-  quads: the super ground pound's flames), `hud` (FLUDD's water gauge drawn as `TGCConsole2`
+  quads: Mario's movement dust, stars, smears, slide spray, stomp bursts and super pound flames;
+  hosts pass each tick's events to `View::events`, which the FFI does even without sound),
+  `hud` (FLUDD's water gauge drawn as `TGCConsole2`
   draws it into one RGBA image) and `audio` (the viewer's old `sound.rs`: the game's
   sounds on cpal, music optional).
   `cargo run -p libsms-present --example bakes -- <dir>` writes every bake to PNG; `--example hud

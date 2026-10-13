@@ -1995,6 +1995,69 @@ mod tests {
         }
     }
 
+    #[test]
+    fn every_mario_effect_builds_finite_textured_quads() {
+        let Some(dir) = libsms::assets::find(None) else {
+            return;
+        };
+        let all = Particles::load(&dir, crate::view::MARIO_EFFECTS);
+        if all.effects.is_empty() {
+            return;
+        }
+        for &name in crate::view::MARIO_EFFECTS {
+            assert!(all.has(name), "missing effect {name}");
+            let mut p = Particles::load(&dir, &[name]);
+            let held = matches!(
+                name,
+                "ms_m_blur2"
+                    | "ms_m_blur2sp"
+                    | "ms_m_blur3"
+                    | "ms_m_slipsmoke"
+                    | "ms_mariwallsl1"
+                    | "ms_m_watslide_a"
+                    | "ms_m_watslide_b"
+                    | "ms_m_watslide_c"
+            ) || crate::view::SUPER_POUND_FLAMES.contains(&name);
+            if !held {
+                p.emit(name, Mat4::IDENTITY, 1.0);
+            }
+            let mut most = 0;
+            for tick in (0..120).step_by(4) {
+                if held {
+                    p.request(
+                        0,
+                        name,
+                        Mat4::from_translation(Vec3::new(tick as f32, 0.0, 0.0)),
+                    );
+                }
+                p.advance(tick);
+                p.build(Vec3::X, Vec3::Y);
+                most = most.max(p.vertices.len());
+                assert!(
+                    p.vertices
+                        .iter()
+                        .all(|v| v.pos.is_finite() && v.color.iter().all(|c| c.is_finite())),
+                    "bad quad in {name}"
+                );
+                assert!(
+                    p.batches.iter().all(|b| b.texture < p.textures.len() as u32
+                        && b.first_vertex + b.vertex_count <= p.vertices.len() as u32
+                        && b.vertex_count % 4 == 0),
+                    "bad batch in {name}"
+                );
+            }
+            assert!(
+                most > 0,
+                "{name} never drew (shape {})",
+                p.effects[0].jpa.base.kind
+            );
+            for tick in (120..1200).step_by(4) {
+                p.advance(tick);
+            }
+            assert!(!p.active(), "{name} never expired");
+        }
+    }
+
     const FLAMES: [&str; 4] = [
         "ms_m_sphipd_a",
         "ms_m_sphipd_b",

@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use glam::{Mat4, Quat, Vec3};
-use libsms::{Clip, ClipLibrary, NozzleKind, Sim, Skeleton};
+use libsms::{Clip, ClipLibrary, Event, FxAt, Mario, NozzleKind, ParticleCue, Sim, Skeleton};
 use libsms_assets::bmd::{Blend, Cull};
 use libsms_assets::btp::TexPattern;
 use libsms_assets::mario::{BODY_HAND_SHAPES, HIDDEN_SHAPE, Hands, SHIRT_SHAPE, hands_for_clip};
@@ -190,8 +190,10 @@ pub struct View {
     head: Option<usize>,
     chest: Option<usize>,
     center: Option<usize>,
-    /// The game's particle effects on Mario: the super ground pound's flames.
+    /// The game's particle effects on Mario: dust, stars, smears, spray and pound flames.
     pub fx: Particles,
+    fx_ticks: Vec<FxTick>,
+    fx_binds: Vec<(u32, FxAt)>,
     /// FLUDD's water gauge (the HUD's tank), redrawn as the tank changes; None without the
     /// HUD's files. `hud_shown` says whether to show it this frame (Mario has FLUDD).
     pub hud: Option<Hud>,
@@ -221,8 +223,67 @@ pub struct View {
 }
 
 /// `PARTICLE_MS_M_SPHIPD_A..D` (`TMario::emitBlurHipDropSuper`).
-pub const SUPER_POUND_FLAMES: [&str; 4] =
-    ["ms_m_sphipd_a", "ms_m_sphipd_b", "ms_m_sphipd_c", "ms_m_sphipd_d"];
+pub const SUPER_POUND_FLAMES: [&str; 4] = [
+    "ms_m_sphipd_a",
+    "ms_m_sphipd_b",
+    "ms_m_sphipd_c",
+    "ms_m_sphipd_d",
+];
+
+/// MarioParticle.cpp and the effects requested by Mario's movement in the sim.
+pub const MARIO_EFFECTS: &[&str] = &[
+    "ms_m_sphipd_a",
+    "ms_m_sphipd_b",
+    "ms_m_sphipd_c",
+    "ms_m_sphipd_d",
+    "ms_mariwalk1_a",
+    "ms_mariwalk1_b",
+    "ms_mariwalk1_c",
+    "ms_jump_ed_a",
+    "ms_jump_ed_b",
+    "ms_dmg_c",
+    "ms_mariwallsl1",
+    "ms_wallkick_a",
+    "ms_wallkick_b",
+    "ms_m_blur3",
+    "ms_hipdrop_a",
+    "ms_hipdrop_b",
+    "ms_hipdrop_c",
+    "ms_m_sphipd_hit_a",
+    "ms_m_sphipd_hit_b",
+    "ms_m_sphipd_hit_c",
+    "ms_m_sphipd_hit_d",
+    "ms_m_blur2",
+    "ms_m_blur2sp",
+    "ms_m_slipsmoke",
+    "ms_m_watslide_a",
+    "ms_m_watslide_b",
+    "ms_m_watslide_c",
+    "ms_fumi_a",
+    "ms_fumi_b",
+    "ms_fumi_c",
+];
+
+struct FxTick {
+    tick: u64,
+    pos: Vec3,
+    yaw: i16,
+    pounding: u8,
+    cues: Vec<ParticleCue>,
+}
+
+fn fx_matrix(at: FxAt, root: Mat4, joints: &[Mat4], center: Option<usize>) -> Option<Mat4> {
+    match at {
+        FxAt::Once { pos, yaw } => Some(Mat4::from_rotation_translation(
+            Quat::from_rotation_y(yaw as f32 * std::f32::consts::PI / 32768.0),
+            pos,
+        )),
+        FxAt::Center => center.and_then(|j| joints.get(j)).map(|j| root * *j),
+        FxAt::Joint(j) => joints.get(j as usize).map(|j| root * *j),
+        // emitAndBindToPosPtr follows position only, not Mario's rotation.
+        FxAt::Feet => Some(Mat4::from_translation(root.w_axis.truncate())),
+    }
+}
 
 fn load_bmd(dir: &Path, rel: &str) -> Result<Bmd, String> {
     let data = std::fs::read(dir.join(rel)).map_err(|e| format!("{rel}: {e}"))?;
@@ -522,7 +583,9 @@ impl View {
             head: b.joint("M_head"),
             chest: b.joint("jnt_chest"),
             center: b.joint("center"),
-            fx: Particles::load(dir, &SUPER_POUND_FLAMES),
+            fx: Particles::load(dir, MARIO_EFFECTS),
+            fx_ticks: Vec::new(),
+            fx_binds: (0..4).map(|s| (s, FxAt::Center)).collect(),
             hud: Hud::load(dir).ok(),
             hud_shown: false,
             hud_tick: 0,
@@ -553,6 +616,25 @@ impl View {
     pub fn set_camera(&mut self, right: Vec3, up: Vec3) {
         self.right = right.normalize_or(Vec3::X);
         self.up = up.normalize_or(Vec3::Y);
+    }
+
+    /// Observe every sim tick (`Sim::advance_observed`), even without sound or rendering.
+    /// Queue effects until the next pose is available, preserving one-shots and short held
+    /// effects between rendered frames. Empty ticks release held emitters at 30 Hz too.
+    pub fn events(&mut self, events: &[Event], mario: &Mario) {
+        self.fx_ticks.push(FxTick {
+            tick: mario.ticks,
+            pos: mario.pos,
+            yaw: mario.model_yaw,
+            pounding: mario.pounding(),
+            cues: events
+                .iter()
+                .filter_map(|e| match e {
+                    Event::Particle(c) => Some(*c),
+                    _ => None,
+                })
+                .collect(),
+        });
     }
 
     /// Poses Mario for this frame, `dt` seconds after the last, and hands FLUDD's posed
@@ -692,19 +774,57 @@ impl View {
             _ => None,
         };
 
-        // The super ground pound's flames (`emitBlurHipDropSuper`, every tick of the flaming
-        // fall), bound to Mario's middle (`getCenterAnmMtx`) as drawn.
-        if let Some(c) = self.center.and_then(|c| joints.get(c)) {
-            let center = Mat4::from_translation(pos) * Mat4::from_quat(rot) * *c;
-            for (slot, name) in SUPER_POUND_FLAMES.iter().enumerate() {
-                if m.pounding() == 2 {
-                    self.fx.request(slot as u32, name, center);
-                } else {
-                    self.fx.rebind(slot as u32, center);
+        let root = Mat4::from_rotation_translation(rot, pos);
+        // Hosts which only pose the view still get the state-driven super pound flames.
+        if self.fx_ticks.is_empty() {
+            self.fx_ticks.push(FxTick {
+                tick: m.ticks,
+                pos,
+                yaw: m.model_yaw,
+                pounding: m.pounding(),
+                cues: Vec::new(),
+            });
+        }
+        for tick in self.fx_ticks.drain(..) {
+            let tick_root = Mat4::from_rotation_translation(
+                Quat::from_rotation_y(tick.yaw as f32 * std::f32::consts::PI / 32768.0),
+                tick.pos,
+            );
+            // Let-go emitters still follow their animation matrix, as in MarioParticle.cpp.
+            for &(slot, at) in &self.fx_binds {
+                if let Some(mtx) = fx_matrix(at, tick_root, &joints, self.center) {
+                    self.fx.rebind(slot, mtx);
                 }
             }
+            for cue in tick.cues {
+                let Some(mtx) = fx_matrix(cue.at, tick_root, &joints, self.center) else {
+                    continue;
+                };
+                if matches!(cue.at, FxAt::Once { .. }) {
+                    self.fx.emit(cue.name, mtx, cue.scale);
+                } else if let Some(slot) = MARIO_EFFECTS.iter().position(|&n| n == cue.name) {
+                    let slot = slot as u32;
+                    if !self.fx_binds.iter().any(|b| b.0 == slot) {
+                        self.fx_binds.push((slot, cue.at));
+                    }
+                    self.fx.request_scaled(slot, cue.name, mtx, cue.scale);
+                }
+            }
+            // emitBlurHipDropSuper, bound to getCenterAnmMtx during the flaming fall.
+            if tick.pounding == 2 {
+                if let Some(center) = fx_matrix(FxAt::Center, tick_root, &joints, self.center) {
+                    for (slot, name) in SUPER_POUND_FLAMES.iter().enumerate() {
+                        self.fx.request(slot as u32, name, center);
+                    }
+                }
+            }
+            self.fx.advance(tick.tick);
         }
-        self.fx.advance(m.ticks);
+        for &(slot, at) in &self.fx_binds {
+            if let Some(mtx) = fx_matrix(at, root, &joints, self.center) {
+                self.fx.rebind(slot, mtx);
+            }
+        }
         self.fx.build(self.right, self.up);
 
         // The water gauge, stepped once a game frame (4 ticks).

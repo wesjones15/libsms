@@ -179,8 +179,16 @@ directional quads and (crossed) stripes. A persistent request per frame keeps an
 particles; a frame without lets it go (`TMarioParticleManager::perform`,
 `becomeInvalidEmitter`). TEV (`JPADrawSetupTev`): stage 0's colour is `d + a(1 - c) + b c` over
 the texture colour and the prm/env registers, its alpha texture alpha times prm alpha; additive
-effects are split into basis textures and vertex colours that sum to it. Ported for the super
-pound's flames (`MS_M_SPHIPD_A..D`, bound to the `center` joint as drawn). Not ported: children
+effects are split into basis textures and vertex colours that sum to it.
+`View::events` observes every sim tick, retaining one-shot and held `Event::Particle` cues
+between renders; the FFI does this even with sound disabled.
+Dust on starting, skidding, landing, wall sliding and wall kicking, bump stars, the pound's
+smear and landing, spin-jump swirls, belly-slide smoke/spray and stomp bursts load from the disc.
+One-shots keep their initial position and yaw and expire using their JPA's duration;
+held effects follow the posed center, joint or feet and release when requests stop.
+`setGlobalScale` shrinks motion and drawn sizes together (light landings use 0.7).
+The super pound's flames (`MS_M_SPHIPD_A..D`) bind to the `center` joint as drawn.
+Not ported: children
 (`SSP1`), `KFA1` key frames, indirect textures, the other field kinds.
 
 **Wet belly slide** (`checkCurrentPlane` → `askHitWaterParticleOnGround`, `catching`,
