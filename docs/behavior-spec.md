@@ -33,8 +33,10 @@ rebound. This includes both `ms_hipdrop_*` and `ms_m_sphipd_hit_*` from
 `TMario::hipAttacking` (MarioJump.cpp). They exclude the host's current Mario draw offset;
 the separate `ms_m_sphipd_a..d` flames remain attached during the fall.
 
-Host preference: normal/super pound smoke (`ms_hipdrop_b`, `ms_m_sphipd_hit_b`)
-keeps each puff's birth height. Its horizontal spread, size, colour and lifetime still
+Host preference: every smoke or dust cloud (the `kemuball` billboards: `ms_mariwalk1_a`,
+`ms_jump_ed_b`, `ms_m_slipsmoke`, `ms_mariwallsl1`, `ms_wallkick_a`, and the pound's
+`ms_hipdrop_b`, `ms_m_sphipd_hit_b`; `libsms_present::view::DUST_CLOUDS`) keeps each puff's
+birth height. The other effects (debris, shock rings, marks) are untouched. Its horizontal spread, size, colour and lifetime still
 advance; its authored upward velocity/fields do not lift the dust. Both use smoke speed.
 
 - **The simulation runs at 120 Hz in both regions.** `TMarDirector::direct`

@@ -2143,24 +2143,32 @@ mod tests {
     }
 
     #[test]
-    fn pound_smoke_keeps_birth_height_while_spreading_and_fading() {
+    fn dust_clouds_keep_birth_height_while_spreading_and_fading() {
         let Some(dir) = libsms::assets::find(None) else {
             return;
         };
         let configured = crate::view::View::load(&dir).unwrap();
-        for name in ["ms_hipdrop_b", "ms_m_sphipd_hit_b"] {
+        for &name in crate::view::DUST_CLOUDS {
             let mut p = configured.fx.clone();
-            p.emit(
-                name,
-                Mat4::from_translation(Vec3::new(100.0, 20.0, -40.0)),
-                1.0,
-            );
+            // The belly slide's and the wall slide's smoke are held (requested every frame).
+            let held = matches!(name, "ms_m_slipsmoke" | "ms_mariwallsl1");
+            if !held {
+                p.emit(
+                    name,
+                    Mat4::from_translation(Vec3::new(100.0, 20.0, -40.0)),
+                    1.0,
+                );
+            }
             let mut saw_smoke = false;
             let mut saw_spread = false;
             for tick in (0..1200).step_by(4) {
                 // Advance through the lifetime, including subframes, while the character
                 // rebounds far above the impact. One-shot smoke must stay at birth height.
-                p.rebind(0, Mat4::from_translation(Vec3::Y * (tick as f32 * 20.0)));
+                let rebound = Mat4::from_translation(Vec3::Y * (tick as f32 * 20.0));
+                if held && tick < 200 {
+                    p.request(0, name, rebound);
+                }
+                p.rebind(0, rebound);
                 p.advance(tick);
                 for e in &p.emitters {
                     for particle in &e.particles {

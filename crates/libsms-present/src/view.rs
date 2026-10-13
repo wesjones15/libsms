@@ -287,9 +287,19 @@ pub const SMOKE_EFFECTS: &[&str] = &[
     "ms_m_sphipd_hit_b",
 ];
 
-// Ground-pound smoke uses the kemuball texture, distinct from the shockwaves, sparks
-// and falling flames. Host preference: its puffs spread/fade at their birth height.
-const GROUND_POUND_SMOKE: &[&str] = &["ms_hipdrop_b", "ms_m_sphipd_hit_b"];
+/// Every effect that is a smoke or dust cloud (the `kemuball` billboard; the others in
+/// [`SMOKE_EFFECTS`] are debris, shock rings and marks). Host preference: its puffs spread and
+/// fade at their birth height instead of drifting up, whether from a pound, a landing, a run's
+/// first step, a belly slide or a wall.
+pub const DUST_CLOUDS: &[&str] = &[
+    "ms_mariwalk1_a",
+    "ms_jump_ed_b",
+    "ms_m_slipsmoke",
+    "ms_mariwallsl1",
+    "ms_wallkick_a",
+    "ms_hipdrop_b",
+    "ms_m_sphipd_hit_b",
+];
 
 // MarioJump.cpp, TMario::hipAttacking: these are one-shot impacts at the floor,
 // distinct from the four body-bound flames during the fall. A host's smoothed
@@ -619,7 +629,7 @@ impl View {
         for &name in SMOKE_EFFECTS.iter().chain(SUPER_POUND_IMPACTS) {
             fx.set_world_space(name, true);
         }
-        for &name in GROUND_POUND_SMOKE {
+        for &name in DUST_CLOUDS {
             fx.set_fixed_height(name, true);
         }
         Ok(View {
