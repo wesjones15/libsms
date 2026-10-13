@@ -882,7 +882,10 @@ impl View {
             .render_fraction(m.ticks as f64 + alpha as f64 - self.lag as f64);
         self.fx
             .build_interpolated(self.right, self.up, fraction, |name| {
-                if name.starts_with("ms_m_sphipd_") {
+                // Host preference: keep the pound's smoke/ring, omit its star spray.
+                if name == "ms_m_sphipd_hit_d" {
+                    false
+                } else if name.starts_with("ms_m_sphipd_") {
                     flames
                 } else {
                     movement
