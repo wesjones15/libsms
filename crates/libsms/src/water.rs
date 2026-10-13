@@ -39,6 +39,8 @@ pub struct Particle {
     pub attack: i16,
     /// [`WaterManager::reach`] when it left the nozzle (1 for all but Spray's).
     pub reach: f32,
+    /// From a light press's burst ([`WaterEmit::burst`]).
+    pub burst: bool,
     /// The surface it sticks to: normal and whether it is wet (`isWaterSlip`).
     surface: Option<(Vec3, bool)>,
 }
@@ -57,7 +59,13 @@ pub enum WaterEvent {
     /// A flying particle hit the enemy `id` (`HIT_MESSAGE_SPRAYED_BY_WATER`) with its
     /// `attack` (`getParticleAttack`: hit points, at least 1 to the game's small enemies) and
     /// was spent on it. What that does to the enemy is the host's.
-    Hit { id: u64, pos: Vec3, attack: i16 },
+    Hit {
+        id: u64,
+        pos: Vec3,
+        attack: i16,
+        /// The particle came from a light press's burst ([`WaterEmit::burst`]).
+        burst: bool,
+    },
 }
 
 /// The manager's constants (`TModelWaterManager::load`, `gWaterManagerPlaneInfo`).
@@ -155,6 +163,7 @@ impl WaterManager {
                 kind,
                 attack: w.attack,
                 reach,
+                burst: w.burst,
                 surface: None,
             });
             n += 1;
@@ -206,6 +215,7 @@ impl WaterManager {
                 id: e.id,
                 pos: p.pos,
                 attack: p.attack,
+                burst: p.burst,
             });
             self.events.push(WaterEvent::SplashSound {
                 pos: p.pos,
@@ -432,6 +442,7 @@ mod tests {
             dir_tremble: 0.0,
             pow_tremble: 0.0,
             particle_type: 0,
+            burst: false,
         }
     }
 
@@ -490,7 +501,7 @@ mod tests {
         for _ in 0..30 {
             w.step(&EnemyAhead, Vec3::ZERO);
             hits.extend(w.events.drain(..).filter_map(|e| match e {
-                WaterEvent::Hit { id, pos, attack } => Some((id, pos, attack)),
+                WaterEvent::Hit { id, pos, attack, .. } => Some((id, pos, attack)),
                 _ => None,
             }));
         }

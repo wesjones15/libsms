@@ -131,4 +131,7 @@ pub struct WaterEmit {
     pub dir_tremble: f32,
     pub pow_tremble: f32,
     pub particle_type: i16,
+    /// A light press of the Spray, under pressure fades: a short burst. Not the game's; its
+    /// hits say so ([`crate::WaterEvent::Hit`]) so a host can make them count for more.
+    pub burst: bool,
 }

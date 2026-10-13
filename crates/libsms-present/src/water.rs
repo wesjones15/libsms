@@ -260,6 +260,7 @@ mod tests {
             dir_tremble: 0.2,
             pow_tremble: 0.0,
             particle_type: 0,
+            burst: false,
         });
         let mut look = WaterLook::default();
         let (eye, right, up) = (Vec3::new(500.0, 150.0, 0.0), Vec3::Z, Vec3::Y);

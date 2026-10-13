@@ -42,6 +42,10 @@ struct Slot {
     emit_acc: f32,
     /// Water owed for drops at a host's spray rate (`limits.rs`), less than one unit.
     water_carry: f32,
+    /// The Spray under pressure fades, pressed lightly: the trigger alone, before the gate,
+    /// is short of full output, so the press is a short burst (not the game's: a host may
+    /// weight these drops' hits, see [`crate::WaterEmit::burst`]).
+    burst: bool,
     /// Trigger nozzles.
     state: TriggerState,
     timer: i16,
@@ -665,6 +669,9 @@ impl Mario {
                 // TNozzleBase::movement: the output follows how far the trigger is pressed
                 // beyond the ramping gate.
                 let var1 = (256.0 * r_level * 150.0) as i32;
+                s.burst = fades
+                    && kind == NozzleKind::Spray
+                    && var1 as f32 * 0.000_015_258_789 * np.emit_pow_scale < 1.0;
                 if !fades {
                     s.amount = var1 as f32 * 0.000_015_258_789;
                     if var1 > s.gate as i32 {
@@ -771,6 +778,7 @@ impl Mario {
         let (mut size, mut dir_tremble) = (np.size, np.dir_tremble);
 
         let (count, attack, power, reaction);
+        let mut burst = false;
         {
             let Some(f) = self.fludd.as_mut() else { return };
             if f.water <= 0 {
@@ -797,6 +805,7 @@ impl Mario {
             } else if matches!(kind, NozzleKind::Spray | NozzleKind::Yoshi) {
                 // TNozzleDeform::emit (without the secondary bomb trigger)
                 let a = s.amount;
+                burst = s.burst;
                 if !(a > 0.0) {
                     return;
                 }
@@ -868,6 +877,7 @@ impl Mario {
             dir_tremble,
             pow_tremble: np.pow_tremble,
             particle_type: np.particle_type,
+            burst,
         }));
 
         // Recoil: `addVelocity(reaction * -(dir . forward) * power)`; vertical reaction pushes

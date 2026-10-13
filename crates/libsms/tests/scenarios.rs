@@ -2347,6 +2347,41 @@ fn a_light_press_is_a_short_burst_and_a_held_one_fades() {
     assert!(stretched.0 as f32 > 1.6 * full.0 as f32, "{stretched:?} {full:?}");
 }
 
+/// Whether the Spray's drops at trigger `raw` say they're a light press's burst.
+fn burst_drops(raw: u8) -> (u32, u32) {
+    let mut s = Scene::flat();
+    s.sim.mario.give_fludd();
+    s.secs(0.5);
+    let (mut burst, mut plain) = (0, 0);
+    for _ in 0..120 {
+        s.pad.r_analog = raw;
+        s.host.events.clear();
+        s.step(1);
+        for e in &s.host.events {
+            if let Event::WaterEmit(we) = e {
+                if we.burst {
+                    burst += we.count;
+                } else {
+                    plain += we.count;
+                }
+            }
+        }
+    }
+    (burst, plain)
+}
+
+#[test]
+fn a_light_press_says_its_drops_are_a_burst() {
+    if need_disc() {
+        return;
+    }
+    let light = burst_drops(15);
+    let full = burst_drops(255);
+    println!("light {light:?} full {full:?}");
+    assert!(light.0 > 0 && light.1 == 0, "{light:?}");
+    assert!(full.0 == 0 && full.1 > 0, "{full:?}");
+}
+
 fn charged(water_free: bool, glide: bool) -> libsms::Limits {
     libsms::Limits {
         wet_slide: Some(libsms::WetSlide {

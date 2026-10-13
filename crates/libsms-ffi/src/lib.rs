@@ -27,7 +27,7 @@ use libsms::{
 use view::SmsView;
 
 /// ABI version, bumped when the C interface changes.
-pub const SMS_ABI_VERSION: u32 = 10;
+pub const SMS_ABI_VERSION: u32 = 11;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sms_abi_version() -> u32 {
@@ -141,6 +141,9 @@ pub enum SmsEventKind {
     AirJump = 16,
     /// [`SmsLimits`]: a belly slide turned wet and spent the charge.
     WetSlide = 17,
+    /// As `WaterHit`, by a particle from a light press's burst of the Spray
+    /// ([`libsms::WaterEmit::burst`]), which a host may make count for more.
+    BurstHit = 18,
 }
 
 /// An enemy the host reports ([`libsms::Enemy`]): a standing cylinder.
@@ -534,9 +537,20 @@ fn water_hits(host: &SmsHost, events: &[WaterEvent]) {
         return;
     };
     for ev in events {
-        if let WaterEvent::Hit { id, pos, attack } = *ev {
+        if let WaterEvent::Hit {
+            id,
+            pos,
+            attack,
+            burst,
+        } = *ev
+        {
+            let kind = if burst {
+                SmsEventKind::BurstHit
+            } else {
+                SmsEventKind::WaterHit
+            };
             let e = SmsEvent {
-                kind: SmsEventKind::WaterHit as u32,
+                kind: kind as u32,
                 arg: id as i32,
                 value: attack as f32,
                 pos: pos.into(),
