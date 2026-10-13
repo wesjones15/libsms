@@ -343,11 +343,11 @@ fn pressure_color(frame: u8) -> u32 {
     }
 }
 
-fn rgba(c: u32) -> [f32; 4] {
+pub(crate) fn rgba(c: u32) -> [f32; 4] {
     c.to_be_bytes().map(|v| v as f32 / 255.0)
 }
 
-fn texel(img: &Image, x: u32, y: u32) -> [f32; 4] {
+pub(crate) fn texel(img: &Image, x: u32, y: u32) -> [f32; 4] {
     let i = ((y * img.width + x) * 4) as usize;
     [0, 1, 2, 3].map(|c| img.rgba[i + c] as f32 / 255.0)
 }
