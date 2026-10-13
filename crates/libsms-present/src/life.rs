@@ -216,6 +216,16 @@ impl LifeMeter {
         for p in back.iter().chain(text.iter()) {
             corners(p, 0.0);
         }
+        if !with_hud {
+            // The sun alone is centred on its hub, so a host can turn the image about its middle.
+            let half = (0..2)
+                .flat_map(|k| [c[k] - lo[k], hi[k] - c[k]])
+                .fold(0.0f32, f32::max);
+            for k in 0..2 {
+                lo[k] = c[k] - half;
+                hi[k] = c[k] + half;
+            }
+        }
         let origin = [lo[0].floor() as i32 - 1, lo[1].floor() as i32 - 1];
         let (w, h) = (
             (hi[0].ceil() as i32 + 1 - origin[0]) as u32,
@@ -503,6 +513,21 @@ mod tests {
         hud.update(Life::FULL);
         assert!(hud.image.width * hud.image.height > plain.image.width * plain.image.height);
         assert!(opaque(&hud) > opaque(&plain));
+    }
+
+    #[test]
+    fn the_sun_alone_is_centred_on_its_hub() {
+        let Some(m) = meter(10, false) else { return };
+        let c = m.hub[1].center();
+        let mid = [
+            m.origin[0] as f32 + m.image.width as f32 * 0.5,
+            m.origin[1] as f32 + m.image.height as f32 * 0.5,
+        ];
+        assert!(
+            (mid[0] - c[0]).abs() < 1.5 && (mid[1] - c[1]).abs() < 1.5,
+            "{mid:?} {c:?}"
+        );
+        assert_eq!(m.image.width, m.image.height);
     }
 
     #[test]
