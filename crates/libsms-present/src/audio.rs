@@ -341,6 +341,14 @@ impl Audio {
         }
     }
 
+    /// Mario says `name` now (`MSound::startMarioVoice`): one voice at a time, so it cuts off
+    /// the one before. For a host's own moments (a lobby intro's "wahoo").
+    pub fn mario_voice(&self, name: &str) {
+        if let Ok(mut sys) = self.sys.lock() {
+            sys.mario_voice(name);
+        }
+    }
+
     pub fn tick(&mut self, mario: &Mario) {
         if let Ok(mut sys) = self.sys.lock() {
             self.scene.tick(&mut sys, mario);

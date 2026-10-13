@@ -573,6 +573,27 @@ pub unsafe extern "C" fn sms_view_update(
     }
 }
 
+/// Mario says `name` (an `MSD_SE_MV*` voice, e.g. `MSD_SE_MV23_JUMP_LARGE_01`), cutting off
+/// his last voice. Nothing without sound or an unknown name.
+///
+/// # Safety
+/// `view` from [`sms_view_new`]; `name` a nul-terminated UTF-8 string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_mario_voice(view: *mut SmsView, name: *const c_char) {
+    if name.is_null() {
+        return;
+    }
+    // SAFETY: as documented.
+    let Ok(name) = (unsafe { std::ffi::CStr::from_ptr(name) }).to_str() else { return };
+    unsafe {
+        with_view(view, (), |v| {
+            if let Some(a) = &v.audio {
+                a.mario_voice(name);
+            }
+        })
+    }
+}
+
 /// Writes up to `max` of this frame's instances; returns how many (with `out` null, how many
 /// there are).
 ///
