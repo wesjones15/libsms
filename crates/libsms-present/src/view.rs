@@ -265,9 +265,6 @@ pub const MARIO_EFFECTS: &[&str] = &[
     "ms_fumi_a",
     "ms_fumi_b",
     "ms_fumi_c",
-    "ms_m_watrun_a",
-    "ms_m_watrun_b",
-    "ms_m_watrun_c",
 ];
 
 /// Host presentation: dust/smoke trails remain where they were emitted when Mario jumps.
@@ -810,9 +807,11 @@ impl View {
                 let extra = |name: &str| match name {
                     // `NozzleCtrl`: the neck dips with the aim, never above level.
                     // A host aim (the lock-on) also swivels the head round to the target
-                    // and lifts it above level; not in the game.
+                    // and lifts it above level; not in the game. The pose is in the models'
+                    // right-handed space and the host draws it mirrored across X, so the
+                    // turn goes the other way round here to look right on screen.
                     "chn_muzzle_1" | "jnt_back_nozzle_neck" if l.aimed => Some(
-                        Mat4::from_rotation_y(deg(l.aim_turn as f32))
+                        Mat4::from_rotation_y(-deg(l.aim_turn as f32))
                             * Mat4::from_rotation_z(deg(l.gun_angle)),
                     ),
                     "chn_muzzle_1" | "jnt_back_nozzle_neck" if l.gun_angle < 0.0 => {
@@ -1152,7 +1151,8 @@ mod tests {
             v.update(&mut sim, 1.0 / 60.0);
         }
         let ahead = heading(&sim);
-        // A quarter turn to one side of where he faces (the heading increases toward +X).
+        // A quarter turn to one side of where he faces (the heading increases toward +X). The
+        // pose is mirrored across X when drawn, so its own heading swings the other way.
         let yaw = sim.mario.model_yaw;
         sim.mario.aim = Some(libsms::Aim { yaw: yaw.wrapping_add(0x4000), pitch: 0 });
         v.update(&mut sim, 1.0 / 60.0);
@@ -1160,7 +1160,7 @@ mod tests {
         let swing = (turned - ahead + std::f32::consts::PI).rem_euclid(2.0 * std::f32::consts::PI)
             - std::f32::consts::PI;
         println!("ahead {ahead:.2} turned {turned:.2} swing {swing:.2}");
-        assert!((swing - std::f32::consts::FRAC_PI_2).abs() < 0.2, "swing {swing}");
+        assert!((swing + std::f32::consts::FRAC_PI_2).abs() < 0.2, "swing {swing}");
     }
 
     #[test]

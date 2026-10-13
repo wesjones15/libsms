@@ -2630,25 +2630,6 @@ fn shallow_water_wets_a_slide_only_when_the_host_asks() {
 }
 
 #[test]
-fn a_run_through_shallow_water_ripples_at_each_footfall() {
-    let ripples = |water: Option<f32>| {
-        let mut s = Scene::flat();
-        s.host.world.water = water;
-        s.run_forward();
-        s.secs(3.0);
-        s.event_count(|e| matches!(e, Event::Particle(c) if c.name == "ms_m_watrun_b"))
-    };
-    let dry = ripples(None);
-    let wet = ripples(Some(10.0));
-    // Deeper than the ripple depth it's a pool's ripple, not a footfall's.
-    let deep = ripples(Some(60.0));
-    println!("dry {dry}, shallow {wet}, deep {deep}");
-    assert_eq!(dry, 0);
-    assert!(wet >= 4, "{wet}");
-    assert_eq!(deep, 0);
-}
-
-#[test]
 fn the_slide_spray_is_as_big_as_the_host_says() {
     let size = |scale: f32| {
         let mut s = Scene::flat();

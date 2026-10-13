@@ -749,32 +749,6 @@ impl Mario {
         if let Some(level) = level {
             self.water_surface = level;
         }
-        self.running_ripple();
-    }
-
-    /// `runningRippleEffect`, from `thinkWaterSurface`: each footfall of a run (frames 8 and 38)
-    /// through water that barely covers his feet, or over wet ground, ripples at the surface
-    /// (`ms_m_watrun_a` too above a speed of 30).
-    fn running_ripple(&mut self) {
-        use crate::event::FxAt;
-        if self.status != Status::Run || !(self.anim.passed(38.0) || self.anim.passed(8.0)) {
-            return;
-        }
-        let shallow = self.in_water
-            && self.water_surface < self.pos.y + self.params.water_effect.running_ripple_depth;
-        if !shallow && !self.wet_ground {
-            return;
-        }
-        let y = if self.in_water { self.water_surface } else { self.floor_y };
-        let at = FxAt::Once {
-            pos: Vec3::new(self.pos.x, y, self.pos.z),
-            yaw: 0,
-        };
-        if self.forward_vel > 30.0 {
-            self.fx("ms_m_watrun_a", at);
-        }
-        self.fx("ms_m_watrun_b", at);
-        self.fx("ms_m_watrun_c", at);
     }
 
     /// `checkPlayerAction`: controller, stick history, ground/roof/wall probes.
