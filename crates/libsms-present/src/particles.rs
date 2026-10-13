@@ -293,7 +293,7 @@ struct Emitter {
     slot: Option<u32>,
     /// The slot whose matrix it follows, kept after it's let go (`userWork` still points at
     /// Mario's matrix).
-    bound_slot: u32,
+    bound_slot: Option<u32>,
     /// `unk10`, `unk18`.
     frame: f32,
     start_frame: f32,
@@ -310,6 +310,8 @@ struct Emitter {
     rng: Rng,
     global_rot: Mat3,
     global_pos: Vec3,
+    /// `setGlobalScale`: dynamics (local positions) and particle sizes together.
+    global_scale: f32,
     /// `JPADraw::mPrmColor`, `mEnvColor`, `mTexIdx`.
     prm: [u8; 4],
     env: [u8; 4],
@@ -343,7 +345,7 @@ pub struct Particles {
     by_name: HashMap<String, usize>,
     emitters: Vec<Emitter>,
     /// Requests this frame: (slot, effect).
-    wanted: Vec<(u32, usize)>,
+    wanted: Vec<(u32, usize, f32)>,
     seed: Rng,
     /// The sim tick the last game frame ran at.
     last_tick: Option<u64>,
@@ -562,9 +564,31 @@ impl Particles {
     /// (`becomeInvalidEmitter`, its particles living out) on the first frame not asked.
     /// `slot` tells requests apart.
     pub fn request(&mut self, slot: u32, name: &str, mtx: Mat4) {
+        self.request_scaled(slot, name, mtx, 1.0);
+    }
+
+    pub fn request_scaled(&mut self, slot: u32, name: &str, mtx: Mat4, scale: f32) {
         if let Some(&e) = self.by_name.get(name) {
-            self.wanted.push((slot, e));
+            if let Some(w) = self.wanted.iter_mut().find(|w| w.0 == slot) {
+                *w = (slot, e, scale);
+            } else {
+                self.wanted.push((slot, e, scale));
+            }
             self.binds.insert(slot, mtx);
+        }
+    }
+
+    /// `TMarioParticleManager::emit` / `emitWithRotate`: an independent emitter at a fixed
+    /// transform, alive for the duration in its JPA. Unlike a held request it needs no
+    /// refresh, and another emission of the same effect doesn't replace it.
+    pub fn emit(&mut self, name: &str, mtx: Mat4, scale: f32) {
+        if let Some(&effect) = self.by_name.get(name) {
+            let mut e = self.make(effect, 0);
+            e.slot = None;
+            e.bound_slot = None;
+            e.global_scale = scale;
+            e.bind(mtx);
+            self.emitters.push(e);
         }
     }
 
@@ -580,7 +604,7 @@ impl Particles {
     pub fn active(&self) -> bool {
         self.emitters
             .iter()
-            .any(|e| !e.particles.is_empty() || e.slot.is_some())
+            .any(|e| !e.particles.is_empty() || e.status & ENABLE_DELETE == 0)
     }
 
     /// Runs the game frames due at sim tick `tick` (one per [`FRAME_TICKS`]; at most four at
@@ -607,21 +631,26 @@ impl Particles {
     /// One game frame: `TMarioParticleManager::perform` then `JPAEmitterManager::calc`.
     fn frame(&mut self) {
         // Start emitters newly asked for; let go of those no longer asked for.
-        for (slot, effect) in self.wanted.clone() {
+        for (slot, effect, scale) in self.wanted.clone() {
             let live = self.emitters.iter_mut().find(|e| e.slot == Some(slot));
             match live {
                 Some(e)
                     if e.effect == effect
-                        && !(e.status & ENABLE_DELETE != 0 && e.particles.is_empty()) => {}
+                        && !(e.status & ENABLE_DELETE != 0 && e.particles.is_empty()) =>
+                {
+                    e.global_scale = scale;
+                }
                 Some(e) => {
                     e.max_frame = -1;
                     e.status |= STOP_EMIT;
                     e.slot = None;
-                    let em = self.make(effect, slot);
+                    let mut em = self.make(effect, slot);
+                    em.global_scale = scale;
                     self.emitters.push(em);
                 }
                 None => {
-                    let em = self.make(effect, slot);
+                    let mut em = self.make(effect, slot);
+                    em.global_scale = scale;
                     self.emitters.push(em);
                 }
             }
@@ -641,7 +670,7 @@ impl Particles {
         let effects = &self.effects;
         self.emitters.retain_mut(|e| {
             // Let-go emitters keep their last slot's matrix (`userWork` still points at it).
-            let bind = binds.get(&e.bound_slot).copied();
+            let bind = e.bound_slot.and_then(|s| binds.get(&s)).copied();
             if let Some(m) = bind {
                 e.bind(m);
             }
@@ -667,7 +696,7 @@ impl Particles {
         Emitter {
             effect,
             slot: Some(slot),
-            bound_slot: slot,
+            bound_slot: Some(slot),
             frame: 0.0,
             start_frame: 0.0,
             start: em.start_frame,
@@ -687,6 +716,7 @@ impl Particles {
             rng: Rng(self.seed.get()),
             global_rot: Mat3::IDENTITY,
             global_pos: Vec3::ZERO,
+            global_scale: 1.0,
             prm,
             env,
             texture: base.texture,
@@ -775,10 +805,10 @@ impl Particles {
             };
             // Particles that follow the emitter sit where it is now (the host draws between
             // game frames), not where it was at the last one.
-            let now = self.binds.get(&e.bound_slot).map(|m| {
+            let now = e.bound_slot.and_then(|s| self.binds.get(&s)).map(|m| {
                 let mut b = e.clone_bind();
                 b.bind(*m);
-                b.global_pos + b.global_rot * Vec3::from(jpa.emitter.trans)
+                b.global_params(jpa).pos
             });
             let order: Box<dyn Iterator<Item = &Particle>> = if base.list_order() {
                 Box::new(e.particles.iter())
@@ -797,7 +827,7 @@ impl Particles {
                     continue;
                 };
                 let pos = match now {
-                    Some(at) if p.follow => p.local + at,
+                    Some(at) if p.follow => p.local * e.global_scale + at,
                     _ => p.global,
                 };
                 let Some(corners) = particle_quad(e, p, pos, jpa, right, up) else {
@@ -1007,9 +1037,9 @@ fn rot_type(kind: u8, s: f32, c: f32) -> Mat3 {
 }
 
 /// `setParticleClipBoard`: half the quad's size (`unk4`) and the pivot shift (`unkC`).
-fn clip_board(jpa: &Jpa) -> ([f32; 2], [f32; 2]) {
+fn clip_board(jpa: &Jpa, scale: f32) -> ([f32; 2], [f32; 2]) {
     let base = &jpa.base;
-    let mut size = [25.0 * base.size_x, 25.0 * base.size_y];
+    let mut size = [25.0 * base.size_x * scale, 25.0 * base.size_y * scale];
     match base.kind {
         0 => size = size.map(|s| s * 1.02),
         1 => size = [size[0] * 1.02, size[1] * 0.4],
@@ -1036,7 +1066,7 @@ fn particle_quad(
     up: Vec3,
 ) -> Option<[(Vec3, [f32; 2]); 4]> {
     let base = &jpa.base;
-    let (size, pivot) = clip_board(jpa);
+    let (size, pivot) = clip_board(jpa, e.global_scale);
     let l = &p.look;
     let x0 = -l.scale_x * (size[0] + pivot[0]);
     let y0 = l.scale_y * (size[1] + pivot[1]);
@@ -1113,7 +1143,7 @@ fn stripe_quads(e: &Emitter, jpa: &Jpa) -> Vec<[(Vec3, [f32; 2]); 4]> {
         return Vec::new();
     }
     let base = &jpa.base;
-    let (size, pivot) = clip_board(jpa);
+    let (size, pivot) = clip_board(jpa, e.global_scale);
     let order: Vec<&Particle> = if base.list_order() {
         e.particles.iter().collect()
     } else {
@@ -1235,10 +1265,11 @@ impl Emitter {
             (em.rot[1] as i32 * 182) as i16,
             (em.rot[2] as i32 * 182) as i16,
         );
-        let scale = Vec3::from(em.scale);
+        let local_scale = Vec3::from(em.scale);
+        let scale = local_scale * self.global_scale;
         let rot = self.global_rot * local_rot;
-        let rot_scale = rot * Mat3::from_diagonal(scale);
-        let pos = self.global_pos + self.global_rot * Vec3::from(em.trans);
+        let rot_scale = rot * Mat3::from_diagonal(local_scale);
+        let pos = self.global_pos + self.global_rot * (Vec3::from(em.trans) * self.global_scale);
         let dir = Vec3::from(em.direction).normalize_or(Vec3::Z);
         let dir_rot = if dir == Vec3::Z {
             Mat3::IDENTITY
@@ -1335,7 +1366,9 @@ impl Emitter {
             calc_draw_particle(self.prm, self.env, p, jpa);
             // `calcGlobalPosition`.
             p.local += p.vel;
-            p.global = p.local + p.anchor;
+            // JPAParticle::calcGlobalPosition applies the global dynamics scale after
+            // integrating in local space; fields and velocity shrink with the effect too.
+            p.global = p.local * self.global_scale + p.anchor;
             i += 1;
         }
         self.frame += 1.0;
@@ -1628,7 +1661,7 @@ impl Emitter {
         let look = init_look(self, jpa, info);
         Particle {
             local,
-            global: local + anchor,
+            global: local * self.global_scale + anchor,
             anchor,
             base_vel: vel,
             field_accel: Vec3::ZERO,
@@ -1866,6 +1899,101 @@ fn scale_at(x: &ExtraShape, t: f32, is_x: bool, base: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn puff() -> Particles {
+        let mut p = Particles::default();
+        p.add(
+            "puff",
+            Jpa {
+                emitter: libsms_assets::jpa::Emitter {
+                    scale: [1.0; 3],
+                    trans: [10.0, 20.0, 30.0],
+                    volume_type: 4,
+                    rate: 2.0,
+                    max_frame: 2,
+                    lifetime: 5,
+                    weight: 1.0,
+                    air_resistance: 1.0,
+                    vel_dir: 3.0,
+                    direction: [0.0, 1.0, 0.0],
+                    ..Default::default()
+                },
+                base: BaseShape {
+                    size_x: 1.0,
+                    size_y: 1.0,
+                    ..Default::default()
+                },
+                fields: vec![],
+                extra: None,
+                ex_tex: None,
+                has_children: false,
+                textures: vec![Texture {
+                    name: "white".into(),
+                    format: 0,
+                    image: libsms_assets::texture::Image {
+                        width: 1,
+                        height: 1,
+                        rgba: vec![255; 4],
+                    },
+                    wrap_s: Wrap::Clamp,
+                    wrap_t: Wrap::Clamp,
+                    min_filter: 1,
+                    mag_filter: 1,
+                }],
+            },
+        );
+        p
+    }
+
+    #[test]
+    fn one_shots_overlap_stay_put_and_expire_without_requests() {
+        let mut p = puff();
+        let at = Mat4::from_translation(Vec3::new(100.0, 200.0, 300.0));
+        p.emit("puff", at, 1.0);
+        assert!(p.active());
+        p.advance(0);
+        p.emit("puff", at, 1.0);
+        // A held emitter using slot 0 must not move or stop either one-shot.
+        p.request(0, "puff", Mat4::from_translation(Vec3::splat(5000.0)));
+        p.advance(4);
+        assert_eq!(p.emitters.len(), 3);
+        assert_eq!(p.emitters[0].particles.len(), 4);
+        assert_eq!(p.emitters[1].particles.len(), 2);
+        assert_eq!(p.emitters[0].global_pos, at.w_axis.truncate());
+        let frame = p.emitters[0].frame;
+        p.advance(4);
+        assert_eq!(
+            p.emitters[0].frame, frame,
+            "paused render advanced the effect"
+        );
+        for tick in (8..48).step_by(4) {
+            p.advance(tick);
+        }
+        p.build(Vec3::X, Vec3::Y);
+        assert!(!p.active());
+        assert!(p.vertices.is_empty());
+    }
+
+    #[test]
+    fn global_scale_shrinks_motion_translation_and_quads() {
+        let origin = Vec3::new(100.0, 200.0, 300.0);
+        let at = Mat4::from_rotation_translation(glam::Quat::from_rotation_y(0.8), origin);
+        let mut full = puff();
+        let mut small = full.clone();
+        full.emit("puff", at, 1.0);
+        small.emit("puff", at, 0.7);
+        for tick in [0, 4, 8] {
+            full.advance(tick);
+            small.advance(tick);
+            full.build(Vec3::X, Vec3::Y);
+            small.build(Vec3::X, Vec3::Y);
+            assert!(!full.vertices.is_empty());
+            assert_eq!(full.vertices.len(), small.vertices.len());
+            for (a, b) in full.vertices.iter().zip(&small.vertices) {
+                assert!(((a.pos - origin) * 0.7 - (b.pos - origin)).length() < 0.001);
+            }
+        }
+    }
 
     const FLAMES: [&str; 4] = [
         "ms_m_sphipd_a",
