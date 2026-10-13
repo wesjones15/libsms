@@ -11,6 +11,16 @@ pub enum Event {
     /// Mario touched down. `strong` = fell far/fast enough for the heavy landing effect
     /// (`askStrongGroundTouch`).
     Land { strong: bool },
+    /// Actual floor contact in `jumpProcess`, before its caller changes the air status.
+    /// `drop` is from the continuous airborne peak, including across a dive transition.
+    /// Hosts choose their own fall-damage policy; this does not change Sunshine health.
+    FallImpact {
+        drop: f32,
+        pos: Vec3,
+        diving: bool,
+        ground_pound: bool,
+        cushioned: bool,
+    },
     /// Ground pound hit the floor (`hipAttacking`). `super_`: it fell for longer than
     /// `mSuperHipAttackCt` ticks and came down faster (the game's flaming super pound). `drop`:
     /// units fallen, from the top of the wind-up (`unk104`) to the floor.

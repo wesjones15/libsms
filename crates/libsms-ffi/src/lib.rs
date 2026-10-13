@@ -144,6 +144,9 @@ pub enum SmsEventKind {
     /// As `WaterHit`, by a particle from a light press's burst of the Spray
     /// ([`libsms::WaterEmit::burst`]), which a host may make count for more.
     BurstHit = 18,
+    /// Floor contact: value = drop in sim units; arg bits 1 dive, 2 ground pound,
+    /// 4 cushioned (water/Yoshi/slow landing); pos = contact position.
+    FallImpact = 19,
 }
 
 /// An enemy the host reports ([`libsms::Enemy`]): a standing cylinder.
@@ -478,6 +481,18 @@ impl Host for FfiHost<'_> {
                 e.kind = SmsEventKind::Land as u32;
                 e.arg = strong as i32;
             }
+            Event::FallImpact {
+                drop,
+                pos,
+                diving,
+                ground_pound,
+                cushioned,
+            } => {
+                e.kind = SmsEventKind::FallImpact as u32;
+                e.value = drop;
+                e.pos = pos.into();
+                e.arg = diving as i32 | ((ground_pound as i32) << 1) | ((cushioned as i32) << 2);
+            }
             Event::GroundPound { super_, drop } => {
                 e.kind = SmsEventKind::GroundPound as u32;
                 e.arg = super_ as i32;
@@ -786,11 +801,7 @@ pub unsafe extern "C" fn sms_sim_clip_name(sim: *mut SmsSim) -> *const c_char {
 pub unsafe extern "C" fn sms_sim_teleport(sim: *mut SmsSim, pos: *const SmsVec3) {
     // SAFETY: the caller promised valid pointers.
     if let (Some(s), Some(pos)) = (unsafe { sim.as_mut() }, unsafe { pos.as_ref() }) {
-        let m = &mut s.sim.mario;
-        m.pos = (*pos).into();
-        m.prev_pos = m.pos;
-        m.vel = Vec3::ZERO;
-        m.forward_vel = 0.0;
+        s.sim.mario.teleport((*pos).into());
         s.water.particles.clear();
     }
 }
@@ -1042,6 +1053,49 @@ mod tests {
             if (*e).kind == SmsEventKind::Jump as u32 {
                 *(user as *mut u32) += 1;
             }
+        }
+    }
+
+    #[test]
+    fn fall_impacts_preserve_drop_position_and_flags_through_the_c_abi() {
+        unsafe extern "C" fn capture(user: *mut c_void, e: *const SmsEvent) {
+            // SAFETY: the test passes a live SmsEvent output and FfiHost calls synchronously.
+            unsafe {
+                *(user as *mut SmsEvent) = *e;
+            }
+        }
+        let mut received = SmsEvent {
+            kind: 0,
+            arg: 0,
+            value: 0.0,
+            pos: SmsVec3::default(),
+            name: std::ptr::null(),
+        };
+        let host = SmsHost {
+            user: &mut received as *mut SmsEvent as *mut c_void,
+            ground: None,
+            roof: None,
+            walls: None,
+            event: Some(capture),
+            enemies: None,
+            water: None,
+        };
+        let mut adapter = FfiHost(&host, Vec::new());
+        for flags in 0..8 {
+            adapter.event(Event::FallImpact {
+                drop: 16000.0,
+                pos: Vec3::new(12.0, 34.0, 56.0),
+                diving: flags & 1 != 0,
+                ground_pound: flags & 2 != 0,
+                cushioned: flags & 4 != 0,
+            });
+            assert_eq!(received.kind, 19);
+            assert_eq!(received.arg, flags);
+            assert_eq!(received.value, 16000.0);
+            assert_eq!(
+                (received.pos.x, received.pos.y, received.pos.z),
+                (12.0, 34.0, 56.0)
+            );
         }
     }
 

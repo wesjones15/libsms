@@ -291,6 +291,8 @@ pub struct Mario {
     pub(crate) radius: f32,
     /// Highest Y reached this jump (`unk104`).
     pub(crate) jump_peak_y: f32,
+    /// Airborne peak for host fall damage; changing jump/dive status must not reset it.
+    pub(crate) fall_peak_y: f32,
     /// Y at take-off, for the hard-landing check (`unk2A8.y`).
     pub(crate) fall_start_y: f32,
     /// `soundMovement`'s spin jump state: the voice is due on the next spin (`unk04 & 0x10`),
@@ -410,6 +412,7 @@ impl Mario {
             slope_angle: 0,
             radius: WALL_RADIUS,
             jump_peak_y: pos.y,
+            fall_peak_y: pos.y,
             fall_start_y: pos.y,
             spin_voice_due: true,
             spin_ticks: 0,
@@ -492,6 +495,18 @@ impl Mario {
             let add = (share.min(1.0) * max as f32).round() as i32;
             f.water = (f.water + add.max(1)).min(max);
         }
+    }
+
+    /// Host relocation starts a fresh fall; it must not retain a previous airborne peak.
+    pub fn teleport(&mut self, pos: Vec3) {
+        if !pos.is_finite() {
+            return;
+        }
+        self.pos = pos;
+        self.prev_pos = pos;
+        self.vel = Vec3::ZERO;
+        self.forward_vel = 0.0;
+        self.fall_peak_y = pos.y;
     }
 
     /// The host's world throws Mario: his velocity becomes `vel` (units per 30 Hz frame,

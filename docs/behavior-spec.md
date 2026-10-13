@@ -11,6 +11,15 @@ unpacks RARC archives; output is verified byte-identical to decomp-toolkit's. Se
 Status of each rule: **ported** (implemented and tested), **partial**, **not yet**, or
 **unverified** (ported as written but contradicts expectation; see the end).
 
+Host fall damage: `jumpProcess` emits `FallImpact` at floor contact before changing
+status, with the continuous airborne peak minus impact Y, position, and dive/pound/
+cushioned flags. Dive transitions retain that peak; host teleports reset it. Water,
+Yoshi and slow landings are cushioned (see `MarioJump.cpp::askStrongGroundTouch`).
+This event leaves Sunshine health alone. RoR2 chooses its own height thresholds:
+40 Mario heights safe (default rocket measured at 34.7), dive safe through 80, then
+half damage; ground pounds are always safe. Presentation omits super-pound landing
+stars (`ms_m_sphipd_hit_d`) while keeping smoke/ring.
+
 ## 1. Time and units
 
 Host presentation: ground-pound landing effects stay at their impact position through a

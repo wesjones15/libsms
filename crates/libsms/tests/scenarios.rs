@@ -824,6 +824,106 @@ fn rocket_nozzle_needs_charge_then_launches() {
     assert!(max_y > 400.0, "rocket apex {max_y}");
 }
 
+fn fall_impact(s: &Scene<FlatHost>) -> (f32, bool, bool, bool) {
+    s.host
+        .events
+        .iter()
+        .rev()
+        .find_map(|e| match e {
+            Event::FallImpact {
+                drop,
+                diving,
+                ground_pound,
+                cushioned,
+                ..
+            } => Some((*drop, *diving, *ground_pound, *cushioned)),
+            _ => None,
+        })
+        .expect("no floor impact")
+}
+
+#[test]
+fn fall_impact_measures_default_host_rocket_below_safe_height() {
+    if need_disc() {
+        return;
+    }
+    let mut s = Scene::flat();
+    s.sim.mario.options.jump_height = 1.6;
+    s.sim.mario.options.rocket_thrust = 2.0f32.powf(1.0 / 1.9);
+    s.sim.mario.give_fludd();
+    let p = s.mario().params.clone();
+    let f = s.sim.mario.fludd.as_mut().unwrap();
+    f.change_nozzle(NozzleKind::Rocket, false, &p);
+    f.refill(&p);
+    s.pad.r = true;
+    s.pad.r_analog = 255;
+    let mut apex = 0.0f32;
+    for _ in 0..3000 {
+        s.step(1);
+        apex = apex.max(s.mario().pos.y);
+        if apex > 3000.0 && s.mario().vel.y < 0.0 {
+            s.pad.r = false;
+            s.pad.r_analog = 0;
+        }
+        if apex > 100.0 && s.mario().pos.y <= 0.0 {
+            break;
+        }
+    }
+    let impact = fall_impact(&s);
+    println!(
+        "default rocket apex {} heights, impact {impact:?}",
+        apex / 160.0
+    );
+    assert!(apex > 3000.0 && apex < 40.0 * 160.0, "apex {apex}");
+    assert!((impact.0 - apex).abs() < 1.0, "{impact:?}, apex {apex}");
+    assert!(!impact.1 && !impact.2);
+}
+
+#[test]
+fn fall_impact_keeps_height_across_a_late_dive() {
+    let mut s = Scene::flat();
+    s.sim.mario.teleport(Vec3::Y * 16000.0);
+    s.step(250);
+    assert!(s.mario().pos.y < 15000.0 && s.mario().pos.y > 1000.0);
+    s.pad.b = true;
+    s.step(1);
+    s.pad.b = false;
+    assert_eq!(s.mario().status, Status::JumpCatch);
+    s.step(1400);
+    let impact = fall_impact(&s);
+    assert!((impact.0 - 16000.0).abs() < 1.0, "{impact:?}");
+    assert!(impact.1 && !impact.2 && !impact.3, "{impact:?}");
+}
+
+#[test]
+fn fall_impact_marks_ground_pounds_and_water_landings_safe() {
+    let mut pound = Scene::flat();
+    pound_from(&mut pound, 16000.0);
+    let impact = fall_impact(&pound);
+    assert!(impact.2, "{impact:?}");
+    assert!(impact.0 > 15000.0, "{impact:?}");
+
+    let mut water = Scene::new(FlatHost {
+        water: Some(5.0),
+        ..FlatHost::default()
+    });
+    water.sim.mario.teleport(Vec3::Y * 16000.0);
+    water.step(1400);
+    assert!(fall_impact(&water).3);
+}
+
+#[test]
+fn fall_impact_teleport_discards_the_previous_peak() {
+    let mut s = Scene::flat();
+    s.sim.mario.teleport(Vec3::Y * 16000.0);
+    s.step(100);
+    s.sim.mario.teleport(Vec3::Y * 100.0);
+    s.step(200);
+    let impact = fall_impact(&s);
+    assert!((impact.0 - 100.0).abs() < 1.0, "{impact:?}");
+    assert!(impact.3, "short fall should be cushioned: {impact:?}");
+}
+
 #[test]
 fn x_swaps_nozzles_and_rescales_the_tank() {
     if need_disc() {

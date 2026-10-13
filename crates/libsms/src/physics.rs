@@ -190,6 +190,9 @@ impl Mario {
             self.pos.z + self.vel.z / 4.0 * ny,
         );
         let ret = self.check_ground_at_walking(host, next);
+        if ret == 1 || ret == 3 {
+            self.fall_peak_y = self.pos.y;
+        }
         self.model_yaw = self.face_yaw;
         if ret == 3 { 2 } else { ret }
     }
@@ -331,8 +334,26 @@ impl Mario {
         }
 
         let k = self.limit_air_speed();
+        self.fall_peak_y = self.fall_peak_y.max(self.pos.y);
         let next = self.pos + Vec3::new(self.vel.x * k, self.vel.y, self.vel.z * k) * 0.25;
         let ret = self.check_ground_at_jumping(host, next, arg);
+        self.fall_peak_y = self.fall_peak_y.max(self.pos.y);
+        if ret == 1 {
+            // MarioJump.cpp jumpProcess/askStrongGroundTouch: sample contact before
+            // fallProcess or the status handler changes the impact speed/move.
+            let diving = self.status == Status::JumpCatch;
+            let water_landing = host
+                .water_level(self.pos)
+                .is_some_and(|level| level.is_finite() && level > self.pos.y);
+            host.event(Event::FallImpact {
+                drop: (self.fall_peak_y - self.pos.y).max(0.0),
+                pos: self.pos,
+                diving,
+                ground_pound: self.status == Status::HipDrop,
+                cushioned: self.on_yoshi() || water_landing || (!diving && self.vel.y > -70.0),
+            });
+            self.fall_peak_y = self.pos.y;
+        }
 
         if self.vel.y >= 0.0 {
             self.jump_peak_y = self.pos.y;
