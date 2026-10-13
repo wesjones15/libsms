@@ -417,7 +417,8 @@ impl Host for World {
                     f.throw(pos, yaw, power, vel);
                 }
             }
-            Event::Land { .. } | Event::Sound(_) | Event::PoundStart => {}
+            Event::Land { .. } | Event::Sound(_) | Event::PoundStart | Event::FallImpact { .. } => {
+            }
             // The portable host view consumes particle cues; this viewer has its own renderer.
             Event::Particle(_) | Event::AirNozzle { .. } | Event::AirJump | Event::WetSlide => {}
         }

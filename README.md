@@ -30,7 +30,8 @@ See [audio integration](docs/audio.md) for the sound crates, host API and verifi
 ## Your own game files
 
 The repository contains no game data. Build the git-ignored `assets/` folder once from your own
-disc image (any region; tested with PAL), with no external tools:
+disc image (any region; tested with PAL and USA, whose extractions are byte-identical apart from
+the language-specific HUD text screens), with no external tools:
 
 ```
 cargo run --release -p libsms --bin sms-extract -- "path/to/Super Mario Sunshine.iso"

@@ -22,7 +22,7 @@ This folder is the repo root. Sibling folders are read-only references:
   (`yoshi.szs`), `enemy/hamukuri*` the Strollin' Stu and `scene/mapobj/coin*` the coins (stage
   archives), `params_enemy/` the enemies' tuning (`params.szs:enemy/`), `particle/` the
   common particle effects (`particle.szs`, `.jpa`) and `game_6/` the HUD's layout and pictures
-  (`game_6_en.szs` on PAL, `game_6.szs` elsewhere). Never commit it. Hosts call `Assets::discover_or_extract`, which finds a
+  (`game_6_en.szs` on PAL, `game_6.szs` elsewhere; USA verified 2026-10-13: same 1486 files bar the HUD text screens). Never commit it. Hosts call `Assets::discover_or_extract`, which finds a
   complete folder or extracts from the disc (`SMS_DISC`, or an image in the given folders) on first
   run, and redoes an older partial one. The older copy at `../extracted/sms` is not used.
 - `../libpikmin/`: the pattern to follow (Host trait, fixed step, events, disc-parsed params).
