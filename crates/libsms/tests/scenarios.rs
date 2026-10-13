@@ -2297,6 +2297,36 @@ fn air_jumps_climb_the_chain() {
 }
 
 #[test]
+fn an_air_jump_cancels_a_dive_in_flight() {
+    let dive = |air_jumps: u32| {
+        let mut s = Scene::flat();
+        s.sim.mario.limits.air_jumps = air_jumps;
+        s.run_forward();
+        s.secs(1.0);
+        s.press_a();
+        s.step(30);
+        s.pad.b = true;
+        s.step(1);
+        s.pad.b = false;
+        assert_eq!(s.mario().status, Status::JumpCatch);
+        s.step(10);
+        let (y, vy) = (s.mario().pos.y, s.mario().vel.y);
+        s.press_a();
+        (s.mario().status, y, vy, s.mario().vel.y, s)
+    };
+    let (status, _, falling, vy, s) = dive(1);
+    assert_eq!(status, Status::Jump);
+    assert!(
+        vy > 0.0 && vy > falling,
+        "rises out of the dive: {falling} -> {vy}"
+    );
+    assert_eq!(s.event_count(|e| matches!(e, Event::AirJump)), 1);
+    // None on hand: the dive goes on.
+    let (status, ..) = dive(0);
+    assert_eq!(status, Status::JumpCatch);
+}
+
+#[test]
 fn no_air_jumps_by_default() {
     let mut s = Scene::flat();
     s.press_a();

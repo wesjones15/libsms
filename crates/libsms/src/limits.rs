@@ -128,8 +128,11 @@ impl Default for LimitState {
 /// slowed by [`Limits::spray_fade`].
 pub(crate) fn gate_rate(kind: NozzleKind, rate: i16, spray_fade: f32) -> u16 {
     let rate = rate.max(0) as f32;
-    if kind == NozzleKind::Spray && spray_fade != 1.0 && spray_fade.is_finite() && spray_fade > 0.0 {
-        (rate / spray_fade.clamp(0.1, 10.0)).round().clamp(1.0, u16::MAX as f32) as u16
+    if kind == NozzleKind::Spray && spray_fade != 1.0 && spray_fade.is_finite() && spray_fade > 0.0
+    {
+        (rate / spray_fade.clamp(0.1, 10.0))
+            .round()
+            .clamp(1.0, u16::MAX as f32) as u16
     } else {
         rate as u16
     }
@@ -138,7 +141,9 @@ pub(crate) fn gate_rate(kind: NozzleKind, rate: i16, spray_fade: f32) -> u16 {
 /// A trigger nozzle's burst in ticks (`mTriggerTime`), the Hover's times [`Limits::hover_time`].
 pub(crate) fn trigger_time(kind: NozzleKind, ticks: i16, hover_time: f32) -> i16 {
     if kind == NozzleKind::Hover && hover_time != 1.0 && hover_time.is_finite() {
-        (ticks as f32 * hover_time.max(0.0)).round().clamp(1.0, i16::MAX as f32) as i16
+        (ticks as f32 * hover_time.max(0.0))
+            .round()
+            .clamp(1.0, i16::MAX as f32) as i16
     } else {
         ticks
     }
@@ -174,7 +179,8 @@ impl Mario {
             return out;
         }
         // A new press, or another nozzle fitted while R stays down: a new use.
-        let starts = !self.lim.r_down || (self.lim.r_nozzle.is_some() && self.lim.r_nozzle != nozzle);
+        let starts =
+            !self.lim.r_down || (self.lim.r_nozzle.is_some() && self.lim.r_nozzle != nozzle);
         self.lim.r_down = true;
         if starts {
             self.lim.r_nozzle = nozzle;
@@ -216,6 +222,8 @@ impl Mario {
             SecondJump | UltraJump => UltraJump,
             ForceJump | Landing | RocketLanding | BackJump | BroadJump | RotateBroadJump
             | UTurnJump | MissJump | SlipFall | WallJump | LeftRotateJump | RightRotateJump => Jump,
+            // A dive in flight: a mid-air jump pulls out of it into a fresh jump.
+            JumpCatch => Jump,
             // A stomp's own late jump keeps A while its window is open.
             Trample if self.stomp_late.is_none() => Jump,
             _ => return false,
@@ -233,7 +241,10 @@ impl Mario {
     /// and, dashing on the Turbo, [`Limits::turbo_speed`].
     pub(crate) fn limit_ground_speed(&self) -> f32 {
         let turbo = self.fludd_emitting
-            && self.fludd.as_ref().is_some_and(|f| f.nozzle == NozzleKind::Turbo);
+            && self
+                .fludd
+                .as_ref()
+                .is_some_and(|f| f.nozzle == NozzleKind::Turbo);
         self.options.move_speed * if turbo { self.limits.turbo_speed } else { 1.0 }
     }
 
@@ -307,7 +318,11 @@ impl Mario {
     /// sprint-jump item). Not the game's. Does nothing on the ground; 1 ends it.
     pub fn boost_jump(&mut self, factor: f32) {
         if self.limits_airborne() {
-            self.lim.jump_boost = if factor.is_finite() { factor.clamp(0.0, 10.0) } else { 1.0 };
+            self.lim.jump_boost = if factor.is_finite() {
+                factor.clamp(0.0, 10.0)
+            } else {
+                1.0
+            };
         }
     }
 }
