@@ -141,6 +141,11 @@ pub struct FluddLook {
     pub nozzle_frame: f32,
     /// Pitch of the Spray/Turbo neck (`NozzleCtrl`): applied when negative.
     pub gun_angle: f32,
+    /// A host aim is set (the lock-on): the neck then follows `gun_angle` up as well as down,
+    /// and swivels `aim_turn` (angle units, the heading's increase) from where the model faces,
+    /// so the head points at the target. Not in the game.
+    pub aimed: bool,
+    pub aim_turn: i16,
     /// Hover nozzle tilts, left and right (`WaterGunDivingCtrlL/R`).
     pub tilt: [f32; 2],
     /// Turbo propeller angle (`RotateCtrl`).
@@ -411,6 +416,10 @@ impl Mario {
             nozzle_clip: a.clip.and_then(|i| nozzle_clips(f.nozzle).get(i).copied()),
             nozzle_frame: a.ctrl.frame,
             gun_angle: f.gun_angle(),
+            aimed: self.aim.is_some(),
+            aim_turn: self
+                .aim
+                .map_or(0, |a| crate::math::diff(a.yaw, self.model_yaw)),
             tilt: f.tilt,
             prop_angle: f.prop_angle,
         })

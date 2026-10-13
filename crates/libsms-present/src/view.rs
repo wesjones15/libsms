@@ -796,6 +796,12 @@ impl View {
                 let bmd = &self.models[model as usize].bmd;
                 let extra = |name: &str| match name {
                     // `NozzleCtrl`: the neck dips with the aim, never above level.
+                    // A host aim (the lock-on) also swivels the head round to the target
+                    // and lifts it above level; not in the game.
+                    "chn_muzzle_1" | "jnt_back_nozzle_neck" if l.aimed => Some(
+                        Mat4::from_rotation_y(deg(l.aim_turn as f32))
+                            * Mat4::from_rotation_z(deg(l.gun_angle)),
+                    ),
                     "chn_muzzle_1" | "jnt_back_nozzle_neck" if l.gun_angle < 0.0 => {
                         Some(Mat4::from_rotation_z(deg(l.gun_angle)))
                     }
@@ -1109,6 +1115,39 @@ mod tests {
             .fold(f32::MIN, f32::max);
         assert!((120.0..220.0).contains(&top), "top of Mario at {top}");
         assert!(v.positions.iter().all(|p| p.is_finite()));
+    }
+
+    #[test]
+    fn a_host_aim_swivels_the_nozzle_head_toward_it() {
+        let Some(mut v) = view() else {
+            return;
+        };
+        let a = libsms::Assets::discover(None).unwrap();
+        let mut sim = Sim::new(a.params, a.anim_table, Vec3::ZERO, 0);
+        sim.mario.give_fludd();
+        let mut host = libsms::FlatHost::default();
+        // Spraying, so the nozzle is out of its housing.
+        let pad = libsms::Pad { r_analog: 140, ..Default::default() };
+        let heading = |sim: &Sim| {
+            let f = sim.mario.fludd.as_ref().unwrap();
+            let (_, d) = f.emitter(0).expect("muzzle reported");
+            d.x.atan2(d.z)
+        };
+        sim.mario.aim = Some(libsms::Aim { yaw: sim.mario.model_yaw, pitch: 0 });
+        for _ in 0..60 {
+            sim.advance(&mut host, &pad, i16::MIN, 1.0 / 60.0);
+            v.update(&mut sim, 1.0 / 60.0);
+        }
+        let ahead = heading(&sim);
+        // A quarter turn to one side of where he faces (the heading increases toward +X).
+        let yaw = sim.mario.model_yaw;
+        sim.mario.aim = Some(libsms::Aim { yaw: yaw.wrapping_add(0x4000), pitch: 0 });
+        v.update(&mut sim, 1.0 / 60.0);
+        let turned = heading(&sim);
+        let swing = (turned - ahead + std::f32::consts::PI).rem_euclid(2.0 * std::f32::consts::PI)
+            - std::f32::consts::PI;
+        println!("ahead {ahead:.2} turned {turned:.2} swing {swing:.2}");
+        assert!((swing - std::f32::consts::FRAC_PI_2).abs() < 0.2, "swing {swing}");
     }
 
     #[test]

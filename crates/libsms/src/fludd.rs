@@ -15,7 +15,7 @@ use crate::event::{Event, WaterEmit};
 use crate::host::Host;
 use crate::input::{Pad, lr_level};
 use crate::mario::{Mario, Status, UpperState};
-use crate::math::{cos, diff, sin};
+use crate::math::{cos, sin};
 use crate::params::{Nozzle, NozzleKind, Params};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -245,7 +245,7 @@ impl Fludd {
     }
 
     /// The host-reported muzzle `index` for the fitted nozzle, in Mario's model space.
-    pub(crate) fn emitter(&self, index: usize) -> Option<(Vec3, Vec3)> {
+    pub fn emitter(&self, index: usize) -> Option<(Vec3, Vec3)> {
         if self.emitters_for != self.nozzle {
             return None;
         }
@@ -776,10 +776,15 @@ impl Mario {
         // A host aim (the lock-on) sends the water where it points, whichever way Mario faces
         // or runs; not in the game, where the camera turns Mario instead.
         let dir = match self.aim {
+            // Its heading set to the aim's, whether or not the drawn head has swivelled that
+            // far yet (idempotent), the rise kept.
             Some(a) if !self.on_yoshi() => {
-                let t = diff(a.yaw, self.model_yaw);
-                let (s, c) = (sin(t), cos(t));
-                Vec3::new(dir.x * c + dir.z * s, dir.y, dir.z * c - dir.x * s)
+                let h = dir.x.hypot(dir.z);
+                if h > 1e-4 {
+                    Vec3::new(h * sin(a.yaw), dir.y, h * cos(a.yaw))
+                } else {
+                    dir
+                }
             }
             _ => dir,
         };
