@@ -23,6 +23,7 @@ use libsms_assets::mario::{BODY_HAND_SHAPES, HIDDEN_SHAPE, Hands, SHIRT_SHAPE, h
 use libsms_assets::{Batch, Bmd, Pose, paths};
 
 use crate::hud::{Gauge, Hud};
+use crate::life::LifeMeter;
 use crate::particles::Particles;
 use crate::tev::{Baked, C4, Inputs, Source, Tex, env_uv};
 
@@ -201,6 +202,10 @@ pub struct View {
     /// HUD's files. `hud_shown` says whether to show it this frame (Mario has FLUDD).
     pub hud: Option<Hud>,
     pub hud_shown: bool,
+    /// Mario's life meter: `[0]` as the HUD draws it (with the splash and the "LIFE" text, the
+    /// game's eight rays), `[1]` the sun alone with its ring filled to ten rays, for a host's
+    /// lock-on marker. None without the HUD's files.
+    pub life: [Option<LifeMeter>; 2],
     /// The sim tick the gauge last stepped at, for its 30 Hz flash.
     hud_tick: u64,
     /// Wearing the Shine Shirt (off at the start of the game).
@@ -641,6 +646,10 @@ impl View {
             fx_binds: (0..4).map(|s| (s, FxAt::Center)).collect(),
             hud: Hud::load(dir).ok(),
             hud_shown: false,
+            life: [
+                LifeMeter::load(dir, 8, true).ok(),
+                LifeMeter::load(dir, 10, false).ok(),
+            ],
             hud_tick: 0,
             models: list,
             textures,
@@ -1139,13 +1148,19 @@ mod tests {
         sim.mario.give_fludd();
         let mut host = libsms::FlatHost::default();
         // Spraying, so the nozzle is out of its housing.
-        let pad = libsms::Pad { r_analog: 140, ..Default::default() };
+        let pad = libsms::Pad {
+            r_analog: 140,
+            ..Default::default()
+        };
         let heading = |sim: &Sim| {
             let f = sim.mario.fludd.as_ref().unwrap();
             let (_, d) = f.emitter(0).expect("muzzle reported");
             d.x.atan2(d.z)
         };
-        sim.mario.aim = Some(libsms::Aim { yaw: sim.mario.model_yaw, pitch: 0 });
+        sim.mario.aim = Some(libsms::Aim {
+            yaw: sim.mario.model_yaw,
+            pitch: 0,
+        });
         for _ in 0..60 {
             sim.advance(&mut host, &pad, i16::MIN, 1.0 / 60.0);
             v.update(&mut sim, 1.0 / 60.0);
@@ -1154,13 +1169,19 @@ mod tests {
         // A quarter turn to one side of where he faces (the heading increases toward +X). The
         // pose is mirrored across X when drawn, so its own heading swings the other way.
         let yaw = sim.mario.model_yaw;
-        sim.mario.aim = Some(libsms::Aim { yaw: yaw.wrapping_add(0x4000), pitch: 0 });
+        sim.mario.aim = Some(libsms::Aim {
+            yaw: yaw.wrapping_add(0x4000),
+            pitch: 0,
+        });
         v.update(&mut sim, 1.0 / 60.0);
         let turned = heading(&sim);
         let swing = (turned - ahead + std::f32::consts::PI).rem_euclid(2.0 * std::f32::consts::PI)
             - std::f32::consts::PI;
         println!("ahead {ahead:.2} turned {turned:.2} swing {swing:.2}");
-        assert!((swing + std::f32::consts::FRAC_PI_2).abs() < 0.2, "swing {swing}");
+        assert!(
+            (swing + std::f32::consts::FRAC_PI_2).abs() < 0.2,
+            "swing {swing}"
+        );
     }
 
     #[test]

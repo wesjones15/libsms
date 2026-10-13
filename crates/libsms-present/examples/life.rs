@@ -12,14 +12,28 @@ fn main() {
     let l = |health, shield| Life { health, shield };
     let mut shots: Vec<(LifeMeter, Life)> = Vec::new();
     for life in [l(1.0, 0.0), l(0.5, 0.0), l(0.25, 0.0), l(0.5, 0.375)] {
-        shots.push((LifeMeter::load(&dir, 8, true).expect("the HUD's files"), life));
+        shots.push((
+            LifeMeter::load(&dir, 8, true).expect("the HUD's files"),
+            life,
+        ));
     }
     for life in [l(1.0, 0.0), l(0.6, 0.2)] {
-        shots.push((LifeMeter::load(&dir, 10, false).expect("the HUD's files"), life));
+        shots.push((
+            LifeMeter::load(&dir, 10, false).expect("the HUD's files"),
+            life,
+        ));
     }
     const S: usize = 3;
-    let w = shots.iter().map(|s| s.0.image.width as usize).max().unwrap();
-    let h = shots.iter().map(|s| s.0.image.height as usize).max().unwrap();
+    let w = shots
+        .iter()
+        .map(|s| s.0.image.width as usize)
+        .max()
+        .unwrap();
+    let h = shots
+        .iter()
+        .map(|s| s.0.image.height as usize)
+        .max()
+        .unwrap();
     let (cw, ch) = (w * S * shots.len(), h * S);
     let mut canvas = vec![0u8; cw * ch * 4];
     for (i, (meter, life)) in shots.iter_mut().enumerate() {

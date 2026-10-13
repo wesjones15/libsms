@@ -584,7 +584,9 @@ pub unsafe extern "C" fn sms_view_mario_voice(view: *mut SmsView, name: *const c
         return;
     }
     // SAFETY: as documented.
-    let Ok(name) = (unsafe { std::ffi::CStr::from_ptr(name) }).to_str() else { return };
+    let Ok(name) = (unsafe { std::ffi::CStr::from_ptr(name) }).to_str() else {
+        return;
+    };
     unsafe {
         with_view(view, (), |v| {
             if let Some(a) = &v.audio {
@@ -998,6 +1000,107 @@ pub unsafe extern "C" fn sms_view_hud_info(view: *mut SmsView, out: *mut SmsHudI
                 shown: v.view.hud_shown as u8,
                 _pad: [0; 3],
             };
+            1
+        })
+    }
+}
+
+/// Sets what Mario's life meter `which` shows (0 the HUD's, with the splash and "LIFE"; 1 the
+/// sun alone with ten rays, for a lock-on marker) and redraws it if that changed the rays: a
+/// share 0..1 of the meter lit in the game's colours for `health`, the rays after them in
+/// cyan for `shield` (the two together are clamped to 1). Then read it with
+/// [`sms_view_life_info`] and [`sms_view_life_pixels`]. Returns 0 without the HUD's files.
+///
+/// # Safety
+/// `view` from [`sms_view_new`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_life_set(
+    view: *mut SmsView,
+    which: u8,
+    health: f32,
+    shield: f32,
+) -> u8 {
+    // SAFETY: as documented.
+    unsafe {
+        with_view(view, 0, |v| {
+            let Some(m) = v.view.life.get_mut(which as usize).and_then(|m| m.as_mut()) else {
+                return 0;
+            };
+            let share = |x: f32| {
+                if x.is_finite() {
+                    x.clamp(0.0, 1.0)
+                } else {
+                    0.0
+                }
+            };
+            m.update(libsms_present::life::Life {
+                health: share(health),
+                shield: share(shield),
+            });
+            1
+        })
+    }
+}
+
+/// Life meter `which`'s place and size (the same struct as the water gauge's: its top-left on
+/// the game's 600x480 screen, `shown` always 1 here). Returns 0 without the HUD's files.
+///
+/// # Safety
+/// `view` from [`sms_view_new`]; `out` writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_life_info(
+    view: *mut SmsView,
+    which: u8,
+    out: *mut SmsHudInfo,
+) -> u8 {
+    // SAFETY: as documented.
+    unsafe {
+        with_view(view, 0, |v| {
+            let (Some(out), Some(m)) = (
+                out.as_mut(),
+                v.view.life.get(which as usize).and_then(|m| m.as_ref()),
+            ) else {
+                return 0;
+            };
+            *out = SmsHudInfo {
+                x: m.origin[0],
+                y: m.origin[1],
+                width: m.image.width,
+                height: m.image.height,
+                screen_w: libsms_present::hud::SCREEN[0] as u32,
+                screen_h: libsms_present::hud::SCREEN[1] as u32,
+                version: m.version,
+                shown: 1,
+                _pad: [0; 3],
+            };
+            1
+        })
+    }
+}
+
+/// Copies life meter `which`'s pixels (RGBA, straight alpha, top row first) to `rgba`. Returns 0
+/// if `len` is short or there is no such meter.
+///
+/// # Safety
+/// `view` from [`sms_view_new`]; `rgba` writable for `len` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_life_pixels(
+    view: *mut SmsView,
+    which: u8,
+    rgba: *mut u8,
+    len: u32,
+) -> u8 {
+    // SAFETY: as documented.
+    unsafe {
+        with_view(view, 0, |v| {
+            let Some(m) = v.view.life.get(which as usize).and_then(|m| m.as_ref()) else {
+                return 0;
+            };
+            let px = &m.image.rgba;
+            if rgba.is_null() || px.len() > len as usize {
+                return 0;
+            }
+            std::ptr::copy_nonoverlapping(px.as_ptr(), rgba, px.len());
             1
         })
     }

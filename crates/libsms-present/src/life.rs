@@ -205,11 +205,7 @@ impl LifeMeter {
         let mut corners = |p: &Pic, turn: f32| {
             let (w, h) = (p.image.width as f32, p.image.height as f32);
             for (dx, dy) in [(0.0, 0.0), (w, 0.0), (0.0, h), (w, h)] {
-                let (x, y) = turned(
-                    [p.at[0] as f32 + dx, p.at[1] as f32 + dy],
-                    c,
-                    turn,
-                );
+                let (x, y) = turned([p.at[0] as f32 + dx, p.at[1] as f32 + dy], c, turn);
                 cover(x, y);
             }
         };
@@ -484,13 +480,15 @@ mod tests {
         let top_rows = |m: &LifeMeter| {
             let cy = (c[1] - m.origin[1] as f32) as u32 - 30;
             (0..cy.min(m.image.height))
-                .flat_map(|y| {
-                    (0..m.image.width).map(move |x| (x, y))
-                })
+                .flat_map(|y| (0..m.image.width).map(move |x| (x, y)))
                 .filter(|&(x, y)| m.image.rgba[((y * m.image.width + x) * 4 + 3) as usize] > 200)
                 .count()
         };
-        println!("above the hub: game {}, filled {}", top_rows(&game), top_rows(&full));
+        println!(
+            "above the hub: game {}, filled {}",
+            top_rows(&game),
+            top_rows(&full)
+        );
         assert!(top_rows(&full) > top_rows(&game) + 100);
         assert!(opaque(&full) > opaque(&game));
     }
