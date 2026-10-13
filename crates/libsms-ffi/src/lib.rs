@@ -27,7 +27,7 @@ use libsms::{
 use view::SmsView;
 
 /// ABI version, bumped when the C interface changes.
-pub const SMS_ABI_VERSION: u32 = 13;
+pub const SMS_ABI_VERSION: u32 = 14;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sms_abi_version() -> u32 {
@@ -328,6 +328,9 @@ pub struct SmsTuning {
     /// 1: a wet belly slide also throws the old stand-in splashes, on top of the game's own
     /// spray effect; 0: only the game's.
     pub slide_splashes: u8,
+    /// 1: after a knock-down's slide, A, the stick, B, L or R gets Mario up at once; 0: the
+    /// game's (the whole get-up clip).
+    pub knockdown_cancel: u8,
 }
 
 /// A host's own limits on FLUDD and the slide ([`libsms::Limits`]), for games that bill them
@@ -939,6 +942,30 @@ pub unsafe extern "C" fn sms_sim_launch_pad(sim: *mut SmsSim, vel: *const SmsVec
     }
 }
 
+/// A hit from `from` that knocks Mario down (`damageExec`'s fall, voice and flash for the
+/// disc's damage kind `kind`, an index into `DamageKind::ALL`; 0 is the common enemy) without
+/// touching his sim health: the host keeps the health. Not while he flashes from the last, nor
+/// in a dive. Returns 1 if it landed.
+///
+/// # Safety
+/// `sim` from [`sms_sim_new`]; `from` readable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_sim_knock_down(
+    sim: *mut SmsSim,
+    from: *const SmsVec3,
+    kind: u8,
+) -> u8 {
+    // SAFETY: the caller promised valid pointers.
+    if let (Some(s), Some(f)) = (unsafe { sim.as_mut() }, unsafe { from.as_ref() }) {
+        let kind = libsms::DamageKind::ALL
+            .get(kind as usize)
+            .copied()
+            .unwrap_or(libsms::DamageKind::EnemyCommon);
+        return s.sim.mario.knock_down((*f).into(), kind) as u8;
+    }
+    0
+}
+
 /// Boosts the jump Mario is in: horizontal travel times `factor` until he lands (a host's
 /// sprint-jump item). Ignored on the ground.
 ///
@@ -982,6 +1009,7 @@ pub unsafe extern "C" fn sms_sim_set_tuning(sim: *mut SmsSim, tuning: *const Sms
         o.unlimited_water = t.unlimited_water != 0;
         o.spray_pressure_fades = t.spray_steady == 0;
         o.shallow_water_wets = t.shallow_wet != 0;
+        o.knockdown_cancel = t.knockdown_cancel != 0;
         s.slide_splashes = t.slide_splashes != 0;
         o.slide_fx_scale = if t.slide_fx_scale.is_finite() && t.slide_fx_scale > 0.0 {
             t.slide_fx_scale.clamp(0.1, 5.0)
@@ -1191,12 +1219,23 @@ mod tests {
             let name = CStr::from_ptr(sms_sim_status_name(sim)).to_str().unwrap();
             assert!(name.contains("Jump"), "{name}");
             sms_sim_teleport(sim, &SmsVec3::default());
-            let launch = SmsVec3 { x: 160.0, y: 100.0, z: 0.0 };
+            let launch = SmsVec3 {
+                x: 160.0,
+                y: 100.0,
+                z: 0.0,
+            };
             sms_sim_launch_pad(sim, &launch, 0.5);
             sms_sim_launch_pad(sim, std::ptr::null(), 0.5);
             sms_sim_launch_pad(sim, &launch, f32::NAN);
             sms_sim_launch_pad(std::ptr::null_mut(), &launch, 0.5);
-            sms_sim_step(sim, &host, &SmsPad::default(), 0, 1.0 / 60.0, std::ptr::null_mut());
+            sms_sim_step(
+                sim,
+                &host,
+                &SmsPad::default(),
+                0,
+                1.0 / 60.0,
+                std::ptr::null_mut(),
+            );
             sms_sim_state(sim, &mut st);
             assert!((st.pos.x - 80.0).abs() < 0.01, "{:?}", st.pos);
             assert!((st.pos.y - 49.75).abs() < 0.01, "{:?}", st.pos);

@@ -1664,6 +1664,112 @@ fn out_of_health_mario_lies_down_for_good() {
     );
 }
 
+fn is_down_status(m: &Mario) -> bool {
+    use Status::*;
+    matches!(
+        m.status,
+        BackDown
+            | ForeDown
+            | ShortBackDown
+            | ShortForeDown
+            | SafeBackDown
+            | SafeForeDown
+            | JumpShortBackDown
+            | JumpShortForeDown
+            | JumpForeDown
+            | JumpBackDown
+    )
+}
+
+#[test]
+fn a_host_knock_down_leaves_the_sim_health_alone() {
+    let mut s = Scene::flat();
+    s.step(2);
+    let max = s.mario().params.mario.hp_max;
+    assert!(
+        s.sim
+            .mario
+            .knock_down(Vec3::new(0.0, 0.0, 100.0), libsms::DamageKind::EnemyCommon)
+    );
+    assert_eq!(s.mario().health, max);
+    s.step(1);
+    assert!(is_down_status(s.mario()), "{:?}", s.mario().status);
+    assert_eq!(sound_count(&s, "MSD_SE_MV01_DAMAGE_BIG_01"), 1);
+    // He can't be knocked again until the guard runs out, and it is short.
+    assert!(
+        !s.sim
+            .mario
+            .knock_down(Vec3::new(0.0, 0.0, 100.0), libsms::DamageKind::EnemyCommon)
+    );
+    assert!(s.mario().invincible <= 120);
+}
+
+#[test]
+fn a_host_knock_down_takes_him_out_of_a_ground_pound_as_the_game_does() {
+    let mut s = Scene::flat();
+    s.pad.a = true;
+    s.press_a();
+    s.step(40);
+    s.pad.l = true;
+    s.step(1);
+    s.pad.l = false;
+    assert_eq!(s.mario().status, Status::HipDrop);
+    assert!(
+        s.sim
+            .mario
+            .knock_down(Vec3::new(0.0, 0.0, 100.0), libsms::DamageKind::EnemyCommon)
+    );
+    assert_eq!(s.mario().status, Status::JumpShortBackDown);
+}
+
+#[test]
+fn a_dive_is_not_knocked_out_of() {
+    let mut s = Scene::flat();
+    s.pad.a = true;
+    s.press_a();
+    s.step(40);
+    s.pad.b = true;
+    s.step(1);
+    s.pad.b = false;
+    assert_eq!(s.mario().status, Status::JumpCatch);
+    s.sim
+        .mario
+        .knock_down(Vec3::new(0.0, 0.0, 100.0), libsms::DamageKind::EnemyCommon);
+    assert_eq!(s.mario().status, Status::JumpCatch);
+}
+
+#[test]
+fn knockdown_cancel_gets_him_up_once_the_slide_is_spent() {
+    let stood_after = |cancel: bool, stick: bool| {
+        let mut s = Scene::flat();
+        s.sim.mario.options.knockdown_cancel = cancel;
+        s.step(2);
+        assert!(
+            s.sim
+                .mario
+                .knock_down(Vec3::new(0.0, 0.0, 100.0), libsms::DamageKind::EnemyCommon)
+        );
+        if stick {
+            s.pad.stick = Vec2::new(0.0, 1.0);
+        }
+        let mut ticks = 0;
+        while is_down_status(s.mario()) && ticks < 2000 {
+            s.step(1);
+            ticks += 1;
+        }
+        ticks
+    };
+    let whole = stood_after(false, true);
+    let early = stood_after(true, true);
+    let idle = stood_after(true, false);
+    println!("whole clip {whole}, cancelled {early}, cancel but no input {idle}");
+    assert!(early + 30 < whole, "{early} {whole}");
+    assert!(
+        idle >= whole - 2,
+        "no input waits the whole clip: {idle} {whole}"
+    );
+}
+
 /// A floor and some enemies that stay put: (feet, radius, height).
 struct Enemies(Vec<(Vec3, f32, f32)>);
 
@@ -2014,7 +2120,11 @@ fn a_wet_belly_slide_holds_the_slide_pose() {
     let mut ticks = 0;
     while s.mario().status == Status::Catch && ticks < 4000 {
         // (The tick's own playback steps it half a frame on before the next clamp.)
-        assert!(s.mario().anim.frame <= 50.5, "frame {}", s.mario().anim.frame);
+        assert!(
+            s.mario().anim.frame <= 50.5,
+            "frame {}",
+            s.mario().anim.frame
+        );
         s.step(1);
         ticks += 1;
     }
@@ -2214,7 +2324,10 @@ fn spray_rate_fires_more_drops_for_the_same_water() {
     let (n2, w2) = run(2.0);
     println!("spray: rate 1 {n1} drops {w1} water, rate 2 {n2} drops {w2} water");
     assert!(n2 as f32 > 1.8 * n1 as f32, "{n1} {n2}");
-    assert!((w2 - w1).abs() as f32 <= 0.05 * w1 as f32 + 2.0, "{w1} {w2}");
+    assert!(
+        (w2 - w1).abs() as f32 <= 0.05 * w1 as f32 + 2.0,
+        "{w1} {w2}"
+    );
 }
 
 #[test]
@@ -2315,8 +2428,14 @@ fn a_wet_slide_charge_makes_any_slide_glide_once() {
     assert_eq!((spent, none), (1, 0));
     assert!(anywhere > 1.6 * dry, "{dry} {anywhere}");
     assert!((no_charge - dry).abs() < 0.05 * dry, "{dry} {no_charge}");
-    assert!((needs_water - dry).abs() < 0.05 * dry, "{dry} {needs_water}");
-    assert!(capped > dry && capped < anywhere, "{dry} {capped} {anywhere}");
+    assert!(
+        (needs_water - dry).abs() < 0.05 * dry,
+        "{dry} {needs_water}"
+    );
+    assert!(
+        capped > dry && capped < anywhere,
+        "{dry} {capped} {anywhere}"
+    );
 }
 
 #[test]
@@ -2367,16 +2486,25 @@ fn host_jump_pad_preserves_ballistics_without_sunshine_speed_caps() {
     for tick in 1..=300 {
         s.step(1);
         let n = tick as f32;
-        let expected = Vec3::new(velocity.x * 0.25 * n,
-            0.25 * (velocity.y * n - 0.5 * gravity * n * n), 0.0);
-        assert!((s.mario().pos - expected).length() < 0.1,
-            "tick {tick}: {:?}, expected {expected}", s.mario().pos);
+        let expected = Vec3::new(
+            velocity.x * 0.25 * n,
+            0.25 * (velocity.y * n - 0.5 * gravity * n * n),
+            0.0,
+        );
+        assert!(
+            (s.mario().pos - expected).length() < 0.1,
+            "tick {tick}: {:?}, expected {expected}",
+            s.mario().pos
+        );
     }
     assert!(s.until(150, |m| !m.status.is_jumping()));
     s.pad = Pad::default();
     s.run_forward();
     s.step(120);
-    assert!(s.mario().vel.z > 0.0, "normal control returns after landing");
+    assert!(
+        s.mario().vel.z > 0.0,
+        "normal control returns after landing"
+    );
 }
 
 #[test]
@@ -2459,17 +2587,24 @@ fn a_light_press_is_a_short_burst_and_a_held_one_fades() {
     let none = libsms::Limits::default();
     let light = spray_burst(15, 1200, none);
     let full = spray_burst(255, 1200, none);
-    let stretched = spray_burst(255, 2400, libsms::Limits {
-        spray_fade: 2.0,
-        ..none
-    });
+    let stretched = spray_burst(
+        255,
+        2400,
+        libsms::Limits {
+            spray_fade: 2.0,
+            ..none
+        },
+    );
     println!("light {light:?}, full {full:?}, fade x2 {stretched:?}");
     // A light press: a quarter second of water that lands a few metres out.
     assert!(light.0 < 60, "{light:?}");
     assert!(light.1 < 0.4 * full.1, "{light:?} {full:?}");
     // A held full press stops by itself, after about 5 s.
     assert!(full.0 > 480 && full.0 < 800, "{full:?}");
-    assert!(stretched.0 as f32 > 1.6 * full.0 as f32, "{stretched:?} {full:?}");
+    assert!(
+        stretched.0 as f32 > 1.6 * full.0 as f32,
+        "{stretched:?} {full:?}"
+    );
 }
 
 /// Whether the Spray's drops at trigger `raw` say they're a light press's burst.
@@ -2526,7 +2661,9 @@ fn a_slide_over_fludd_water_is_wet_for_free_and_a_glide_carries_on() {
     let (on_water, spent) = slide_length(charged(true, false), true);
     let (charged_plain, _) = slide_length(charged(false, false), false);
     let (glide, _) = slide_length(charged(false, true), false);
-    println!("dry {dry:.0}, on water {on_water:.0} ({spent} spent), charged {charged_plain:.0}, glide {glide:.0}");
+    println!(
+        "dry {dry:.0}, on water {on_water:.0} ({spent} spent), charged {charged_plain:.0}, glide {glide:.0}"
+    );
     assert_eq!(spent, 0, "water's free");
     assert!(on_water > 1.6 * dry);
     assert!(glide > 3.0 * charged_plain, "{charged_plain} {glide}");
@@ -2546,7 +2683,11 @@ fn the_l_camera_aims_the_nozzle_and_turns_a_crouching_mario() {
     s.step(60);
     let m = s.mario();
     assert_eq!(m.status, Status::Squat);
-    assert!((m.face_yaw as i32 - 0x4000).abs() < 0x100, "{:#x}", m.face_yaw);
+    assert!(
+        (m.face_yaw as i32 - 0x4000).abs() < 0x100,
+        "{:#x}",
+        m.face_yaw
+    );
     assert_eq!(m.fludd.as_ref().unwrap().gun_angle(), 0x1000 as f32);
 }
 
@@ -2562,7 +2703,11 @@ fn a_host_aim_without_l_turns_a_standing_mario_and_pitches_the_nozzle() {
     s.step(60);
     let m = s.mario();
     assert_ne!(m.status, Status::Squat, "no L, no crouch");
-    assert!((m.face_yaw as i32 - 0x4000).abs() < 0x100, "{:#x}", m.face_yaw);
+    assert!(
+        (m.face_yaw as i32 - 0x4000).abs() < 0x100,
+        "{:#x}",
+        m.face_yaw
+    );
     assert_eq!(m.fludd.as_ref().unwrap().gun_angle(), 0x1000 as f32);
 }
 
@@ -2625,7 +2770,10 @@ fn shallow_water_wets_a_slide_only_when_the_host_asks() {
     let off = dive_slide(false, Some(15.0));
     let on = dive_slide(true, Some(15.0));
     println!("dry {dry:.0}, in water {off:.0}, in water and wet {on:.0}");
-    assert!(off < 0.5 * dry, "water alone drags, as in the game: {dry} {off}");
+    assert!(
+        off < 0.5 * dry,
+        "water alone drags, as in the game: {dry} {off}"
+    );
     assert!(on > 1.6 * dry, "{dry} {on}");
 }
 

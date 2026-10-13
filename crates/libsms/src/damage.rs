@@ -19,6 +19,9 @@ use crate::mario::{Mario, Status, UpperState};
 use crate::math::{diff, matan};
 use crate::params::Damage;
 
+/// Ticks a host's knock-down keeps the next from landing, at most (the disc's own flash is 300).
+const KNOCK_DOWN_GUARD: i16 = 120;
+
 /// Which `/Mario/Dmg*.prm` a hit uses: `receiveMessage` picks it by the attacker's actor type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
@@ -118,6 +121,25 @@ impl Mario {
 
     /// `damageExec` with any damage parameters.
     pub fn damage_by(&mut self, from: Vec3, p: &Damage) -> bool {
+        self.hurt(from, p, true)
+    }
+
+    /// A host's hit that costs the sim's health nothing (the host keeps the health): the
+    /// knock-down of `damageExec` from `from`, with `kind`'s fall, speed and flash, its voice
+    /// (the big one) and the pink flash, but no `decHP` and no water lost. Returns whether it
+    /// landed (not while he is flashing from the last, down for good, or on Yoshi, who takes
+    /// the hit as in the game). A dive isn't knocked out of, as in the game.
+    pub fn knock_down(&mut self, from: Vec3, kind: DamageKind) -> bool {
+        let mut p = self.params.damage(kind).clone();
+        p.damage = 0;
+        p.water_emit = 0;
+        // Only there so one hit isn't followed by another before he's up.
+        p.invincible_time = p.invincible_time.min(KNOCK_DOWN_GUARD);
+        self.hurt(from, &p, false)
+    }
+
+    /// `damageExec`; `hp` false leaves the health and the water alone (a host's hit).
+    fn hurt(&mut self, from: Vec3, p: &Damage, hp: bool) -> bool {
         if self.is_invincible() || self.is_down() || self.health <= 0 {
             return false;
         }
@@ -134,7 +156,8 @@ impl Mario {
             return true;
         }
         let airborne = self.status.is_jumping() as usize;
-        if p.down_type == 3 {
+        // `canPlayAnimation`: a dive (`MARIO_STATUS_DIVE`) isn't knocked out of.
+        if p.down_type == 3 || self.status == Status::JumpCatch {
             // `setUpperDamageRun`: a flinch with no knock-back; not drawn here.
         } else {
             let attack = matan(from.z - self.pos.z, from.x - self.pos.x);
@@ -160,7 +183,9 @@ impl Mario {
             self.change_status(to, 0, false);
         }
         self.invincible = p.invincible_time;
-        self.dec_hp(p.damage as i16);
+        if hp {
+            self.dec_hp(p.damage as i16);
+        }
         let lost = p.water_emit as i32;
         let params = self.params.clone();
         if let Some(f) = self.fludd.as_mut() {
@@ -173,7 +198,7 @@ impl Mario {
             }
         }
         if self.health > 0 {
-            self.cue(if p.damage > 1 {
+            self.cue(if p.damage > 1 || !hp {
                 "MSD_SE_MV01_DAMAGE_BIG_01"
             } else if p.down_type == 0 {
                 "MSD_SE_MV03_DAMAGE_LITLE_01"

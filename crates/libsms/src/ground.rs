@@ -12,6 +12,11 @@ use crate::mario::{Mario, Status};
 use crate::math::{self, cos, diff, fconverge, matan, sin};
 use crate::params::NozzleKind;
 
+/// Clip frame from which a host may let Mario out of a knock-down ([`Options::knockdown_cancel`]).
+const KNOCKDOWN_CANCEL_FRAME: f32 = 12.0;
+/// Slide speed under which it may.
+const KNOCKDOWN_CANCEL_SPEED: f32 = 4.0;
+
 /// `TMario::JumpSlipRecord`: how long the post-landing window lasts and what A does in it.
 struct JumpSlipRec {
     max_timer: i32,
@@ -985,6 +990,22 @@ impl Mario {
             host.event(Event::WallBump);
         }
         let frame = self.set_anim(c, 1.0);
+        // Not in the game: the host lets him out of the get-up once the slide has spent itself.
+        if self.options.knockdown_cancel
+            && frame >= KNOCKDOWN_CANCEL_FRAME
+            && self.forward_vel.abs() < KNOCKDOWN_CANCEL_SPEED
+            && (self.input.stick
+                || self.input.jump
+                || self.input.b_pressed
+                || self.input.r_pressed
+                || self.input.l_pressed)
+        {
+            if self.input.jump {
+                return self.change_jumping(Status::Jump);
+            }
+            self.change_status(Status::Wait, 0, false);
+            return true;
+        }
         if frame < limit {
             self.slope_process();
             self.forward_vel *= 0.96;

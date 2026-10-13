@@ -221,6 +221,9 @@ pub struct Options {
     pub slide_fx_scale: f32,
     /// FLUDD's tank never runs dry. false: the game's.
     pub unlimited_water: bool,
+    /// Once a knock-down's slide has nearly spent itself, A, the stick, B, L or R gets him up at
+    /// once instead of after the whole get-up clip. false: the game's.
+    pub knockdown_cancel: bool,
 }
 
 /// Ticks either side of a stomp in which A counts for [`Options::stomp_jump`].
@@ -244,6 +247,7 @@ impl Default for Options {
             shallow_water_wets: false,
             slide_fx_scale: 1.0,
             unlimited_water: false,
+            knockdown_cancel: false,
         }
     }
 }
@@ -557,7 +561,9 @@ impl Mario {
     /// Host extension: preserve a world jump pad's full velocity and gravity until collision.
     /// Velocity is mVel (units per 30 Hz frame), gravity is mVel lost per 120 Hz tick.
     pub fn launch_pad(&mut self, vel: Vec3, gravity: f32) {
-        if !vel.is_finite() || !gravity.is_finite() || gravity <= 0.0 { return; }
+        if !vel.is_finite() || !gravity.is_finite() || gravity <= 0.0 {
+            return;
+        }
         self.launch(vel);
         self.pad_gravity = Some(gravity);
         // jumpProcess moves before gravity: centre the first velocity on the tick.
@@ -590,8 +596,11 @@ impl Mario {
     }
 
     pub(crate) fn fx_scaled(&mut self, name: &'static str, at: crate::event::FxAt, scale: f32) {
-        self.events
-            .push(Event::Particle(crate::event::ParticleCue { name, at, scale }));
+        self.events.push(Event::Particle(crate::event::ParticleCue {
+            name,
+            at,
+            scale,
+        }));
     }
 
     /// `emitParticle(id)` / `emitParticle(id, rot)`: once, at Mario's feet.
@@ -668,7 +677,11 @@ impl Mario {
 
     /// One 120 Hz step (`TMario::playerControl`).
     pub fn tick(&mut self, host: &mut dyn Host, pad: &Pad, camera_yaw: Angle) {
-        let pad = if self.pad_gravity.is_some() { &Pad::default() } else { pad };
+        let pad = if self.pad_gravity.is_some() {
+            &Pad::default()
+        } else {
+            pad
+        };
         // The host's limits may hold R back (`limits.rs`); the game's never do.
         let pad = &self.limit_pad(pad);
         self.camera_yaw = camera_yaw;
@@ -744,7 +757,9 @@ impl Mario {
     /// `thinkWaterSurface` (MarioMove.cpp), the pool half: Mario is in shallow water while a
     /// pool's surface is above his feet. No swimming: deeper water is still wading.
     fn think_water_surface(&mut self, host: &mut dyn Host) {
-        let level = host.water_level(self.pos).filter(|&level| level > self.pos.y);
+        let level = host
+            .water_level(self.pos)
+            .filter(|&level| level > self.pos.y);
         self.in_water = level.is_some();
         if let Some(level) = level {
             self.water_surface = level;
@@ -993,7 +1008,9 @@ impl Mario {
         }
         self.prev_status = self.status;
         self.status = to;
-        if to != Status::ForceJump { self.pad_gravity = None; }
+        if to != Status::ForceJump {
+            self.pad_gravity = None;
+        }
         self.status_arg = arg;
         self.enemies_hit.clear();
         self.lim.wet_decided = false;
