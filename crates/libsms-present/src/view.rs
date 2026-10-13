@@ -281,7 +281,12 @@ pub const SMOKE_EFFECTS: &[&str] = &[
     "ms_hipdrop_a",
     "ms_hipdrop_b",
     "ms_hipdrop_c",
+    "ms_m_sphipd_hit_b",
 ];
+
+// Ground-pound smoke uses the kemuball texture, distinct from the shockwaves, sparks
+// and falling flames. Host preference: its puffs spread/fade at their birth height.
+const GROUND_POUND_SMOKE: &[&str] = &["ms_hipdrop_b", "ms_m_sphipd_hit_b"];
 
 // MarioJump.cpp, TMario::hipAttacking: these are one-shot impacts at the floor,
 // distinct from the four body-bound flames during the fall. A host's smoothed
@@ -610,6 +615,9 @@ impl View {
         let mut fx = Particles::load(dir, MARIO_EFFECTS);
         for &name in SMOKE_EFFECTS.iter().chain(SUPER_POUND_IMPACTS) {
             fx.set_world_space(name, true);
+        }
+        for &name in GROUND_POUND_SMOKE {
+            fx.set_fixed_height(name, true);
         }
         Ok(View {
             hand_joints: [b.joint("jnt_hand_R"), b.joint("jnt_hand_L")],

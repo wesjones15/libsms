@@ -18,6 +18,10 @@ rebound. This includes both `ms_hipdrop_*` and `ms_m_sphipd_hit_*` from
 `TMario::hipAttacking` (MarioJump.cpp). They exclude the host's current Mario draw offset;
 the separate `ms_m_sphipd_a..d` flames remain attached during the fall.
 
+Host preference: normal/super pound smoke (`ms_hipdrop_b`, `ms_m_sphipd_hit_b`)
+keeps each puff's birth height. Its horizontal spread, size, colour and lifetime still
+advance; its authored upward velocity/fields do not lift the dust. Both use smoke speed.
+
 - **The simulation runs at 120 Hz in both regions.** `TMarDirector::direct`
   (System/MarDirectorDirect.cpp) turns each rendered frame into `600 / vsync` time units
   (`vsync` = `SMSGetVSyncTimesPerSec()` = 30 NTSC, 25 PAL) and burns them in 5-unit ticks:

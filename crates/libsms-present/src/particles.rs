@@ -316,6 +316,7 @@ struct Emitter {
     /// `setGlobalScale`: dynamics (local positions) and particle sizes together.
     global_scale: f32,
     world_space: bool,
+    fixed_height: bool,
     time: f32,
     /// `JPADraw::mPrmColor`, `mEnvColor`, `mTexIdx`.
     prm: [u8; 4],
@@ -342,6 +343,7 @@ struct Effect {
     jpa: Jpa,
     paint: Paint,
     world_space: bool,
+    fixed_height: bool,
     speed: f32,
 }
 
@@ -559,6 +561,7 @@ impl Particles {
             jpa,
             paint,
             world_space: false,
+            fixed_height: false,
             speed: 1.0,
         });
     }
@@ -568,6 +571,14 @@ impl Particles {
     pub fn set_world_space(&mut self, name: &str, world_space: bool) {
         if let Some(&i) = self.by_name.get(name) {
             self.effects[i].world_space = world_space;
+        }
+    }
+
+    /// Host presentation override for ground dust: keep each particle's birth height,
+    /// including between renders, while its horizontal motion and look still advance.
+    pub fn set_fixed_height(&mut self, name: &str, fixed_height: bool) {
+        if let Some(&i) = self.by_name.get(name) {
+            self.effects[i].fixed_height = fixed_height;
         }
     }
 
@@ -775,6 +786,7 @@ impl Particles {
             global_pos: Vec3::ZERO,
             global_scale: 1.0,
             world_space: self.effects[effect].world_space,
+            fixed_height: self.effects[effect].fixed_height,
             time: 0.0,
             prm,
             env,
@@ -1442,6 +1454,9 @@ impl Emitter {
             }
             p.field_vel += p.field_accel;
             p.vel = (p.base_vel + p.field_vel) * p.weight;
+            if self.fixed_height {
+                p.vel.y = 0.0;
+            }
             // `JPADraw::calcParticle`.
             p.look.angle = p.look.angle.wrapping_add(p.look.spin);
             calc_draw_particle(self.prm, self.env, p, jpa);
@@ -2125,6 +2140,47 @@ mod tests {
         assert_eq!(p.emitters[0].particles.last().unwrap().global, original);
         p.build(Vec3::X, Vec3::Y);
         assert!(p.batches.iter().all(|b| p.texture_world_space(b.texture)));
+    }
+
+    #[test]
+    fn pound_smoke_keeps_birth_height_while_spreading_and_fading() {
+        let Some(dir) = libsms::assets::find(None) else {
+            return;
+        };
+        let configured = crate::view::View::load(&dir).unwrap();
+        for name in ["ms_hipdrop_b", "ms_m_sphipd_hit_b"] {
+            let mut p = configured.fx.clone();
+            p.emit(
+                name,
+                Mat4::from_translation(Vec3::new(100.0, 20.0, -40.0)),
+                1.0,
+            );
+            let mut saw_smoke = false;
+            let mut saw_spread = false;
+            for tick in (0..1200).step_by(4) {
+                // Advance through the lifetime, including subframes, while the character
+                // rebounds far above the impact. One-shot smoke must stay at birth height.
+                p.rebind(0, Mat4::from_translation(Vec3::Y * (tick as f32 * 20.0)));
+                p.advance(tick);
+                for e in &p.emitters {
+                    for particle in &e.particles {
+                        saw_smoke = true;
+                        assert!(
+                            (particle.global.y - particle.previous_global.y).abs() < 0.001,
+                            "{name} rose at tick {tick}: {} -> {}",
+                            particle.previous_global.y,
+                            particle.global.y
+                        );
+                        let delta = particle.global - particle.previous_global;
+                        saw_spread |= delta.x.abs() + delta.z.abs() > 0.001;
+                    }
+                }
+                p.build_interpolated(Vec3::X, Vec3::Y, 0.5, |_| true);
+                assert!(p.batches.iter().all(|b| p.texture_world_space(b.texture)));
+            }
+            assert!(saw_smoke && saw_spread, "{name} lost its smoke/spread");
+            assert!(!p.active(), "{name} did not expire");
+        }
     }
 
     #[test]
