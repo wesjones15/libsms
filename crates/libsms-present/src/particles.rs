@@ -922,30 +922,35 @@ impl Particles {
                     Some(at) if p.follow => p.local * e.global_scale + at,
                     _ => p.global,
                 };
-                let Some(corners) = particle_quad(e, p, pos, jpa, right, up) else {
-                    continue;
-                };
                 let (prm, env) = registers(e, Some(p), jpa);
                 let colors = paint_colors(base, prm, env, *count);
-                for (k, c) in colors.iter().enumerate().take(*count as usize) {
-                    if *count > 1 && c[0] + c[1] + c[2] <= 1.0 / 512.0 {
+                // JPADrawExecDirectionalCross / RotDirectionalCross draw two perpendicular
+                // quads. MS_M_WATSLIDE_C uses this for the wet slide's side spray.
+                let passes = if base.kind == 4 { 2 } else { 1 };
+                for pass in 0..passes {
+                    let Some(corners) = particle_quad(e, p, pos, jpa, right, up, pass) else {
                         continue;
-                    }
-                    let texture = t0 + k as u32;
-                    let run = match runs.iter_mut().find(|r| r.0 == texture) {
-                        Some(r) => r,
-                        None => {
-                            runs.push((texture, Vec::new()));
-                            runs.last_mut().unwrap()
-                        }
                     };
-                    for (pos, uv) in &corners {
-                        run.1.push(FxVertex {
-                            pos: *pos,
-                            u: uv[0],
-                            v: uv[1],
-                            color: *c,
-                        });
+                    for (k, c) in colors.iter().enumerate().take(*count as usize) {
+                        if *count > 1 && c[0] + c[1] + c[2] <= 1.0 / 512.0 {
+                            continue;
+                        }
+                        let texture = t0 + k as u32;
+                        let run = match runs.iter_mut().find(|r| r.0 == texture) {
+                            Some(r) => r,
+                            None => {
+                                runs.push((texture, Vec::new()));
+                                runs.last_mut().unwrap()
+                            }
+                        };
+                        for (pos, uv) in &corners {
+                            run.1.push(FxVertex {
+                                pos: *pos,
+                                u: uv[0],
+                                v: uv[1],
+                                color: *c,
+                            });
+                        }
                     }
                 }
             }
@@ -1156,6 +1161,7 @@ fn particle_quad(
     jpa: &Jpa,
     right: Vec3,
     up: Vec3,
+    pass: usize,
 ) -> Option<[(Vec3, [f32; 2]); 4]> {
     let base = &jpa.base;
     let (size, pivot) = clip_board(jpa, e.global_scale);
@@ -1198,13 +1204,26 @@ fn particle_quad(
             } else {
                 frame
             };
-            [
-                Vec3::new(x0, y0, 0.0),
-                Vec3::new(x1, y0, 0.0),
-                Vec3::new(x1, y1, 0.0),
-                Vec3::new(x0, y1, 0.0),
-            ]
-            .map(|v| m * v)
+            let corners = if pass == 0 {
+                [
+                    Vec3::new(x0, y0, 0.0),
+                    Vec3::new(x1, y0, 0.0),
+                    Vec3::new(x1, y1, 0.0),
+                    Vec3::new(x0, y1, 0.0),
+                ]
+            } else {
+                // The second plane shares the first plane's pivot and direction. Rotate
+                // both with the same particle frame (JPADrawVisitor.cpp).
+                let middle = (x0 + x1) * 0.5;
+                let half_width = (x1 - x0) * 0.5;
+                [
+                    Vec3::new(middle, y0, half_width),
+                    Vec3::new(middle, y0, -half_width),
+                    Vec3::new(middle, y1, -half_width),
+                    Vec3::new(middle, y1, half_width),
+                ]
+            };
+            corners.map(|v| m * v)
         }
         _ => {
             // Billboards: in the camera's plane.
@@ -2067,6 +2086,80 @@ mod tests {
             },
         );
         p
+    }
+
+    #[test]
+    fn directional_cross_keeps_both_planes_with_pivot_spin_and_yaw() {
+        let mut fx = puff();
+        let jpa = &mut fx.effects[0].jpa;
+        jpa.base.kind = 4;
+        jpa.base.tiling = [1.0; 2];
+        jpa.emitter.direction = [0.0, 0.0, 1.0];
+        jpa.extra = Some(ExtraShape {
+            scale_flags: 1,
+            pivot_x: 2,
+            pivot_y: 0,
+            rotate: true,
+            rotate_angle: 0.25,
+            ..Default::default()
+        });
+        let at = Mat4::from_rotation_translation(
+            glam::Quat::from_rotation_y(0.8),
+            Vec3::new(100.0, 20.0, -40.0),
+        );
+        fx.emit("puff", at, 1.4);
+        fx.advance(0);
+        fx.build(Vec3::X, Vec3::Y);
+        assert_eq!(fx.vertices.len(), 8 * fx.emitters[0].particles.len());
+        for pair in fx.vertices.chunks_exact(8) {
+            let [a, b] = [&pair[..4], &pair[4..]];
+            let width_a = a[1].pos - a[0].pos;
+            let width_b = b[1].pos - b[0].pos;
+            assert!((width_a.length() - 70.0).abs() < 0.001);
+            assert!((width_b.length() - 70.0).abs() < 0.001);
+            assert!(width_a.normalize().dot(width_b.normalize()).abs() < 0.001);
+            let center = |q: &[FxVertex]| q.iter().map(|v| v.pos).sum::<Vec3>() * 0.25;
+            assert!((center(a) - center(b)).length() < 0.001);
+            for (a, b) in a.iter().zip(b) {
+                assert_eq!((a.u, a.v, a.color), (b.u, b.v, b.color));
+            }
+        }
+    }
+
+    #[test]
+    fn disc_wet_slide_spray_draws_crossed_planes_and_expires() {
+        let Some(dir) = libsms::assets::find(None) else {
+            return;
+        };
+        let name = "ms_m_watslide_c";
+        let mut cross = Particles::load(&dir, &[name]);
+        assert!(cross.has(name));
+        assert_eq!(cross.effects[0].jpa.base.kind, 4);
+        let mut single = cross.clone();
+        single.effects[0].jpa.base.kind = 3;
+        let mut saw_spray = false;
+        for tick in (0..80).step_by(4) {
+            let at = Mat4::from_rotation_translation(
+                glam::Quat::from_rotation_y(0.8),
+                Vec3::new(0.0, 0.0, tick as f32 * 10.0),
+            );
+            cross.request_scaled(0, name, at, 1.4);
+            single.request_scaled(0, name, at, 1.4);
+            cross.advance(tick);
+            single.advance(tick);
+            cross.build(Vec3::X, Vec3::Y);
+            single.build(Vec3::X, Vec3::Y);
+            assert_eq!(cross.vertices.len(), 2 * single.vertices.len());
+            saw_spray |= !cross.vertices.is_empty();
+            assert!(cross.vertices.iter().all(|v| v.pos.is_finite()));
+        }
+        assert!(saw_spray);
+        for tick in (80..160).step_by(4) {
+            cross.advance(tick);
+        }
+        cross.build(Vec3::X, Vec3::Y);
+        assert!(!cross.active());
+        assert!(cross.vertices.is_empty());
     }
 
     #[test]

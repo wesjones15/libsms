@@ -201,7 +201,8 @@ game requests it every tick from then, libsms once). Jumps falling as far don't.
 `JPABaseEmitter` and its particles run once per game frame (4 ticks): emission over the volume
 (`createParticle`), gravity and air fields, air resistance and weight, the `ESP1` scale, alpha and
 spin over life and the `BSP1` colour tables, drawn as `JPADrawExec*` builds billboards,
-directional quads and (crossed) stripes. A persistent request per frame keeps an emitter making
+directional quads (including the two perpendicular planes of directional cross) and
+(crossed) stripes. A persistent request per frame keeps an emitter making
 particles; a frame without lets it go (`TMarioParticleManager::perform`,
 `becomeInvalidEmitter`). TEV (`JPADrawSetupTev`): stage 0's colour is `d + a(1 - c) + b c` over
 the texture colour and the prm/env registers, its alpha texture alpha times prm alpha; additive
@@ -226,8 +227,11 @@ particle stuck to the ground sets `MARIO_FLAG_RECENTLY_LEFT_WATER` (misnamed); `
 sets state 1, and on normal ground `doSliding` uses `mWasOnWaterSlip` (0.97) for the belly
 slide's friction instead of the normal slip's (`mInWaterSlip` 0.9 in water): about twice as far.
 The host feeds `Mario::water_underfoot` from `WaterManager::on_ground_near` each step. The game's
-spray off the slide (`frontSlipEffect`, `MS_M_WATSLIDE_A..C`) isn't ported; hosts throw the
-water's splash sprites instead (`WaterManager::slide_splashes`).
+spray off the slide (`frontSlipEffect`, `MS_M_WATSLIDE_A..C`) binds all three disc effects
+to the animated center joint. `MS_M_WATSLIDE_C` uses `JPADrawExecDirectionalCross` (and its
+rotating variant): both perpendicular textured planes draw with the same pivot, scale and
+particle frame, restoring the side spray. Host `slide_fx_scale` scales all three effects
+together. The old stand-in splash sprites (`WaterManager::slide_splashes`) are optional.
 
 **Spin jump sounds** (`soundMovement`, MarioSound.cpp, every tick off Yoshi): entering a spin jump
 by any route (take-off or `considerJumpRotate` mid-air) starts `MV24_JUMP_SPECIAL` once (on top of
