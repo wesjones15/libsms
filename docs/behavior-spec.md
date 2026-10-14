@@ -635,3 +635,28 @@ asset cache (ror2_audio/spawn.wav and death.wav), using MSD_BGM_DOLPIC for 2.5 s
 MSD_BGM_MISS for 4.6 s. Rendering is device-free, at 30 Hz JAI / 32 kHz stereo PCM16,
 matching the previous build-time audio tool. Complete WAVs are published by rename and
 reused without reloading banks. Sting failure does not prevent the sim or normal audio.
+
+### Wet-slide side-wave scene refraction
+
+TMario::frontSlipEffect binds ms_m_watslide_a (group 3) plus b/c (group 1) to
+getCenterAnmMtx. A is the broad crossed ribbon, not the small C spray. In
+TMarioParticleManager::emitTry, group 3 replaces its empty P_ms_fb_8x8i4 texture
+with the captured screen. Baking that placeholder as ordinary additive colour
+made the side waves invisible.
+
+The presentation loads ETX1's indirect matrix/exponent, displacement map and wave mask,
+and exports a scene-refraction batch (blend 2, ABI 19) with linear packed normals
+(R=1, G=Y, B=1, A=X). RoR2 uses the same existing matDistortion pass as FLUDD
+water, substituting this disc-derived map for the water sphere map. The disc mask
+reduces displacement to neutral outside the crests. Ground depth clips the lower plane.
+The host tightens soft-particle intersection fading for the shallow ribbons;
+Look.WaterRefraction scales both drops and waves. Shared SeeThrough tint materials
+remain the implementation used by water and Olimar's transparent helmet.
+
+KFA1 type 10 drives new particles' draw scale via cubic Hermite interpolation
+(JPABaseEmitter::calcKeyFrameAnime / JPAGetKeyFrameValue / JPADraw::initParticle).
+The A ribbon pulses from 0.9 through 1.3 and back over the disc's looping curve.
+Other emitter keyframe targets and general indirect TEV stages remain unported.
+The headless wet_slide example previews the actual ribbon geometry over a tiled
+scene, and tests verify both sides, masked displacement, scale, expiry and the FFI
+path with sound disabled. This does not replace in-game visual verification.

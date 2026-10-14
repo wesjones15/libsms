@@ -20,7 +20,8 @@
 //! A stripe with a second texture (`ETX1`, which reads the texture at other coordinates) can't
 //! be split like that; its whole TEV is baked into a texture each frame instead.
 //!
-//! Not ported: child particles (`SSP1`), key-frame animation (`KFA1`), indirect textures, the
+//! Not ported: child particles (`SSP1`), emitter keyframes other than draw scale, general
+//! indirect texture stages (projected scene refraction is handed to the host), the
 //! fields other than gravity and air, and blending other than additive (drawn as see-through
 //! texture times prm colour).
 
@@ -51,6 +52,9 @@ pub mod blend {
     pub const ADDITIVE: u32 = 0;
     /// `src * src.a + dst * (1 - src.a)`.
     pub const ALPHA: u32 = 1;
+    /// Refract the host's scene with a packed normal map (R=1, G=Y, B=1, A=X).
+    /// This replaces Sunshine's captured framebuffer, never the disc's empty placeholder.
+    pub const REFRACTION: u32 = 2;
 }
 
 /// One quad corner, sim world space.
@@ -315,6 +319,8 @@ struct Emitter {
     global_pos: Vec3,
     /// `setGlobalScale`: dynamics (local positions) and particle sizes together.
     global_scale: f32,
+    /// `JPADraw::mScaleOut`, driven by the emitter's KFA1 draw-scale curve.
+    draw_scale: f32,
     world_space: bool,
     fixed_height: bool,
     time: f32,
@@ -334,6 +340,9 @@ enum Paint {
     Basis { first: HashMap<u8, u32>, count: u32 },
     /// One texture rebaked every frame (stripes with a second texture).
     Baked { texture: u32 },
+    /// Projected framebuffer stripes: the disc's indirect map and wave mask, for the host's
+    /// existing refraction renderer instead of baking the empty screen texture.
+    Refraction { texture: u32 },
 }
 
 /// A loaded `.jpa`.
@@ -506,7 +515,18 @@ impl Particles {
         let base = &jpa.base;
         let stripe = base.kind == 5 || base.kind == 6;
         let second = jpa.ex_tex.as_ref().is_some_and(|e| e.second_on());
-        let paint = if stripe && second {
+        let projected = stripe
+            && base.projection
+            && jpa
+                .ex_tex
+                .as_ref()
+                .is_some_and(|e| e.ind_mode == 1 && e.second_on());
+        let paint = if projected {
+            self.textures.push(refraction_image(&jpa));
+            Paint::Refraction {
+                texture: self.textures.len() as u32 - 1,
+            }
+        } else if stripe && second {
             let size = jpa
                 .ex_tex
                 .as_ref()
@@ -605,7 +625,7 @@ impl Particles {
         self.effects.iter().any(|e| {
             e.world_space
                 && match &e.paint {
-                    Paint::Baked { texture: t } => *t == texture,
+                    Paint::Baked { texture: t } | Paint::Refraction { texture: t } => *t == texture,
                     Paint::Basis { first, count } => {
                         first.values().any(|&t| texture >= t && texture < t + count)
                     }
@@ -785,6 +805,7 @@ impl Particles {
             global_rot: Mat3::IDENTITY,
             global_pos: Vec3::ZERO,
             global_scale: 1.0,
+            draw_scale: 1.0,
             world_space: self.effects[effect].world_space,
             fixed_height: self.effects[effect].fixed_height,
             time: 0.0,
@@ -831,6 +852,25 @@ impl Particles {
                     continue;
                 }
                 match &fx.paint {
+                    Paint::Refraction { texture } => {
+                        let first = self.vertices.len() as u32;
+                        for q in &quads {
+                            for (p, uv) in q {
+                                self.vertices.push(FxVertex {
+                                    pos: *p,
+                                    u: uv[0],
+                                    v: uv[1],
+                                    color: [1.0; 4],
+                                });
+                            }
+                        }
+                        self.batches.push(FxBatch {
+                            texture: *texture,
+                            first_vertex: first,
+                            vertex_count: self.vertices.len() as u32 - first,
+                            blend: blend::REFRACTION,
+                        });
+                    }
                     Paint::Baked { texture } => {
                         let t = &self.textures[*texture as usize];
                         baked.push((*texture, bake_stripe(e, jpa, t.width, t.height)));
@@ -1100,6 +1140,46 @@ fn bake_stripe(e: &Emitter, jpa: &Jpa, w: u32, h: u32) -> Vec<u8> {
         }
     }
     out
+}
+
+/// `TMarioParticleManager::emitTry` swaps the main image for the current screen on group-3
+/// effects. `JPADrawSetupTev::setupTev` offsets that screen sample with ETX1's matrix and
+/// indirect texture. Keep those signed offsets under the disc's second-texture wave mask
+/// and hand them to the host's scene-refraction pass as Unity's packed normal channels.
+fn refraction_image(jpa: &Jpa) -> FxTexture {
+    let ext = jpa.ex_tex.as_ref().unwrap();
+    let indirect = jpa.textures.get(ext.ind_texture as usize);
+    let mask = jpa.textures.get(ext.second_texture as usize);
+    let size = mask.map_or(64, |t| t.image.width.max(t.image.height).clamp(8, 128));
+    let exponent = 2.0f32.powi(ext.ind_exp as i32);
+    let mut rgba = Vec::with_capacity((size * size * 4) as usize);
+    for y in 0..size {
+        for x in 0..size {
+            let (u, v) = (
+                (x as f32 + 0.5) / size as f32,
+                (y as f32 + 0.5) / size as f32,
+            );
+            let tex = indirect.map_or([0.5; 4], |t| sample(t, u, v));
+            // GX indirect STU components are alpha, blue, green, biased by 128.
+            let stu = [tex[3], tex[2], tex[1]].map(|c| (c * 255.0 - 128.0) / 128.0);
+            let coverage = mask.map_or(0.0, |t| {
+                let c = sample(t, u, v);
+                c[0] * c[3]
+            });
+            let offset = ext.ind_matrix.map(|row| {
+                row.iter().zip(stu).map(|(a, b)| a * b).sum::<f32>() * exponent * coverage
+            });
+            let pack = |v: f32| ((v * 0.5 + 0.5) * 255.0).round().clamp(0.0, 255.0) as u8;
+            rgba.extend_from_slice(&[255, pack(offset[1]), 255, pack(offset[0])]);
+        }
+    }
+    FxTexture {
+        width: size,
+        height: size,
+        rgba,
+        repeat: false,
+        version: 1,
+    }
 }
 
 /// The particle's direction for directional shapes and stripes (`dirType*`).
@@ -1402,6 +1482,15 @@ impl Emitter {
 
     /// `JPABaseEmitter::calc`.
     fn calc(&mut self, jpa: &Jpa) {
+        // `JPABaseEmitter::calcKeyFrameAnime` runs before drawing/emission. The wet-slide
+        // ribbon's type-10 curve pulses its birth width; old particles retain that width.
+        for key in &jpa.keys {
+            if key.kind == 10 && jpa.emitter.key_anm_mask & (1 << 10) != 0 {
+                if let Some(scale) = key.value(self.frame) {
+                    self.draw_scale = scale;
+                }
+            }
+        }
         let mut info = self.global_params(jpa);
         self.calc_draw_emitter(jpa);
         // `calcFieldParams`: each field's push this frame.
@@ -1851,6 +1940,7 @@ fn init_look(e: &mut Emitter, jpa: &Jpa, info: &Info) -> Look {
         }
         None => (0, 0, 1.0, 1.0),
     };
+    let scale = scale * e.draw_scale;
     Look {
         up: info.axis_y,
         prm: e.prm,
@@ -2069,6 +2159,7 @@ mod tests {
                 fields: vec![],
                 extra: None,
                 ex_tex: None,
+                keys: vec![],
                 has_children: false,
                 textures: vec![Texture {
                     name: "white".into(),
@@ -2160,6 +2251,51 @@ mod tests {
         cross.build(Vec3::X, Vec3::Y);
         assert!(!cross.active());
         assert!(cross.vertices.is_empty());
+    }
+
+    #[test]
+    fn disc_slide_waves_refract_both_sides_with_a_mask_and_authored_scale() {
+        let Some(dir) = libsms::assets::find(None) else {
+            return;
+        };
+        let name = "ms_m_watslide_a";
+        let mut waves = Particles::load(&dir, &[name]);
+        assert!(matches!(waves.effects[0].paint, Paint::Refraction { .. }));
+        let tex = &waves.textures[0];
+        // A framebuffer placeholder made every pixel invisible before. The replacement
+        // contains signed scene offsets, with neutral normals outside the disc's wave mask.
+        let pixels: Vec<_> = tex.rgba.chunks_exact(4).collect();
+        assert!(
+            pixels
+                .iter()
+                .any(|p| p[1].abs_diff(128) > 2 || p[3].abs_diff(128) > 2)
+        );
+        assert!(pixels.iter().any(|p| p[1] == 128 && p[3] == 128));
+        assert!(pixels.iter().all(|p| p[0] == 255 && p[2] == 255));
+        for frame in 0..24 {
+            waves.request(
+                0,
+                name,
+                Mat4::from_translation(Vec3::new(0.0, 0.0, frame as f32 * 25.0)),
+            );
+            waves.advance(frame * FRAME_TICKS);
+        }
+        waves.build(Vec3::X, Vec3::new(0.0, 0.6, -0.8));
+        assert_eq!(waves.batches.len(), 1);
+        assert_eq!(waves.batches[0].blend, blend::REFRACTION);
+        assert!(waves.vertices.len() >= 8);
+        assert!(waves.vertices.iter().all(|v| v.pos.is_finite()));
+        assert!(waves.vertices.iter().any(|v| v.pos.x < -25.0));
+        assert!(waves.vertices.iter().any(|v| v.pos.x > 25.0));
+        let e = &waves.emitters[0];
+        let scale = waves.effects[0].jpa.keys[0].value(23.0).unwrap();
+        assert!((e.draw_scale - scale).abs() < 1e-6);
+        for frame in 24..64 {
+            waves.advance(frame * FRAME_TICKS);
+        }
+        waves.build(Vec3::X, Vec3::Y);
+        assert!(!waves.active());
+        assert!(waves.vertices.is_empty());
     }
 
     #[test]

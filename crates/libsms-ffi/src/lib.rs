@@ -28,7 +28,7 @@ use libsms::{
 use view::SmsView;
 
 /// ABI version, bumped when the C interface changes.
-pub const SMS_ABI_VERSION: u32 = 18;
+pub const SMS_ABI_VERSION: u32 = 19;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sms_abi_version() -> u32 {
@@ -1429,6 +1429,105 @@ mod tests {
                 !s.water
                     .on_ground_near(patch.pos + Vec3::X * (patch.radius + 10.0))
             );
+            sms_sim_free(sim);
+        }
+    }
+
+    #[test]
+    fn wet_slide_scene_waves_reach_the_host_with_sound_disabled() {
+        let Some(dir) = libsms::assets::find(None) else {
+            return;
+        };
+        let dir = CString::new(dir.to_string_lossy().as_bytes()).unwrap();
+        unsafe extern "C" fn wet(
+            _: *mut c_void,
+            pos: *const SmsVec3,
+            out: *mut SmsGroundHit,
+        ) -> u8 {
+            unsafe {
+                flat(std::ptr::null_mut(), pos, out);
+                (*out).flags = SurfaceFlags::WET;
+            }
+            1
+        }
+        let host = SmsHost {
+            user: std::ptr::null_mut(),
+            ground: Some(wet),
+            roof: None,
+            walls: None,
+            event: None,
+            enemies: None,
+            water: None,
+        };
+        unsafe {
+            let sim = sms_sim_new(dir.as_ptr(), &SmsVec3::default(), 0);
+            let v = view::sms_view_new(dir.as_ptr(), 0);
+            assert!(!sim.is_null() && !v.is_null());
+            let frame = view::SmsViewFrame {
+                dt: 1.0 / 30.0,
+                forward: SmsVec3 {
+                    x: 0.0,
+                    y: -0.8,
+                    z: -0.6,
+                },
+                up: SmsVec3 {
+                    x: 0.0,
+                    y: 0.6,
+                    z: -0.8,
+                },
+                ..Default::default()
+            };
+            let mut found = false;
+            for tick in 0..360 {
+                let pad = SmsPad {
+                    stick_y: 1.0,
+                    a: (tick == 120) as u8,
+                    b: (tick == 131) as u8,
+                    ..Default::default()
+                };
+                sms_sim_step(sim, &host, &pad, 0, 1.0 / 120.0, v);
+                if tick % 4 != 0 {
+                    continue;
+                }
+                view::sms_view_update(v, sim, &frame);
+                let mut count = 0;
+                let ptr = view::sms_view_fx_batches(v, &mut count);
+                if ptr.is_null() {
+                    continue;
+                }
+                let batches = std::slice::from_raw_parts(ptr, count as usize);
+                for b in batches.iter().filter(|b| b.blend == 2) {
+                    assert!((*sim).sim.mario.wet_sliding());
+                    assert!(b.vertex_count >= 8);
+                    let mut info = view::SmsTexture::default();
+                    view::sms_view_fx_texture(v, b.texture, &mut info, std::ptr::null_mut(), 0);
+                    let mut pixels = vec![0; (info.width * info.height * 4) as usize];
+                    assert_eq!(
+                        view::sms_view_fx_texture(
+                            v,
+                            b.texture,
+                            &mut info,
+                            pixels.as_mut_ptr(),
+                            pixels.len() as u32
+                        ),
+                        1
+                    );
+                    assert!(
+                        pixels
+                            .chunks_exact(4)
+                            .any(|p| p[1].abs_diff(128) > 2 || p[3].abs_diff(128) > 2)
+                    );
+                    found = true;
+                }
+                if found {
+                    break;
+                }
+            }
+            assert!(
+                found,
+                "the slide's scene-refraction ribbon never reached the host"
+            );
+            view::sms_view_free(v);
             sms_sim_free(sim);
         }
     }

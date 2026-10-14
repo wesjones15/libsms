@@ -3,7 +3,8 @@
 //! a 4-byte tag and its size. `BEM1` is the emitter (`JPABaseEmitter::loadBaseEmitterBlock`),
 //! `FLD1` a field (`JPABaseField::loadFieldBlock`), `BSP1` the particles' shape and colours
 //! (`JPABaseShape`), `ESP1` their scale, alpha and spin over life (`JPAExtraShape`), `ETX1` the
-//! extra textures (`JPAExTexShape`), `SSP1` child particles (`JPASweepShape`, not read here)
+//! extra textures (`JPAExTexShape`), `KFA1` emitter keyframes and `SSP1` child particles
+//! (`JPASweepShape`, not read here)
 //! and `TEX1` the textures (`JPATexture`: a name, then a `ResTIMG` at 0x20). Block offsets
 //! below are from each block's start, as the game reads them.
 //!
@@ -235,6 +236,9 @@ impl ExtraShape {
 pub struct ExTexShape {
     /// 0 none, 1 indirect, 2 indirect with a sub texture.
     pub ind_mode: u8,
+    /// GX indirect matrix, with its signed power-of-two exponent.
+    pub ind_matrix: [[f32; 3]; 2],
+    pub ind_exp: i8,
     pub ind_texture: u8,
     pub sub_texture: u8,
     pub flags: u8,
@@ -247,6 +251,46 @@ impl ExTexShape {
     }
 }
 
+/// `KFA1`: time, value, incoming tangent, outgoing tangent, evaluated with cubic Hermite.
+#[derive(Debug, Clone, Default)]
+pub struct KeyFrame {
+    pub kind: u8,
+    pub looped: bool,
+    pub keys: Vec<[f32; 4]>,
+}
+
+impl KeyFrame {
+    /// `JPABaseEmitter::calcKeyFrameAnime` / `JPAGetKeyFrameValue`.
+    pub fn value(&self, mut time: f32) -> Option<f32> {
+        let first = self.keys.first()?;
+        let last = self.keys.last()?;
+        if self.looped && last[0] >= 0.0 {
+            time = time.rem_euclid(last[0] + 1.0);
+        }
+        if time <= first[0] {
+            return Some(first[1]);
+        }
+        if time >= last[0] {
+            return Some(last[1]);
+        }
+        let pair = self.keys.windows(2).find(|p| time < p[1][0])?;
+        let (a, b) = (pair[0], pair[1]);
+        let span = b[0] - a[0];
+        if span <= 0.0 {
+            return Some(b[1]);
+        }
+        let t = (time - a[0]) / span;
+        let t2 = t * t;
+        let t3 = t2 * t;
+        Some(
+            (2.0 * t3 - 3.0 * t2 + 1.0) * a[1]
+                + (t3 - 2.0 * t2 + t) * span * a[3]
+                + (-2.0 * t3 + 3.0 * t2) * b[1]
+                + (t3 - t2) * span * b[2],
+        )
+    }
+}
+
 /// One `.jpa` file.
 #[derive(Debug, Clone)]
 pub struct Jpa {
@@ -255,6 +299,7 @@ pub struct Jpa {
     pub base: BaseShape,
     pub extra: Option<ExtraShape>,
     pub ex_tex: Option<ExTexShape>,
+    pub keys: Vec<KeyFrame>,
     /// An `SSP1` block was present (child particles, not supported).
     pub has_children: bool,
     pub textures: Vec<Texture>,
@@ -276,6 +321,7 @@ impl Jpa {
             base: BaseShape::default(),
             extra: None,
             ex_tex: None,
+            keys: Vec::new(),
             has_children: false,
             textures: Vec::new(),
         };
@@ -292,6 +338,7 @@ impl Jpa {
                 b"BSP1" => base = Some(read_base(b)?),
                 b"ESP1" => jpa.extra = Some(read_extra(b)?),
                 b"ETX1" => jpa.ex_tex = Some(read_ex_tex(b)?),
+                b"KFA1" => jpa.keys.push(read_key(b)?),
                 b"SSP1" => jpa.has_children = true,
                 b"TEX1" => {
                     let name = b.cstr(0xC)?;
@@ -587,6 +634,11 @@ fn read_extra(b: Be) -> Result<ExtraShape, Error> {
 fn read_ex_tex(b: Be) -> Result<ExTexShape, Error> {
     Ok(ExTexShape {
         ind_mode: b.u8(0x10)?,
+        ind_matrix: [
+            [fx(b, 0x12)?, fx(b, 0x14)?, fx(b, 0x16)?],
+            [fx(b, 0x18)?, fx(b, 0x1A)?, fx(b, 0x1C)?],
+        ],
+        ind_exp: b.u8(0x1E)? as i8,
         ind_texture: b.u8(0x1F)?,
         sub_texture: b.u8(0x20)?,
         flags: b.u8(0x30)?,
@@ -594,9 +646,83 @@ fn read_ex_tex(b: Be) -> Result<ExTexShape, Error> {
     })
 }
 
+fn read_key(b: Be) -> Result<KeyFrame, Error> {
+    let count = b.u8(0x10)? as usize;
+    Ok(KeyFrame {
+        kind: b.u8(0xC)?,
+        looped: b.u8(0x12)? != 0,
+        keys: (0..count)
+            .map(|i| {
+                let at = 0x20 + i * 16;
+                Ok([b.f32(at)?, b.f32(at + 4)?, b.f32(at + 8)?, b.f32(at + 12)?])
+            })
+            .collect::<Result<_, Error>>()?,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn emitter_scale_keys_use_tangents_clamping_and_looping() {
+        let mut raw = vec![0; 0x20 + 2 * 16];
+        raw[0xC] = 10;
+        raw[0x10] = 2;
+        raw[0x12] = 1;
+        for (i, value) in [0.0f32, 1.0, 0.0, 0.5, 4.0, 3.0, 0.5, 0.0]
+            .iter()
+            .enumerate()
+        {
+            raw[0x20 + i * 4..0x24 + i * 4].copy_from_slice(&value.to_be_bytes());
+        }
+        let mut key = read_key(Be(&raw)).unwrap();
+        assert_eq!(key.kind, 10);
+        assert_eq!(key.value(0.0), Some(1.0));
+        assert_eq!(key.value(2.0), Some(2.0));
+        assert_eq!(key.value(5.0), Some(1.0));
+        // Different outgoing/incoming slopes change the midpoint.
+        key.keys[0][3] = 1.0;
+        assert_eq!(key.value(2.0), Some(2.25));
+        key.looped = false;
+        assert_eq!(key.value(-1.0), Some(1.0));
+        assert_eq!(key.value(99.0), Some(3.0));
+        assert!(read_key(Be(&raw[..raw.len() - 1])).is_err());
+    }
+
+    #[test]
+    fn wet_slide_ribbon_has_scene_projection_indirect_matrix_and_scale_curve() {
+        let Some(dir) = libsms::assets::find(None) else {
+            return;
+        };
+        let jpa =
+            Jpa::parse(&std::fs::read(dir.join("particle/ms_m_watslide_a.jpa")).unwrap()).unwrap();
+        assert_eq!(jpa.base.kind, 6);
+        assert!(jpa.base.projection);
+        let ext = jpa.ex_tex.as_ref().unwrap();
+        assert_eq!(ext.ind_mode, 1);
+        assert!(ext.second_on());
+        assert_eq!(ext.ind_exp, -2);
+        assert_eq!(ext.ind_matrix, [[0.5, 0.0, 0.0], [0.0, 0.5, 0.0]]);
+        let key = &jpa.keys[0];
+        assert_eq!(key.kind, 10);
+        assert!(key.looped);
+        assert!((key.value(0.0).unwrap() - 0.9).abs() < 1e-6);
+        assert!((key.value(6.0).unwrap() - 1.3).abs() < 1e-6);
+        assert!((key.value(13.0).unwrap() - 0.9).abs() < 1e-6);
+        assert_eq!(
+            jpa.textures[jpa.base.texture as usize].name,
+            "P_ms_fb_8x8i4"
+        );
+        // This gets replaced by the current screen in TMarioParticleManager::emitTry.
+        assert!(
+            jpa.textures[jpa.base.texture as usize]
+                .image
+                .rgba
+                .iter()
+                .all(|&v| v == 0)
+        );
+    }
 
     #[test]
     fn fixed_point_rounds_like_the_game() {
