@@ -323,7 +323,7 @@ mod tests {
             dir_tremble: 0.0,
             pow_tremble: 0.0,
             particle_type: 0,
-            burst: true,
+            burst: false,
         });
         water.step(&FlatHost::default(), Vec3::ZERO);
         water.particles.clear();
