@@ -226,6 +226,14 @@ Not ported: children
 particle stuck to the ground sets `MARIO_FLAG_RECENTLY_LEFT_WATER` (misnamed); `catching` then
 sets state 1, and on normal ground `doSliding` uses `mWasOnWaterSlip` (0.97) for the belly
 slide's friction instead of the normal slip's (`mInWaterSlip` 0.9 in water): about twice as far.
+Ground impacts leave persistent, drying wet marks in `WaterManager`, independent of whether
+an airborne droplet sticks or splashes away. Their base radius uses the disc's
+`mCleanSize * 10` (`TModelWaterManager::splashGround`); light bursts use twice that radius
+as a host-style approximation of a broad approach patch (not verified against vanilla).
+Marks last the particle type's `mAlive`, capped at 256 water frames, and repeated spray
+refreshes nearby coverage. A sampled 3x3 surface grid follows slopes and rejects ledges.
+`on_ground_near` tests the same circular footprint and height that presentation draws,
+so an invisible droplet 300 units away can no longer make dry ground count as wet.
 The host feeds `Mario::water_underfoot` from `WaterManager::on_ground_near` each step. The game's
 spray off the slide (`frontSlipEffect`, `MS_M_WATSLIDE_A..C`) binds all three disc effects
 to the animated center joint. `MS_M_WATSLIDE_C` uses `JPADrawExecDirectionalCross` (and its
