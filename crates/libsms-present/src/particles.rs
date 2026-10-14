@@ -674,6 +674,21 @@ impl Particles {
         }
     }
 
+    /// `emitAndBindToPosPtr(.., 0, ..)`: an independent emitter, alive for its JPA's duration like
+    /// [`Self::emit`], that follows the matrix bound to `slot` (kept up to date with [`Self::rebind`]).
+    /// `slot` must be one no held request uses.
+    pub fn emit_following(&mut self, slot: u32, name: &str, mtx: Mat4, scale: f32) {
+        if let Some(&effect) = self.by_name.get(name) {
+            let mut e = self.make(effect, 0);
+            e.slot = None;
+            e.bound_slot = Some(slot);
+            e.global_scale = scale;
+            e.bind(mtx);
+            self.emitters.push(e);
+            self.binds.insert(slot, mtx);
+        }
+    }
+
     /// Updates the bound matrices without asking for anything (between game frames, and for
     /// emitters already let go that still follow).
     pub fn rebind(&mut self, slot: u32, mtx: Mat4) {

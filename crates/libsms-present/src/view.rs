@@ -277,6 +277,13 @@ pub const MARIO_EFFECTS: &[&str] = &[
     "ms_fumi_c",
     "ms_coinget_a",
     "ms_coinget_b",
+    // The nozzles: the Rocket's launch (`rocketEffectStart`) and every muzzle's smoke.
+    "ms_m_rocket_a",
+    "ms_m_rocket_b",
+    "ms_m_rocket_b2",
+    "ms_m_rocket_c",
+    "ms_m_rocket_d",
+    "ms_nozzlesmoke",
 ];
 
 /// Host presentation: dust/smoke trails remain where they were emitted when Mario jumps.
@@ -320,6 +327,9 @@ const SUPER_POUND_IMPACTS: &[&str] = &[
     "ms_m_sphipd_hit_d",
 ];
 
+/// Slots for effects started once that then follow a matrix (see `Particles::emit_following`).
+const FOLLOW_SLOTS: u32 = 1000;
+
 struct FxTick {
     tick: u64,
     pos: Vec3,
@@ -328,7 +338,7 @@ struct FxTick {
     cues: Vec<ParticleCue>,
 }
 
-fn fx_matrix(at: FxAt, root: Mat4, joints: &[Mat4], center: Option<usize>) -> Option<Mat4> {
+fn fx_matrix(at: FxAt, root: Mat4, joints: &[Mat4], center: Option<usize>, muzzles: &[Mat4]) -> Option<Mat4> {
     match at {
         FxAt::Once { pos, yaw } => Some(Mat4::from_rotation_translation(
             Quat::from_rotation_y(yaw as f32 * std::f32::consts::PI / 32768.0),
@@ -338,6 +348,8 @@ fn fx_matrix(at: FxAt, root: Mat4, joints: &[Mat4], center: Option<usize>) -> Op
         FxAt::Joint(j) => joints.get(j as usize).map(|j| root * *j),
         // emitAndBindToPosPtr follows position only, not Mario's rotation.
         FxAt::Feet => Some(Mat4::from_translation(root.w_axis.truncate())),
+        // FLUDD's muzzle as drawn this frame (the nozzle's `null_G_muzzle` joints).
+        FxAt::Muzzle(i) | FxAt::MuzzleFollow(i) => muzzles.get(i as usize).map(|m| root * *m),
     }
 }
 
@@ -901,6 +913,7 @@ impl View {
             .zip(fludd.joint("nozzle_center"))
             .map(|(base, c)| base * fludd_joints[c]);
         let mut muzzles = Vec::new();
+        let mut muzzle_mtx: Vec<Mat4> = Vec::new();
         let nozzle = match (look, slot) {
             (Some(l), Some(i)) => {
                 let model = models::NOZZLES[i];
@@ -935,6 +948,7 @@ impl View {
                         if let Some(j) = bmd.joint(name) {
                             let mm = at * js[j];
                             muzzles.push((mm.w_axis.truncate(), mm.x_axis.truncate()));
+                            muzzle_mtx.push(mm);
                         }
                     }
                 }
@@ -961,16 +975,25 @@ impl View {
             );
             // Let-go emitters still follow their animation matrix, as in MarioParticle.cpp.
             for &(slot, at) in &self.fx_binds {
-                if let Some(mtx) = fx_matrix(at, tick_root, &joints, self.center) {
+                if let Some(mtx) = fx_matrix(at, tick_root, &joints, self.center, &muzzle_mtx) {
                     self.fx.rebind(slot, mtx);
                 }
             }
             for cue in tick.cues {
-                let Some(mtx) = fx_matrix(cue.at, tick_root, &joints, self.center) else {
+                let Some(mtx) = fx_matrix(cue.at, tick_root, &joints, self.center, &muzzle_mtx) else {
                     continue;
                 };
                 if matches!(cue.at, FxAt::Once { .. }) {
                     self.fx.emit(cue.name, mtx, cue.scale);
+                } else if let FxAt::MuzzleFollow(_) = cue.at {
+                    // Its own slot (past the held effects'), kept bound to the muzzle as it moves.
+                    if let Some(i) = MARIO_EFFECTS.iter().position(|&n| n == cue.name) {
+                        let slot = FOLLOW_SLOTS + i as u32;
+                        self.fx.emit_following(slot, cue.name, mtx, cue.scale);
+                        if !self.fx_binds.iter().any(|b| b.0 == slot) {
+                            self.fx_binds.push((slot, cue.at));
+                        }
+                    }
                 } else if let Some(slot) = MARIO_EFFECTS.iter().position(|&n| n == cue.name) {
                     let slot = slot as u32;
                     if !self.fx_binds.iter().any(|b| b.0 == slot) {
@@ -981,7 +1004,7 @@ impl View {
             }
             // emitBlurHipDropSuper, bound to getCenterAnmMtx during the flaming fall.
             if tick.pounding == 2 {
-                if let Some(center) = fx_matrix(FxAt::Center, tick_root, &joints, self.center) {
+                if let Some(center) = fx_matrix(FxAt::Center, tick_root, &joints, self.center, &muzzle_mtx) {
                     for (slot, name) in SUPER_POUND_FLAMES.iter().enumerate() {
                         self.fx.request(slot as u32, name, center);
                     }
@@ -990,7 +1013,7 @@ impl View {
             self.fx.advance(tick.tick);
         }
         for &(slot, at) in &self.fx_binds {
-            if let Some(mtx) = fx_matrix(at, root, &joints, self.center) {
+            if let Some(mtx) = fx_matrix(at, root, &joints, self.center, &muzzle_mtx) {
                 self.fx.rebind(slot, mtx);
             }
         }
@@ -1403,6 +1426,44 @@ mod tests {
         v.update(&mut sim, 0.0);
         let at_rebound: Vec<_> = v.fx.vertices.iter().map(|v| v.pos).collect();
         assert_eq!(at_landing, at_rebound, "rebound moved the landing effects");
+    }
+
+    /// The nozzle's effects are on the muzzle FLUDD's drawn nozzle has, and the Rocket's exhaust
+    /// stays with it as Mario moves.
+    #[test]
+    fn nozzle_effects_sit_on_the_muzzle_and_the_rockets_exhaust_follows_it() {
+        let Some(mut v) = view() else {
+            return;
+        };
+        let a = libsms::Assets::discover(None).unwrap();
+        let mut sim = Sim::new(a.params, a.anim_table, Vec3::ZERO, 0);
+        sim.mario.give_fludd();
+        let tick = |sim: &mut Sim| sim.mario.ticks;
+        let cue = |name, at| Event::Particle(ParticleCue { name, at, scale: 1.0 });
+        let first = tick(&mut sim);
+        for i in 0..30 {
+            v.events(&[cue("ms_nozzlesmoke", FxAt::Muzzle(0))], &sim.mario);
+            sim.mario.ticks = first + i * 4;
+            v.update(&mut sim, 0.0);
+        }
+        assert!(!v.fx.vertices.is_empty(), "no nozzle smoke was drawn");
+        // On FLUDD's nozzle: at Mario's chest, not at the world's origin or his feet.
+        let high = v.fx.vertices.iter().filter(|p| p.pos.y > 40.0 && p.pos.distance(sim.mario.pos) < 300.0).count();
+        assert!(high > 0, "the smoke isn't on the nozzle");
+        // The exhaust: started once, then it goes where the muzzle goes.
+        v.events(&[cue("ms_m_rocket_b", FxAt::MuzzleFollow(0))], &sim.mario);
+        sim.mario.ticks += 4;
+        v.update(&mut sim, 0.0);
+        let before = v.fx.vertices.iter().map(|p| p.pos.y).fold(f32::MIN, f32::max);
+        sim.mario.pos += Vec3::Y * 600.0;
+        sim.mario.prev_pos = sim.mario.pos;
+        for _ in 0..4 {
+            v.events(&[], &sim.mario);
+            sim.mario.ticks += 4;
+            v.update(&mut sim, 0.0);
+        }
+        let after = v.fx.vertices.iter().map(|p| p.pos.y).fold(f32::MIN, f32::max);
+        assert!(after > before + 300.0, "the exhaust stayed behind: {before} -> {after}");
     }
 
     #[test]
