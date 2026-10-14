@@ -660,3 +660,20 @@ Other emitter keyframe targets and general indirect TEV stages remain unported.
 The headless wet_slide example previews the actual ribbon geometry over a tiled
 scene, and tests verify both sides, masked displacement, scale, expiry and the FFI
 path with sound disabled. This does not replace in-game visual verification.
+
+### RoR2 distortion shader cutoff (ABI 20)
+
+The local Hopoo Games/FX/Distortion D3D11 pixel shader discards fragments when the
+reconstructed normal Z exceeds 0.99, before applying material magnitude. All texels
+of the ABI 19 side-wave map failed this check, despite valid ribbon geometry and a
+successfully created material. A regression reproduces that exact discard and failed
+on the old encoding.
+
+ABI 20 exports R=1, G=4*Y, B=coverage, A=4*X. Coverage is no longer multiplied
+into the normal map before that cutoff. MarioFx uploads B as a separate mask
+texture's alpha; MarioWater's existing refraction setup divides magnitude by 4.
+Thus visible crests retain the authored signed displacement and masked footprint,
+while surviving the shader's normal test. Water drops retain their existing settings.
+Tests check visible coverage through the actual cutoff and reconstruct every texel
+against the disc-derived displacement to bound packing error below 0.0015. The
+headless preview now applies the cutoff too; the game logs the eligible wave texels.

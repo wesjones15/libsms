@@ -170,7 +170,8 @@ pub struct SmsFxBatch {
     pub first_vertex: u32,
     pub vertex_count: u32,
     /// 0 additive, 1 alpha, 2 scene refraction. Refraction textures are linear packed normals
-    /// (R=1, G=Y, B=1, A=X), for the host's existing scene-distortion shader (ABI 19).
+    /// (R=1, G=4*Y, B=coverage, A=4*X), for the host's existing scene-distortion shader.
+    /// ABI 20: put B in a separate mask's alpha and divide material magnitude by 4.
     pub blend: u32,
 }
 

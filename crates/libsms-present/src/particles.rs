@@ -52,9 +52,12 @@ pub mod blend {
     pub const ADDITIVE: u32 = 0;
     /// `src * src.a + dst * (1 - src.a)`.
     pub const ALPHA: u32 = 1;
-    /// Refract the host's scene with a packed normal map (R=1, G=Y, B=1, A=X).
+    /// Refract the host's scene with a packed map (R=1, G=gain*Y, B=mask, A=gain*X).
     /// This replaces Sunshine's captured framebuffer, never the disc's empty placeholder.
     pub const REFRACTION: u32 = 2;
+    /// Keep authored subtle offsets above RoR2's normal-Z discard threshold. Hosts divide
+    /// their distortion magnitude by this and use B separately as the coverage mask.
+    pub const REFRACTION_NORMAL_GAIN: f32 = 4.0;
 }
 
 /// One quad corner, sim world space.
@@ -1167,10 +1170,19 @@ fn refraction_image(jpa: &Jpa) -> FxTexture {
                 c[0] * c[3]
             });
             let offset = ext.ind_matrix.map(|row| {
-                row.iter().zip(stu).map(|(a, b)| a * b).sum::<f32>() * exponent * coverage
+                row.iter().zip(stu).map(|(a, b)| a * b).sum::<f32>()
+                    * exponent
+                    * blend::REFRACTION_NORMAL_GAIN
             });
             let pack = |v: f32| ((v * 0.5 + 0.5) * 255.0).round().clamp(0.0, 255.0) as u8;
-            rgba.extend_from_slice(&[255, pack(offset[1]), 255, pack(offset[0])]);
+            // Keep mask coverage separate from normals. RoR2 discards near-flat normals
+            // before compositing: pre-multiplying by the narrow wave mask erased all crests.
+            rgba.extend_from_slice(&[
+                255,
+                pack(offset[1]),
+                (coverage * 255.0).round() as u8,
+                pack(offset[0]),
+            ]);
         }
     }
     FxTexture {
@@ -2263,15 +2275,48 @@ mod tests {
         assert!(matches!(waves.effects[0].paint, Paint::Refraction { .. }));
         let tex = &waves.textures[0];
         // A framebuffer placeholder made every pixel invisible before. The replacement
-        // contains signed scene offsets, with neutral normals outside the disc's wave mask.
+        // must also survive Hopoo's near-flat-normal discard; coverage stays separate.
         let pixels: Vec<_> = tex.rgba.chunks_exact(4).collect();
+        let survivors = pixels
+            .iter()
+            .filter(|p| {
+                let x = p[3] as f32 / 255.0 * 2.0 - 1.0;
+                let y = p[1] as f32 / 255.0 * 2.0 - 1.0;
+                p[2] as f32 / 255.0 >= 0.01 && x * x + y * y >= 1.0 - 0.99f32.powi(2)
+            })
+            .count();
+        assert!(
+            survivors > 64,
+            "RoR2's distortion shader discards the ribbon ({survivors} visible pixels)"
+        );
         assert!(
             pixels
                 .iter()
                 .any(|p| p[1].abs_diff(128) > 2 || p[3].abs_diff(128) > 2)
         );
-        assert!(pixels.iter().any(|p| p[1] == 128 && p[3] == 128));
-        assert!(pixels.iter().all(|p| p[0] == 255 && p[2] == 255));
+        assert!(pixels.iter().any(|p| p[2] == 0));
+        assert!(pixels.iter().all(|p| p[0] == 255));
+        // The enlarged normal map changes shader eligibility, not the authored distortion:
+        // gain compensation and the separate mask reconstruct the disc's signed offset.
+        let jpa = &waves.effects[0].jpa;
+        let ext = jpa.ex_tex.as_ref().unwrap();
+        for (i, p) in pixels.iter().enumerate() {
+            let u = ((i as u32 % tex.width) as f32 + 0.5) / tex.width as f32;
+            let v = ((i as u32 / tex.width) as f32 + 0.5) / tex.height as f32;
+            let input = sample(&jpa.textures[ext.ind_texture as usize], u, v);
+            let mask = sample(&jpa.textures[ext.second_texture as usize], u, v);
+            let stu = [input[3], input[2], input[1]].map(|c| (c * 255.0 - 128.0) / 128.0);
+            for (row, channel) in ext.ind_matrix.iter().zip([3, 1]) {
+                let expected = row.iter().zip(stu).map(|(a, b)| a * b).sum::<f32>()
+                    * 2.0f32.powi(ext.ind_exp as i32)
+                    * mask[0]
+                    * mask[3];
+                let actual = (p[channel] as f32 / 255.0 * 2.0 - 1.0)
+                    / blend::REFRACTION_NORMAL_GAIN
+                    * (p[2] as f32 / 255.0);
+                assert!((actual - expected).abs() < 0.0015);
+            }
+        }
         for frame in 0..24 {
             waves.request(
                 0,

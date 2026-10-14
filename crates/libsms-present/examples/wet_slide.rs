@@ -202,6 +202,14 @@ fn raster(
                 } // floor depth occludes the lower ribbon plane
                 let dx = s[3] as f32 / 255.0 * 2.0 - 1.0;
                 let dy = s[1] as f32 / 255.0 * 2.0 - 1.0;
+                let coverage = s[2] as f32 / 255.0;
+                // Match Hopoo's distortion shader: its normal-Z discard happens before
+                // distortion strength is applied. Previewing RGB alone missed this failure.
+                if coverage < 0.01 || dx * dx + dy * dy < 1.0 - 0.99f32.powi(2) {
+                    continue;
+                }
+                let dx = dx / blend::REFRACTION_NORMAL_GAIN * coverage;
+                let dy = dy / blend::REFRACTION_NORMAL_GAIN * coverage;
                 let sx = (px + dx * 100.0).clamp(0.0, W as f32 - 1.0) as usize;
                 let sy = (py + dy * 100.0).clamp(0.0, H as f32 - 1.0) as usize;
                 img[y * W + x] = scene[sy * W + sx];
