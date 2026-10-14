@@ -47,6 +47,8 @@ Non-Rust hosts use ABI 18 exports `sms_assets_complete`, `sms_find_disc` and
 `sms_extract`. Discovery checks `SMS_DISC` and the supplied directories for Sunshine
 ISO/GCM/CISO images. Extraction returns a UTF-8 status/error message; a complete cache
 succeeds without the disc. Run extraction on a worker and wait before creating sims or views.
+`sms_render_stings` caches RoR2 arrival/death WAVs in `ror2_audio/` using the extracted
+sound banks, without opening an output device. It also belongs on the worker.
 
 RVZ, WIA and WBFS images are not supported by the Rust extractor; convert to ISO, or use
 `python tools/extract_assets.py <image>`, which delegates to decomp-toolkit's `dtk`.

@@ -24,6 +24,66 @@ const WATER: u64 = 0x5741_5452;
 const YOSHI: u64 = 0x594F_5348;
 const COIN: u64 = 0x434F_494E;
 
+/// Cache RoR2's short arrival/death stings from the user's extracted sound banks, without an
+/// output device. This runs on the host's first-run worker, never the Unity thread. Existing
+/// cached WAVs need neither sound-bank loading nor the original disc.
+pub fn render_stings(dir: &Path) -> Result<(), String> {
+    let out = dir.join("ror2_audio");
+    let stings = [
+        ("spawn.wav", "MSD_BGM_DOLPIC", 75),
+        ("death.wav", "MSD_BGM_MISS", 138),
+    ];
+    if stings.iter().all(|(file, _, _)| out.join(file).is_file()) {
+        return Ok(());
+    }
+    let data = Arc::new(SoundData::load(dir).map_err(|e| e.to_string())?);
+    std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;
+    for (file, cue, frames) in stings {
+        let path = out.join(file);
+        if path.is_file() {
+            continue;
+        }
+        let wav = sting_wav(data.clone(), cue, frames)?;
+        // Publish only complete files; an interrupted first run can retry the temp file.
+        let temp = path.with_extension("wav.tmp");
+        std::fs::write(&temp, wav).map_err(|e| e.to_string())?;
+        std::fs::rename(temp, path).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+fn sting_wav(data: Arc<SoundData>, cue: &str, frames: usize) -> Result<Vec<u8>, String> {
+    let mut sys = SoundSystem::new(data.clone());
+    sys.play(cue, None, 0);
+    if sys.bgm_playing().is_none() {
+        return Err(format!("could not start {cue}"));
+    }
+    // Match the existing offline `play` tool: JAI at 30 Hz, stereo PCM16 at 32 kHz.
+    let mut samples = Vec::new();
+    let mut buf = vec![0.0; (32000 / 30) * 2];
+    for _ in 0..frames {
+        sys.frame();
+        sys.render(&mut buf, 32000.0);
+        samples.extend(buf.iter().map(|v| (v * 32767.0) as i16));
+    }
+    let len = (samples.len() * 2) as u32;
+    let mut wav = Vec::with_capacity(44 + len as usize);
+    wav.extend_from_slice(b"RIFF");
+    wav.extend_from_slice(&(36 + len).to_le_bytes());
+    wav.extend_from_slice(b"WAVEfmt ");
+    wav.extend_from_slice(&16u32.to_le_bytes());
+    wav.extend_from_slice(&[1, 0, 2, 0]);
+    wav.extend_from_slice(&32000u32.to_le_bytes());
+    wav.extend_from_slice(&128000u32.to_le_bytes());
+    wav.extend_from_slice(&[4, 0, 16, 0]);
+    wav.extend_from_slice(b"data");
+    wav.extend_from_slice(&len.to_le_bytes());
+    for sample in samples {
+        wav.extend_from_slice(&sample.to_le_bytes());
+    }
+    Ok(wav)
+}
+
 pub struct Audio {
     scene: SceneAudio,
     sys: Arc<Mutex<SoundSystem>>,
@@ -456,6 +516,34 @@ fn output<T: cpal::SizedSample + cpal::FromSample<f32>>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn arrival_and_death_stings_are_audible_stereo_pcm16() {
+        let Some(dir) = libsms::assets::find(None) else {
+            return;
+        };
+        let data = Arc::new(SoundData::load(&dir).unwrap());
+        for (cue, frames) in [("MSD_BGM_DOLPIC", 75), ("MSD_BGM_MISS", 138)] {
+            let wav = sting_wav(data.clone(), cue, frames).unwrap();
+            assert_eq!(&wav[..4], b"RIFF");
+            assert_eq!(&wav[8..16], b"WAVEfmt ");
+            assert_eq!(&wav[20..24], &[1, 0, 2, 0]);
+            assert_eq!(u32::from_le_bytes(wav[24..28].try_into().unwrap()), 32000);
+            assert_eq!(&wav[34..40], b"\x10\x00data");
+            let len = frames * (32000 / 30) * 4;
+            assert_eq!(wav.len(), 44 + len);
+            assert_eq!(
+                u32::from_le_bytes(wav[40..44].try_into().unwrap()) as usize,
+                len
+            );
+            assert!(
+                wav[44..]
+                    .chunks_exact(2)
+                    .any(|p| i16::from_le_bytes([p[0], p[1]]).abs() > 100),
+                "silent {cue}"
+            );
+        }
+    }
 
     #[test]
     #[ignore = "requires an output device and plays a short sound"]

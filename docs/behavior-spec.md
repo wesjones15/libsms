@@ -629,3 +629,9 @@ ISO/GCM/CISO. An incomplete cache is extracted from the user's disc; a complete 
 without reopening the disc. The required-file list includes wet-slide waves and coin pickup
 effects, so older caches missing these assets are repaired. Hosts wait before creating sims
 or views while extraction writes files, and receive a UTF-8 error on failure.
+
+RoR2 arrival/death stings are generated once through sms_render_stings into the ignored
+asset cache (ror2_audio/spawn.wav and death.wav), using MSD_BGM_DOLPIC for 2.5 s and
+MSD_BGM_MISS for 4.6 s. Rendering is device-free, at 30 Hz JAI / 32 kHz stereo PCM16,
+matching the previous build-time audio tool. Complete WAVs are published by rename and
+reused without reloading banks. Sting failure does not prevent the sim or normal audio.

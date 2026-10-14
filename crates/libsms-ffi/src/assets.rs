@@ -85,6 +85,28 @@ pub unsafe extern "C" fn sms_extract(
     ok
 }
 
+/// Cache RoR2's arrival/death jingles in `dir/ror2_audio` from the extracted banks. No device
+/// is opened. Existing complete files are reused. Returns 1 on success, with a UTF-8 message.
+///
+/// # Safety
+/// `dir` must be null or a nul-terminated string; `msg` null or writable for `msg_len` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_render_stings(dir: *const c_char, msg: *mut u8, msg_len: u32) -> u8 {
+    let result = catch_unwind(|| -> Result<(), String> {
+        // SAFETY: as documented.
+        let dir = unsafe { path_arg(dir) }.ok_or("missing asset directory")?;
+        libsms_present::audio::render_stings(&dir)
+    });
+    let (ok, text) = match result {
+        Ok(Ok(())) => (1, "arrival/death stings cached".into()),
+        Ok(Err(text)) => (0, text),
+        Err(_) => (0, "sting rendering panicked".into()),
+    };
+    // SAFETY: as documented.
+    unsafe { write_str(&text, msg, msg_len) };
+    ok
+}
+
 /// # Safety
 /// `p` must be null or a nul-terminated string.
 unsafe fn path_arg(p: *const c_char) -> Option<PathBuf> {
@@ -191,5 +213,93 @@ mod tests {
                 .unwrap()
                 .contains("already complete")
         );
+    }
+
+    #[test]
+    #[ignore = "requires SMS_DISC and extracts the user's disc into a temporary cache"]
+    fn first_run_extracts_repairs_and_reuses_the_disc_cache() {
+        // Exercise exactly the C exports used by the plugin, including a fresh folder and
+        // repair of an old cache missing the newly required side-wave/coin effects.
+        let disc = std::env::var("SMS_DISC").expect("set SMS_DISC to a Sunshine ISO/GCM/CISO");
+        let disc_path = Path::new(&disc);
+        let dirs = CString::new(disc_path.parent().unwrap().to_str().unwrap()).unwrap();
+        let disc = CString::new(disc).unwrap();
+        let cache = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target")
+            .join(format!("first-run-ffi-{}", std::process::id()));
+        assert!(!cache.exists());
+        struct Cleanup(PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _cleanup = Cleanup(cache.clone());
+        let out = CString::new(cache.to_str().unwrap()).unwrap();
+        let mut found = [0; 32768];
+        let mut msg = [0; 4096];
+        unsafe {
+            assert_eq!(
+                sms_find_disc(dirs.as_ptr(), found.as_mut_ptr(), found.len() as u32),
+                1
+            );
+            assert_eq!(CStr::from_bytes_until_nul(&found).unwrap(), disc.as_c_str());
+            let mut tiny = [255; 1];
+            assert_eq!(sms_find_disc(dirs.as_ptr(), tiny.as_mut_ptr(), 1), 0);
+            assert_eq!(tiny[0], 0);
+            assert_eq!(sms_assets_complete(out.as_ptr()), 0);
+            assert_eq!(
+                sms_extract(disc.as_ptr(), out.as_ptr(), msg.as_mut_ptr(), 4096),
+                1,
+                "{}",
+                CStr::from_bytes_until_nul(&msg).unwrap().to_string_lossy()
+            );
+            assert_eq!(sms_assets_complete(out.as_ptr()), 1);
+            // No disc argument on subsequent runs.
+            assert_eq!(
+                sms_extract(std::ptr::null(), out.as_ptr(), msg.as_mut_ptr(), 4096),
+                1
+            );
+            let side = cache.join("particle/ms_m_watslide_c.jpa");
+            let spark = cache.join("particle/ms_coinget_b.jpa");
+            std::fs::remove_file(&side).unwrap();
+            std::fs::remove_file(&spark).unwrap();
+            assert_eq!(sms_assets_complete(out.as_ptr()), 0);
+            assert_eq!(
+                sms_extract(disc.as_ptr(), out.as_ptr(), msg.as_mut_ptr(), 4096),
+                1
+            );
+            assert!(side.is_file() && spark.is_file());
+            assert_eq!(sms_assets_complete(out.as_ptr()), 1);
+            let pos = crate::SmsVec3::default();
+            let sim = crate::sms_sim_new(out.as_ptr(), &pos, 0);
+            assert!(
+                !sim.is_null(),
+                "first-run tuning/animation must create a sim"
+            );
+            crate::sms_sim_free(sim);
+            let coin = crate::view::sms_view_new_look(out.as_ptr(), 0, 2);
+            assert!(
+                !coin.is_null(),
+                "first-run assets must contain the yellow coin"
+            );
+            crate::view::sms_view_free(coin);
+            assert_eq!(
+                sms_render_stings(out.as_ptr(), msg.as_mut_ptr(), 4096),
+                1,
+                "{}",
+                CStr::from_bytes_until_nul(&msg).unwrap().to_string_lossy()
+            );
+            for name in ["spawn.wav", "death.wav"] {
+                let wav = std::fs::read(cache.join("ror2_audio").join(name)).unwrap();
+                assert_eq!(&wav[..4], b"RIFF");
+                assert_eq!(&wav[8..16], b"WAVEfmt ");
+                assert_eq!(&wav[20..24], &[1, 0, 2, 0]);
+                assert!(wav.len() > 32000 * 4 * 2);
+            }
+            // Cached jingles do not reload the source banks.
+            std::fs::remove_dir_all(cache.join("AudioRes")).unwrap();
+            assert_eq!(sms_render_stings(out.as_ptr(), msg.as_mut_ptr(), 4096), 1);
+        }
     }
 }
