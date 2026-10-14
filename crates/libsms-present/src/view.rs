@@ -846,11 +846,25 @@ impl View {
         let upper = m
             .upper_layer()
             .and_then(|(c, f)| Some((self.clips.get(c)?, f, self.skeleton.find("jnt_chest")?)));
-        let joints = self.skeleton.pose_layered(
+        let look = m.fludd_look();
+        // `MarioHeadCtrl`: the head turns what hangs on it (the cap). Rocketing, with water to spray, it tips
+        // back by `mHoverHeadAngle`; otherwise it follows a FLUDD aimed upward, by half the gun's angle.
+        // (The game's other head turns, toward a sign or a wall or deep water, aren't here.)
+        let head_tilt = self.head.and_then(|h| {
+            let angle = if m.status == libsms::Status::Rocket {
+                let can_spray = m.fludd.as_ref().is_some_and(|f| f.can_spray(&m.params));
+                can_spray.then_some(m.params.upper_body.hover_head_angle as f32)
+            } else {
+                look.map(|l| l.gun_angle * 0.5).filter(|a| *a < 0.0)
+            }?;
+            Some((h, Mat4::from_rotation_z(angle * std::f32::consts::PI / 32768.0)))
+        });
+        let joints = self.skeleton.pose_layered_with(
             self.clips
                 .get(m.anim.clip)
                 .map(|c| (c, m.anim.frame_before(back))),
             upper,
+            |j| head_tilt.filter(|t| t.0 == j).map(|t| t.1),
         );
 
         // Blink every few seconds (the game runs `ma_wink_tx` on idle; 30 frames a second).
@@ -884,7 +898,6 @@ impl View {
         // FLUDD on the chest, tilted back as the chest leans (`TWaterGun::setBaseTRMtx`:
         // `|m[1][0]| * (unk1D04 - unk1D06) + unk1D06`, 0 and -0x1800), posed by the sim's clip;
         // the nozzle on `nozzle_center` with its own clip and the aiming callbacks.
-        let look = m.fludd_look();
         let deg = |a: f32| a * std::f32::consts::PI / 32768.0;
         let fludd_base = look
             .and(self.chest)
