@@ -324,6 +324,9 @@ struct Emitter {
     global_scale: f32,
     /// `JPADraw::mScaleOut`, driven by the emitter's KFA1 draw-scale curve.
     draw_scale: f32,
+    /// The emitter's other KFA1 curves this frame, by key kind 0..=9: rate, volume size, sweep,
+    /// minimum radius, lifetime, moment, and the four initial velocities (omni, axis, random, direction).
+    keyed: [Option<f32>; 10],
     world_space: bool,
     fixed_height: bool,
     time: f32,
@@ -824,6 +827,7 @@ impl Particles {
             global_pos: Vec3::ZERO,
             global_scale: 1.0,
             draw_scale: 1.0,
+            keyed: [None; 10],
             world_space: self.effects[effect].world_space,
             fixed_height: self.effects[effect].fixed_height,
             time: 0.0,
@@ -1512,10 +1516,18 @@ impl Emitter {
         // `JPABaseEmitter::calcKeyFrameAnime` runs before drawing/emission. The wet-slide
         // ribbon's type-10 curve pulses its birth width; old particles retain that width.
         for key in &jpa.keys {
-            if key.kind == 10 && jpa.emitter.key_anm_mask & (1 << 10) != 0 {
-                if let Some(scale) = key.value(self.frame) {
-                    self.draw_scale = scale;
-                }
+            if jpa.emitter.key_anm_mask & (1u32 << key.kind) == 0 {
+                continue;
+            }
+            let Some(v) = key.value(self.frame) else { continue };
+            match key.kind {
+                10 => self.draw_scale = v,
+                0 => self.rate = v,
+                1 => self.volume_size = v.max(0.0).floor(),
+                2 => self.volume_sweep = v,
+                4 => self.lifetime = v,
+                k @ (3 | 5..=9) => self.keyed[k as usize] = Some(v),
+                _ => {}
             }
         }
         let mut info = self.global_params(jpa);
@@ -1726,9 +1738,26 @@ impl Emitter {
         self.status &= !FIRST_EMIT;
     }
 
+    /// The file's emitter with this frame's key-frame curves that aren't kept as emitter state applied
+    /// (minimum radius, moment and the four initial velocities).
+    fn keyed<'a>(&self, jpa: &'a Jpa) -> std::borrow::Cow<'a, libsms_assets::jpa::Emitter> {
+        if !self.keyed.iter().any(Option::is_some) {
+            return std::borrow::Cow::Borrowed(&jpa.emitter);
+        }
+        let mut em = jpa.emitter.clone();
+        let k = &self.keyed;
+        em.volume_min_radius = k[3].unwrap_or(em.volume_min_radius);
+        em.moment = k[5].unwrap_or(em.moment);
+        em.vel_omni = k[6].unwrap_or(em.vel_omni);
+        em.vel_axis = k[7].unwrap_or(em.vel_axis);
+        em.vel_random = k[8].unwrap_or(em.vel_random);
+        em.vel_dir = k[9].unwrap_or(em.vel_dir);
+        std::borrow::Cow::Owned(em)
+    }
+
     /// `createParticle`.
     fn create_particle(&mut self, jpa: &Jpa, info: &mut Info) -> Particle {
-        let em = &jpa.emitter;
+        let em = &*self.keyed(jpa);
         let fixed = em.flags & FIXED_INTERVAL != 0;
         let (index, emit_count) = (info.volume_index, info.emit_count.max(1));
         let (mut pitch, mut yaw) = (0i16, 0i16);
@@ -2543,6 +2572,7 @@ mod tests {
                     | "ms_m_watslide_a"
                     | "ms_m_watslide_b"
                     | "ms_m_watslide_c"
+                    | "ms_nozzlesmoke"
             ) || crate::view::SUPER_POUND_FLAMES.contains(&name);
             if !held {
                 p.emit(name, Mat4::IDENTITY, 1.0);
