@@ -219,7 +219,19 @@ Smoke has a host presentation override: emitted puffs stay anchored in world spa
 with smooth motion between particle frames and optional smoke-only playback speed.
 See [smoke presentation](smoke-presentation.md) for the host API and RoR2 defaults.
 Not ported: children
-(`SSP1`), `KFA1` key frames, indirect textures, the other field kinds.
+(`SSP1`), indirect textures, the other field kinds. `KFA1` key frames are ported (`keyed` curves
+on size, scale, alpha and colour).
+
+**Nozzle effects.** While water leaves any nozzle (but Yoshi's), `ms_nozzlesmoke` (0x10D) is
+requested each tick at every muzzle (`FxAt::Muzzle`, matrices from the posed nozzle model;
+`Fludd::nozzle_smoke`). Starting a rocket (`Status::Rocket`, `rocketEffectStart`) plays the
+`MV24_JUMP_SPECIAL` voice and fires `ms_m_rocket_d`, `ms_m_rocket_c` and `ms_hipdrop_a` at Mario, and
+`ms_m_rocket_a`/`b`/`b2` from the first muzzle, following it as it moves (`FxAt::MuzzleFollow`, one-shots
+whose emitter tracks the muzzle). The Hover starts with the `MV21_JUMP_SMALL` voice and the Turbo with
+`MV15_EXERT_INST` (it never enters the Rocket status, so it has no rocket effects). Rocketing with water
+tips Mario's head back by `mHoverHeadAngle`; an upward-aimed nozzle tips it by half the gun's angle
+(`MarioHeadCtrl`; his other head turns, toward signs and walls, aren't done). The spin-shot's effects
+(`ms_m_spinshot_a`/`b`, `emitRotateShootEffect`) aren't ported.
 
 **Wet belly slide** (`checkCurrentPlane` → `askHitWaterParticleOnGround`, `catching`,
 `doSliding`). Touching ground (`isTouchGround4cm`) within 300 (summed over the axes) of a FLUDD
