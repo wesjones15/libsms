@@ -10,6 +10,7 @@ use glam::Vec3;
 use crate::anim::{AnimState, AnimTable, clip};
 use crate::event::{Event, JumpKind};
 use crate::fludd::Fludd;
+use crate::params::NozzleKind;
 use crate::host::{Fruit, GroundHit, Host, RoofHit, SurfaceFlags, WallHit};
 use crate::input::{Input, Pad, lr_level, stick_intent};
 use crate::math::{self, Angle, cos, sin};
@@ -609,6 +610,18 @@ impl Mario {
         self.fx(name, crate::event::FxAt::Once { pos, yaw });
     }
 
+    /// `rocketEffectStart`: the Rocket nozzle's launch. `ms_m_rocket_d` and `_c` and a ground pound's
+    /// `ms_hipdrop_a` burst at his feet; `_a`, `_b` and `_b2` (the exhaust, bound to the muzzle) are
+    /// started on the muzzle, which they follow for their own second or so.
+    pub(crate) fn rocket_effect_start(&mut self) {
+        self.fx_once("ms_m_rocket_d", 0);
+        self.fx_once("ms_m_rocket_c", 0);
+        self.fx_once("ms_hipdrop_a", 0);
+        for name in ["ms_m_rocket_a", "ms_m_rocket_b", "ms_m_rocket_b2"] {
+            self.fx(name, crate::event::FxAt::MuzzleFollow(0));
+        }
+    }
+
     /// `emitSmoke`: a puff of dust as Mario sets off, unless he stands in a pool.
     pub(crate) fn emit_smoke(&mut self, yaw: i16) {
         if !self.in_water {
@@ -1129,8 +1142,18 @@ impl Mario {
                 event = Some(JumpKind::Long);
             }
             Status::Rocket => {
-                // setStatusToJumping case ROCKET: a small initial pop, FLUDD does the rest.
-                if self.fludd.is_some() {
+                // setStatusToJumping case ROCKET: each nozzle's start voice, the Rocket's burst of
+                // effects, and a small initial pop; FLUDD does the rest.
+                if let Some(nozzle) = self.fludd.as_ref().map(|f| f.nozzle) {
+                    match nozzle {
+                        NozzleKind::Rocket => {
+                            self.voice("MSD_SE_MV24_JUMP_SPECIAL_01");
+                            self.rocket_effect_start();
+                        }
+                        NozzleKind::Turbo => self.voice("MSD_SE_MV15_EXERT_INST_01"),
+                        NozzleKind::Hover => self.voice("MSD_SE_MV21_JUMP_SMALL_01"),
+                        _ => {}
+                    }
                     self.set_player_jump_speed(0.0, 10.0);
                 }
             }

@@ -109,6 +109,12 @@ pub enum FxAt {
     Joint(u16),
     /// `emitAndBindToPosPtr(id, &mPosition, 1, this)`: held, at Mario's feet.
     Feet,
+    /// `emitAndBindToMtxPtr(id, getEmitMtx(n), 1, this)` / `emitAndBindToPosPtr(id, &getEmitPos0(), ..)`:
+    /// held on FLUDD's `n`th muzzle as drawn, asked for again every tick it lasts.
+    Muzzle(u8),
+    /// `emitAndBindToPosPtr(id, &getEmitPos0(), 0, this)`: started once on the `n`th muzzle and bound to
+    /// it, following it for the effect's own lifetime (the Rocket's exhaust).
+    MuzzleFollow(u8),
 }
 
 /// How Mario hit an enemy (the `HIT_MESSAGE_*` he sent).

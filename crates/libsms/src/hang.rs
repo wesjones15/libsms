@@ -102,7 +102,7 @@ impl Mario {
         self.change_status(to, 0, false)
     }
 
-    fn voice(&mut self, name: &'static str) {
+    pub(crate) fn voice(&mut self, name: &'static str) {
         self.events.push(Event::Sound(SoundCue {
             name,
             pos: self.pos,

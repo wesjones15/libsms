@@ -276,6 +276,17 @@ impl Skeleton {
         base: Option<(&Clip, f32)>,
         upper: Option<(&Clip, f32, usize)>,
     ) -> Vec<Mat4> {
+        self.pose_layered_with(base, upper, |_| None)
+    }
+
+    /// [`Self::pose_layered`] with a joint callback's matrix per joint (`J3DNode::getCallBack`, see
+    /// [`calc_joints`]): Mario's head, tilted by `MarioHeadCtrl`, turns what hangs on it.
+    pub fn pose_layered_with(
+        &self,
+        base: Option<(&Clip, f32)>,
+        upper: Option<(&Clip, f32, usize)>,
+        callback: impl Fn(usize) -> Option<Mat4>,
+    ) -> Vec<Mat4> {
         let locals: Vec<Srt> = (0..self.len())
             .map(|j| {
                 let up = upper
@@ -285,7 +296,7 @@ impl Skeleton {
                     .unwrap_or(self.bind[j])
             })
             .collect();
-        self.world(&locals)
+        calc_joints(self.calc, &self.parents, &locals, &self.compensate, callback)
     }
 }
 

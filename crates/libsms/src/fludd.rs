@@ -106,6 +106,8 @@ pub struct Fludd {
     pub(crate) emitters_for: NozzleKind,
     /// Particles accepted this tick (`mIsEmitWater`).
     pub emitted: u32,
+    /// Ticks of `ms_nozzlesmoke` still owed after water last left a muzzle.
+    smoke_hold: u8,
 }
 
 impl Fludd {
@@ -130,6 +132,7 @@ impl Fludd {
             emitters: [None; 2],
             emitters_for: NozzleKind::Spray,
             emitted: 0,
+            smoke_hold: 0,
         }
     }
 
@@ -555,6 +558,7 @@ impl Mario {
         } else if self.upper == UpperState::Pumping {
             self.emit(host);
         }
+        self.nozzle_smoke();
         // Riding, R spits juice without pumping (`onYoshi() && mAnalogR > 0`).
         if self.on_yoshi() && pad.r_analog > 0 {
             self.emit(host);
@@ -730,6 +734,28 @@ impl Mario {
         }
         if let Some(name) = fired {
             self.sound(name, None);
+        }
+    }
+
+    /// `TNozzleTrigger::animation` / `TNozzleDeform::animation`, last lines: while water leaves
+    /// the nozzle (`mIsEmitWater`), `ms_nozzlesmoke` is bound to each muzzle. Asked for every tick it
+    /// lasts; a few ticks of grace stand in for the game's 30 Hz frame, since a light Spray emits
+    /// on some ticks only. Yoshi's mouth has no muzzle.
+    fn nozzle_smoke(&mut self) {
+        let Some(f) = self.fludd.as_mut() else { return };
+        if f.emitted > 0 {
+            f.smoke_hold = 4;
+        }
+        if f.smoke_hold == 0 {
+            return;
+        }
+        f.smoke_hold -= 1;
+        let kind = f.nozzle;
+        if kind == NozzleKind::Yoshi {
+            return;
+        }
+        for i in 0..Self::emitter_count(kind) {
+            self.fx("ms_nozzlesmoke", crate::event::FxAt::Muzzle(i as u8));
         }
     }
 

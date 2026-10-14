@@ -2912,3 +2912,91 @@ fn the_slide_spray_is_as_big_as_the_host_says() {
     assert!((size(1.0) - 1.0).abs() < 1e-4);
     assert!((size(1.5) - 1.5).abs() < 1e-4);
 }
+
+/// Fires `nozzle` from a standing start (a jump first, for the Hover) for a few seconds and returns
+/// every event it raised.
+fn nozzle_events(nozzle: NozzleKind) -> Vec<Event> {
+    let mut s = Scene::flat();
+    s.sim.mario.give_fludd();
+    {
+        let p = s.sim.mario.params.clone();
+        let f = s.sim.mario.fludd.as_mut().unwrap();
+        f.change_nozzle(nozzle, false, &p);
+        f.refill(&p);
+    }
+    if nozzle == NozzleKind::Hover {
+        s.press_a();
+        s.step(20);
+    }
+    s.pad.r = true;
+    s.pad.r_analog = 255;
+    s.secs(6.0);
+    s.host.events.clone()
+}
+
+fn cues(events: &[Event], name: &str) -> Vec<libsms::FxAt> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Particle(c) if c.name == name => Some(c.at),
+            _ => None,
+        })
+        .collect()
+}
+
+fn voices(events: &[Event], name: &str) -> usize {
+    events
+        .iter()
+        .filter(|e| matches!(e, Event::Sound(c) if c.name == name))
+        .count()
+}
+
+#[test]
+fn the_rocket_launches_with_its_voice_and_burst_and_exhaust() {
+    let e = nozzle_events(NozzleKind::Rocket);
+    assert!(voices(&e, "MSD_SE_MV24_JUMP_SPECIAL_01") >= 1, "no launch voice");
+    for burst in ["ms_m_rocket_d", "ms_m_rocket_c", "ms_hipdrop_a"] {
+        let at = cues(&e, burst);
+        assert_eq!(at.len(), 1, "{burst} should burst once at the launch: {at:?}");
+        assert!(matches!(at[0], libsms::FxAt::Once { .. }), "{burst} is bound");
+    }
+    for exhaust in ["ms_m_rocket_a", "ms_m_rocket_b", "ms_m_rocket_b2"] {
+        let at = cues(&e, exhaust);
+        assert_eq!(at, vec![libsms::FxAt::MuzzleFollow(0)], "{exhaust} should start once, bound to the muzzle");
+    }
+    assert!(!cues(&e, "ms_nozzlesmoke").is_empty(), "no nozzle smoke while it fires");
+}
+
+#[test]
+fn the_turbo_and_the_hover_start_with_their_own_voices_and_no_rocket_effects() {
+    // The Turbo's start voice is the Rocket status's too, which the Turbo never enters (its
+    // `mRocketType` isn't 1), so only the Hover has one.
+    for (nozzle, voice, muzzles) in [
+        (NozzleKind::Turbo, "", 1),
+        (NozzleKind::Hover, "MSD_SE_MV21_JUMP_SMALL_01", 2),
+    ] {
+        let e = nozzle_events(nozzle);
+        assert!(voice.is_empty() || voices(&e, voice) >= 1, "{nozzle:?} has no start voice {voice}");
+        assert!(cues(&e, "ms_m_rocket_c").is_empty() && cues(&e, "ms_m_rocket_a").is_empty(), "{nozzle:?} got the Rocket's effects");
+        let smoke = cues(&e, "ms_nozzlesmoke");
+        for m in 0..muzzles {
+            assert!(smoke.contains(&libsms::FxAt::Muzzle(m)), "{nozzle:?} has no smoke on muzzle {m}");
+        }
+        assert!(!smoke.contains(&libsms::FxAt::Muzzle(muzzles)), "{nozzle:?} smokes a muzzle it hasn't");
+    }
+}
+
+#[test]
+fn the_spray_smokes_its_muzzle_only_while_water_leaves() {
+    let mut s = Scene::flat();
+    s.sim.mario.give_fludd();
+    s.secs(0.5);
+    assert!(cues(&s.host.events, "ms_nozzlesmoke").is_empty(), "smoke with no spray");
+    s.pad.r_analog = 200;
+    s.secs(1.0);
+    assert!(cues(&s.host.events, "ms_nozzlesmoke").len() > 20, "spraying makes no smoke");
+    s.host.events.clear();
+    s.pad.r_analog = 0;
+    s.secs(1.0);
+    assert!(cues(&s.host.events, "ms_nozzlesmoke").len() < 8, "smoke carries on after the spray stops");
+}
