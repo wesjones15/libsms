@@ -219,8 +219,8 @@ Smoke has a host presentation override: emitted puffs stay anchored in world spa
 with smooth motion between particle frames and optional smoke-only playback speed.
 See [smoke presentation](smoke-presentation.md) for the host API and RoR2 defaults.
 Not ported: children
-(`SSP1`), indirect textures, the other field kinds. `KFA1` key frames are ported (`keyed` curves
-on size, scale, alpha and colour).
+(`SSP1`), indirect textures, the other field kinds. `KFA1` key frames are ported (the emitter's
+minimum radius, moment and initial velocities, and the per-particle curves).
 
 **Nozzle effects.** While water leaves any nozzle (but Yoshi's), `ms_nozzlesmoke` (0x10D) is
 requested each tick at every muzzle (`FxAt::Muzzle`, matrices from the posed nozzle model;
