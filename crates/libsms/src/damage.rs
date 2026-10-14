@@ -302,6 +302,9 @@ impl Mario {
     /// Mario touched a coin (`TCoin::taken` then `getCoin` / `getCoinRed` / `getCoinBlue`):
     /// the coin's sound, and health.
     pub fn get_coin(&mut self, coin: Coin) {
+        // MarioReceiveMsg.cpp getCoin* -> MarioParticle.cpp emitGetCoinEffect.
+        self.fx_once("ms_coinget_a", 0);
+        self.fx_once("ms_coinget_b", 0);
         match coin {
             Coin::Gold => {
                 self.coins += 1;

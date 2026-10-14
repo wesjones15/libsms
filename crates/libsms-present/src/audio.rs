@@ -22,6 +22,7 @@ const MARIO: u64 = 0x4D41_5249;
 const FLUDD: u64 = 0x464C_5544;
 const WATER: u64 = 0x5741_5452;
 const YOSHI: u64 = 0x594F_5348;
+const COIN: u64 = 0x434F_494E;
 
 pub struct Audio {
     scene: SceneAudio,
@@ -349,6 +350,13 @@ impl Audio {
         }
     }
 
+    /// TCoin::taken: the positional pickup sound, on its own actor group.
+    pub fn coin_get(&self, pos: Vec3) {
+        if let Ok(mut sys) = self.sys.lock() {
+            sys.play("MSD_SE_SY_COIN", Some(pos), COIN);
+        }
+    }
+
     pub fn tick(&mut self, mario: &Mario) {
         if let Ok(mut sys) = self.sys.lock() {
             self.scene.tick(&mut sys, mario);
@@ -538,6 +546,7 @@ mod tests {
             ("spin whoosh", cue("MSD_SE_MA_ROLL_JUMP", None)),
             ("empty tank", cue("MSD_SE_PO_ACTION_ON_EMPTY", None)),
             ("full tank", cue("MSD_SE_SY_PO_WATER_FULL", None)),
+            ("yellow coin pickup", cue("MSD_SE_SY_COIN", None)),
         ];
         for (what, event) in cases {
             let mut sys = SoundSystem::new(data.clone());

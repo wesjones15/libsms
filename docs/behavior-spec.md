@@ -604,3 +604,19 @@ The viewer now routes animation and game-event sounds through `libsms-audio`; se
    eating head at 1 frame a tick, all as the decomp sets them.
 11. **Drowning while riding.** The sim has no swimming; riding onto a floor flagged
    `WATER_SURFACE` stands in for `thinkWaterSurface`'s deep-water check.
+## RoR2 yellow coin drops
+
+Enemy deaths credited to a Mario body leave one yellow coin (host rule).
+`Look::Coin` / `sms_view_new_look(..., 2)` expose the original
+`scene/mapobj/coin.bmd` bind pose and gold material through the normal model readers.
+Hosts instance and rotate it without running Mario animation on the coin view.
+Pickup uses `MSD_SE_SY_COIN` (`TCoin::taken`, MoveBG/Item.cpp) and both
+`ms_coinget_a` / `ms_coinget_b` effects (`TMario::emitGetCoinEffect`, MarioParticle.cpp).
+`sms_view_coin_get` plays these at the collection point; the host owns pickup
+eligibility and healing. The core get_coin path now emits both effects too.
+RoR2 heals one life-meter segment (fullCombinedHealth / 8) through its normal
+Heal method, capped by available health and subject to healing-item rules.
+Coins fall and settle on world geometry, spin at two degrees per sim tick
+(TItemManager::perform), and use the coin/Mario pickup cylinders.
+The host caps loose coins at 128, expires them after 60 seconds, and clears them
+on scene changes and run exit. Nintendo files stay in the ignored assets folder.

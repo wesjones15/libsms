@@ -220,8 +220,9 @@ pub unsafe extern "C" fn sms_view_new(assets_dir: *const c_char, sound: u8) -> *
     unsafe { sms_view_new_look(assets_dir, sound, 0) }
 }
 
-/// [`sms_view_new`] drawing `look`: 0 Mario, 1 Mario in Shadow Mario's colours (a host's dark
-/// double; [`libsms_present::Look::Shadow`]).
+/// [`sms_view_new`] drawing `look`: 0 Mario, 1 Shadow Mario, 2 a static yellow coin.
+/// Coin views use the usual model readers; hosts supply instance transforms and never
+/// call sms_view_update (Mario's animation update) on them.
 ///
 /// # Safety
 /// `assets_dir` a nul-terminated UTF-8 path.
@@ -240,10 +241,10 @@ pub unsafe extern "C" fn sms_view_new_look(
         .into_owned();
     let made = catch_unwind(|| {
         let dir = PathBuf::from(dir);
-        let look = if look == 1 {
-            libsms_present::Look::Shadow
-        } else {
-            libsms_present::Look::Mario
+        let look = match look {
+            1 => libsms_present::Look::Shadow,
+            2 => libsms_present::Look::Coin,
+            _ => libsms_present::Look::Mario,
         };
         let view = View::load_look(&dir, look).ok()?;
         let (audio, sound_status) = if sound != 0 {
@@ -273,6 +274,30 @@ pub unsafe extern "C" fn sms_view_new_look(
     match made {
         Ok(Some(v)) => Box::into_raw(Box::new(v)),
         _ => std::ptr::null_mut(),
+    }
+}
+
+/// Play TCoin::taken's sound and TMario::emitGetCoinEffect's two particle effects.
+/// Health and pickup ownership belong to the host.
+///
+/// # Safety
+/// `view` is null or a live Mario view; `pos` is readable, in sim world units.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_coin_get(view: *mut SmsView, pos: *const SmsVec3) {
+    let Some(pos) = (unsafe { pos.as_ref() }) else {
+        return;
+    };
+    let pos = Vec3::from(*pos);
+    if !pos.is_finite() {
+        return;
+    }
+    unsafe {
+        with_view(view, (), |v| {
+            v.view.coin_get(pos);
+            if let Some(a) = &v.audio {
+                a.coin_get(pos);
+            }
+        });
     }
 }
 

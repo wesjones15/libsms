@@ -112,6 +112,8 @@ pub enum Look {
     /// whose material lays a dark-to-light ramp (TEV registers 0 and 1) over a warped copy of
     /// the screen; here Mario's own textures are put through that ramp by brightness.
     Shadow,
+    /// The disc's yellow coin, a static model for hosts to instance and spin themselves.
+    Coin,
 }
 
 /// [`Look::Shadow`]'s ramp: dark where Mario's colours are dark, light where they're light.
@@ -238,6 +240,9 @@ pub const SUPER_POUND_FLAMES: [&str; 4] = [
     "ms_m_sphipd_d",
 ];
 
+/// TMario::emitGetCoinEffect (MarioParticle.cpp), shared by all three coin colours.
+pub const COIN_EFFECTS: [&str; 2] = ["ms_coinget_a", "ms_coinget_b"];
+
 /// MarioParticle.cpp and the effects requested by Mario's movement in the sim.
 pub const MARIO_EFFECTS: &[&str] = &[
     "ms_m_sphipd_a",
@@ -270,6 +275,8 @@ pub const MARIO_EFFECTS: &[&str] = &[
     "ms_fumi_a",
     "ms_fumi_b",
     "ms_fumi_c",
+    "ms_coinget_a",
+    "ms_coinget_b",
 ];
 
 /// Host presentation: dust/smoke trails remain where they were emitted when Mario jumps.
@@ -523,6 +530,9 @@ impl View {
 
     /// [`View::load`] drawing `look`.
     pub fn load_look(dir: &Path, look: Look) -> Result<View, String> {
+        if look == Look::Coin {
+            return Self::load_coin(dir);
+        }
         let assets = libsms::Assets::load(dir);
         let skeleton = assets.skeleton.clone().ok_or("no rig (bmd/ma_mdl1.bmd)")?;
         let mut textures = Textures {
@@ -628,7 +638,11 @@ impl View {
             })
             .unwrap_or_default();
         let mut fx = Particles::load(dir, MARIO_EFFECTS);
-        for &name in SMOKE_EFFECTS.iter().chain(SUPER_POUND_IMPACTS) {
+        for &name in SMOKE_EFFECTS
+            .iter()
+            .chain(SUPER_POUND_IMPACTS)
+            .chain(&COIN_EFFECTS)
+        {
             fx.set_world_space(name, true);
         }
         for &name in DUST_CLOUDS {
@@ -672,6 +686,84 @@ impl View {
             colors: Vec::new(),
             texture_ids: Vec::new(),
         })
+    }
+
+    /// TCoin's original model and materials, through the same model ABI as Mario. Hosts
+    /// instance this bind pose; they do not call Mario's animation update on this view.
+    fn load_coin(dir: &Path) -> Result<View, String> {
+        let data = std::fs::read(dir.join("scene/mapobj/coin.bmd")).map_err(|e| e.to_string())?;
+        let skeleton = Skeleton::from_bmd(&data).ok_or("coin has no rig")?;
+        let mut textures = Textures::default();
+        let model = build(
+            Bmd::parse(&data).map_err(|e| e.to_string())?,
+            &|_, _| None,
+            models::COUNT as u32,
+            &mut textures,
+        )?;
+        let pose = Pose::new(&model.bmd, Mat4::IDENTITY, &model.bind);
+        let mut positions = Vec::new();
+        let mut normals = Vec::new();
+        let mut uvs = Vec::new();
+        for v in model.batches.iter().flat_map(|b| &b.vertices) {
+            let (p, n) = pose.skin(v);
+            positions.push(p);
+            normals.push(n.normalize_or_zero());
+            uvs.push([v.uv[0].x, v.uv[0].y]);
+        }
+        let colors = model.batch_color.clone();
+        let texture_ids = model.batch_texture.clone();
+        Ok(View {
+            models: vec![model],
+            textures,
+            skeleton,
+            clips: ClipLibrary::default(),
+            fludd_clips: HashMap::new(),
+            wink: None,
+            eye_materials: Vec::new(),
+            hand_joints: [None; 2],
+            head: None,
+            chest: None,
+            center: None,
+            fx: Particles::default(),
+            movement_effects: false,
+            pound_flames: false,
+            fx_ticks: Vec::new(),
+            fx_binds: Vec::new(),
+            hud: None,
+            hud_shown: false,
+            life: [None, None],
+            hud_tick: 0,
+            shirt: false,
+            time: 0.0,
+            blink_at: 0.0,
+            right: Vec3::X,
+            up: Vec3::Y,
+            lag: 0.0,
+            yaw_seen: [(0, 0); 2],
+            draws: vec![Draw {
+                key: 1,
+                model: 0,
+                kind: 0,
+                flags: 0,
+                pos: Vec3::ZERO,
+                rot: Quat::IDENTITY,
+                first_vertex: 0,
+                first_color: 0,
+                alpha: 1.0,
+            }],
+            positions,
+            normals,
+            uvs,
+            colors,
+            texture_ids,
+        })
+    }
+
+    /// A host-owned coin was collected. The two disc effects stay at the collection point.
+    pub fn coin_get(&mut self, pos: Vec3) {
+        for name in COIN_EFFECTS {
+            self.fx.emit(name, Mat4::from_translation(pos), 1.0);
+        }
     }
 
     /// The camera's right and up (sim axes, as the host's world), for environment maps.
@@ -1026,6 +1118,47 @@ mod tests {
             Ok(v) => Some(v),
             Err(e) => panic!("loading Mario's models: {e}"),
         }
+    }
+
+    #[test]
+    fn yellow_coin_loads_its_disc_mesh_and_gold_materials_without_marios_models() {
+        let Some(dir) = libsms::assets::find(None) else {
+            return;
+        };
+        let v = View::load_look(&dir, Look::Coin).unwrap();
+        assert_eq!(v.models.len(), 1);
+        assert_eq!(v.positions.len(), v.models[0].vertex_count);
+        assert!(!v.positions.is_empty() && v.positions.iter().all(|p| p.is_finite()));
+        assert_eq!(v.draws.len(), 1);
+        assert!(v.models[0].hi.y - v.models[0].lo.y > 90.0);
+        assert!(
+            (0..v.models[0].batches.len()).any(|b| {
+                let c = shown(&v, 0, b);
+                c[0] > 0.4 && c[1] > 0.2 && c[0] > c[2] * 1.5
+            }),
+            "yellow coin baked without its gold colour"
+        );
+    }
+
+    #[test]
+    fn coin_pickup_sparks_stay_at_collection_point_and_expire() {
+        let Some(mut v) = view() else { return };
+        let at = Vec3::new(2000.0, 30.0, -4000.0);
+        v.coin_get(at);
+        let mut saw_sparks = false;
+        for tick in (0..200).step_by(4) {
+            v.fx.advance(tick);
+            v.fx.build(Vec3::X, Vec3::Y);
+            saw_sparks |= !v.fx.vertices.is_empty();
+            assert!(v.fx.vertices.iter().all(|p| p.pos.distance(at) < 1000.0));
+            assert!(
+                v.fx.batches
+                    .iter()
+                    .all(|b| v.fx.texture_world_space(b.texture))
+            );
+        }
+        assert!(saw_sparks);
+        assert!(!v.fx.active());
     }
 
     /// The average colour a model's batch shows: its bake read at each of its vertices'

@@ -27,7 +27,7 @@ use libsms::{
 use view::SmsView;
 
 /// ABI version, bumped when the C interface changes.
-pub const SMS_ABI_VERSION: u32 = 16;
+pub const SMS_ABI_VERSION: u32 = 17;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sms_abi_version() -> u32 {
@@ -1341,6 +1341,49 @@ mod tests {
                 36
             ]
         );
+    }
+
+    #[test]
+    fn a_yellow_coin_mesh_and_pickup_effects_are_available_through_the_host_abi() {
+        let Some(dir) = libsms::assets::find(None) else {
+            return;
+        };
+        let dir = CString::new(dir.to_string_lossy().as_bytes()).unwrap();
+        unsafe {
+            let coin = view::sms_view_new_look(dir.as_ptr(), 0, 2);
+            assert!(!coin.is_null());
+            assert_eq!(view::sms_view_model_count(coin), 1);
+            let mut model = view::SmsModelInfo::default();
+            assert_eq!(view::sms_view_model(coin, 0, &mut model), 1);
+            // The original yellow coin uses its material colour without a texture.
+            assert!(model.vertex_count > 0 && model.index_count > 0 && model.batch_count > 0);
+            let mut count = 0;
+            assert!(!view::sms_view_positions(coin, &mut count).is_null());
+            assert_eq!(count, model.vertex_count);
+            view::sms_view_free(coin);
+
+            let mario = view::sms_view_new(dir.as_ptr(), 0);
+            assert!(!mario.is_null());
+            view::sms_view_coin_get(
+                mario,
+                &SmsVec3 {
+                    x: 10.0,
+                    y: 20.0,
+                    z: 30.0,
+                },
+            );
+            view::with_view(mario, (), |v| {
+                v.view.fx.advance(0);
+                v.view.fx.build(Vec3::X, Vec3::Y);
+            });
+            let mut fx = view::SmsFxInfo::default();
+            view::sms_view_fx_info(mario, &mut fx);
+            assert!(
+                fx.vertices > 0,
+                "coin pickup effects did not reach the host"
+            );
+            view::sms_view_free(mario);
+        }
     }
 
     #[test]
