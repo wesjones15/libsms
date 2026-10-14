@@ -73,7 +73,8 @@ pub enum Event {
     AirNozzle { extra: bool },
     /// Host limits: a mid-air jump was spent.
     AirJump,
-    /// Host limits: a belly slide turned wet and spent the charge.
+    /// Host limits: a belly slide turned wet. Charged hosts spend availability; timed hosts
+    /// use this to report skill activation without consuming stock or starting a cooldown.
     WetSlide,
     /// A particle effect the game starts at this point (`TMarioParticleManager`), by its
     /// `.jpa` name: dust, stars, blurs. The sim doesn't draw; a view runs the effect.

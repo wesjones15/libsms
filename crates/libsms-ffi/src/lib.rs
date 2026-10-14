@@ -1344,6 +1344,52 @@ mod tests {
     }
 
     #[test]
+    fn a_disc_light_burst_wets_a_broad_patch_ahead_without_a_slide_charge() {
+        let Some(dir) = libsms::assets::find(None) else {
+            return;
+        };
+        let dir = CString::new(dir.to_string_lossy().as_bytes()).unwrap();
+        let host = SmsHost {
+            user: std::ptr::null_mut(),
+            ground: Some(flat),
+            roof: None,
+            walls: None,
+            event: None,
+            enemies: None,
+            water: None,
+        };
+        unsafe {
+            let sim = sms_sim_new(dir.as_ptr(), &SmsVec3::default(), 0);
+            assert!(!sim.is_null());
+            let pad = SmsPad {
+                r_analog: 15,
+                ..SmsPad::default()
+            };
+            for _ in 0..180 {
+                sms_sim_step(sim, &host, &pad, 0, 1.0 / 120.0, std::ptr::null_mut());
+            }
+            let s = &*sim;
+            let patch = s
+                .water
+                .wet_patches
+                .iter()
+                .find(|p| p.pos.z > s.sim.mario.pos.z)
+                .expect("a light burst left no wet ground ahead");
+            assert!(
+                patch.radius >= 160.0,
+                "burst radius {} is narrower than Mario",
+                patch.radius
+            );
+            assert!(s.water.on_ground_near(patch.pos));
+            assert!(
+                !s.water
+                    .on_ground_near(patch.pos + Vec3::X * (patch.radius + 10.0))
+            );
+            sms_sim_free(sim);
+        }
+    }
+
+    #[test]
     fn a_view_poses_the_sim_through_the_c_abi() {
         let Some(dir) = libsms::assets::find(None) else {
             eprintln!("skipping: no assets/");
@@ -1456,7 +1502,10 @@ mod tests {
                 most_wet = most_wet.max(w.wet_quads);
             }
             assert!(most > 10, "{most} drops");
-            assert!(most_wet > 0, "spray impacts never reached the terrain renderer");
+            assert!(
+                most_wet > 0,
+                "spray impacts never reached the terrain renderer"
+            );
             assert_eq!(
                 view::sms_view_water_texture(v, 0, &mut tex, std::ptr::null_mut(), 0),
                 1

@@ -2469,6 +2469,46 @@ fn a_wet_slide_charge_makes_any_slide_glide_once() {
 }
 
 #[test]
+fn timed_wet_slides_use_actual_surface_wetness_and_return_to_normal_at_the_cap() {
+    struct Floor(bool);
+    impl Host for Floor {
+        fn ground(&self, pos: Vec3) -> Option<libsms::GroundHit> {
+            let mut g = FlatHost::default().ground(pos)?;
+            if self.0 {
+                g.flags = g.flags.with(libsms::SurfaceFlags::WET);
+            }
+            Some(g)
+        }
+    }
+    for wet in [false, true] {
+        let mut s = Scene::new(Floor(wet));
+        s.sim.mario.limits.wet_slide = Some(libsms::WetSlide::timed(60, true));
+        s.run_forward();
+        s.step(120);
+        s.press_a();
+        s.step(10);
+        s.pad.b = true;
+        s.step(1);
+        s.pad.b = false;
+        assert!(s.until(600, |m| m.status == Status::Catch));
+        s.step(1);
+        assert_eq!(s.mario().wet_sliding(), wet);
+        if wet {
+            for _ in 0..59 {
+                s.sim.mario.limits.wet_slide = Some(libsms::WetSlide::timed(60, true));
+                s.step(1);
+                assert!(s.mario().wet_sliding());
+            }
+            s.step(1);
+            assert!(
+                !s.mario().wet_sliding(),
+                "naturally wet terrain bypassed the cap"
+            );
+        }
+    }
+}
+
+#[test]
 fn a_pound_reports_its_start() {
     let mut s = Scene::flat();
     s.pad.a = true;

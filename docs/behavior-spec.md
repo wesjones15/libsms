@@ -241,7 +241,12 @@ The host feeds `Mario::water_underfoot` from `WaterManager::on_ground_near` each
 spray off the slide (`frontSlipEffect`, `MS_M_WATSLIDE_A..C`) binds all three disc effects
 to the animated center joint. `MS_M_WATSLIDE_C` uses `JPADrawExecDirectionalCross` (and its
 rotating variant): both perpendicular textured planes draw with the same pivot, scale and
-particle frame, restoring the side spray. Host `slide_fx_scale` scales all three effects
+particle frame, restoring the side spray. RoR2 uses `WetSlide::timed` semantics: wet ground
+is required at activation, no stock is consumed, and every wet slide has a duration cap
+(including on shallow water). Leaving the wet patch does not cancel an active glide;
+remaining on wet ground cannot restart an expired cap until a new slide. The Special
+slot has zero recharge; cooldown items extend duration and each added Special stock
+(Lysate Cell) adds one baseline duration before that multiplier. Host `slide_fx_scale` scales all three effects
 together. The old stand-in splash sprites (`WaterManager::slide_splashes`) are optional.
 
 **Spin jump sounds** (`soundMovement`, MarioSound.cpp, every tick off Yoshi): entering a spin jump

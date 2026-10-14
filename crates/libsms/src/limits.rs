@@ -14,10 +14,12 @@ use crate::input::{Pad, lr_level};
 use crate::mario::{Mario, Status};
 use crate::params::NozzleKind;
 
-/// The wet belly slide as a charged move.
+/// A host's wet-slide availability and duration rules. Use [`Self::timed`] and refresh
+/// availability before each host step for a wet-ground-only move without a recharge.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WetSlide {
-    /// A charge is ready. Spent (set false) when a slide turns wet.
+    /// Availability for a new wet slide. Set false at activation; duration-only hosts
+    /// refresh this each step, while charged hosts wait for a recharge.
     pub ready: bool,
     /// Any belly slide may turn wet, not only one over FLUDD's water on the ground.
     pub anywhere: bool,
@@ -30,6 +32,20 @@ pub struct WetSlide {
     /// term at full), unless the stick pulls back against it. false: the game's (the stick
     /// decides).
     pub glide: bool,
+}
+
+impl WetSlide {
+    /// Duration-limited wet slides: wet ground is required and every slide uses the cap,
+    /// including slides in shallow water. Hosts refresh this each step; no cooldown needed.
+    pub fn timed(max_ticks: u32, glide: bool) -> Self {
+        Self {
+            ready: true,
+            anywhere: false,
+            water_free: false,
+            max_ticks,
+            glide,
+        }
+    }
 }
 
 /// See the module docs. `Default` is the game.
@@ -65,6 +81,59 @@ pub struct Limits {
     pub turbo_speed: f32,
     /// None: the game's (any belly slide over FLUDD's water glides).
     pub wet_slide: Option<WetSlide>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{AnimTable, Params, Sim, Vec3};
+
+    #[test]
+    fn timed_slides_require_wet_ground_and_cannot_restart_their_cap_mid_slide() {
+        let mut m = Sim::new(Params::default(), AnimTable::default(), Vec3::ZERO, 0).mario;
+        m.status = Status::Catch;
+        m.limits.wet_slide = Some(WetSlide::timed(3, true));
+        assert!(!m.limit_wet_slide(), "a dry slide turned wet");
+        m.wet_ground = true;
+        for tick in 0..8 {
+            // RoR2 always refreshes availability, even after the duration has run out.
+            m.limits.wet_slide = Some(WetSlide::timed(3, true));
+            let wet = m.limit_wet_slide();
+            assert_eq!(wet, tick < 3, "wet slide at tick {tick}");
+            m.status_state = wet as u32;
+            m.wet_ground = false; // it may carry on from the wet approach onto dry ground
+        }
+        assert_eq!(
+            m.events
+                .iter()
+                .filter(|e| matches!(e, Event::WetSlide))
+                .count(),
+            1
+        );
+        m.change_status(Status::Wait, 0, false);
+        m.change_status(Status::Catch, 0, false);
+        m.limits.wet_slide = Some(WetSlide::timed(3, true));
+        assert!(!m.limit_wet_slide(), "a fresh dry slide turned wet");
+        m.wet_ground = true;
+        assert!(m.limit_wet_slide(), "a fresh wet slide needed a cooldown");
+    }
+
+    #[test]
+    fn a_longer_timed_limit_extends_the_glide_even_on_continuously_wet_ground() {
+        for max_ticks in [60, 120, 180] {
+            let mut m = Sim::new(Params::default(), AnimTable::default(), Vec3::ZERO, 0).mario;
+            m.status = Status::Catch;
+            m.wet_ground = true;
+            let mut active = 0;
+            for _ in 0..max_ticks + 20 {
+                m.limits.wet_slide = Some(WetSlide::timed(max_ticks, true));
+                let wet = m.limit_wet_slide();
+                m.status_state = wet as u32;
+                active += u32::from(wet);
+            }
+            assert_eq!(active, max_ticks, "wet ground bypassed the duration cap");
+        }
+    }
 }
 
 impl Default for Limits {

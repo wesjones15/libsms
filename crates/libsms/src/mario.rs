@@ -918,7 +918,9 @@ impl Mario {
         self.roof = r;
 
         // `checkCurrentPlane`'s `isTouchGround4cm` water check.
-        let wet = self.water_underfoot || (self.options.shallow_water_wets && self.in_water);
+        let wet = self.water_underfoot
+            || self.ground.flags.has(SurfaceFlags::WET)
+            || (self.options.shallow_water_wets && self.in_water);
         self.wet_ground = wet && self.pos.y <= self.floor_y + 4.0;
 
         if !self.ground.flags.has(SurfaceFlags::ILLEGAL) {
