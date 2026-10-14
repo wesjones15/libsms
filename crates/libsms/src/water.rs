@@ -149,8 +149,18 @@ pub struct WaterManager {
     /// horizontal speed cap is this times its size, so a spray lands about this many times
     /// further. 1: the game's. The other nozzles' water is the game's.
     pub reach: f32,
+    /// A light press's burst has been emitted: lay its wet circles at Mario's feet on the next step,
+    /// facing this way (horizontal) with this particle type.
+    stamp: Option<(Vec3, usize)>,
     seed: u32,
 }
+
+/// A light press's burst wets this many circles, from Mario's feet forward in his aim.
+pub const BURST_CIRCLES: usize = 6;
+/// Each circle's radius is this share of a drop's ground coverage (`mCleanSize * 10`), and the next
+/// circle is this many radii on, so the six overlap into one trail from his feet.
+const BURST_RADIUS: f32 = 0.5;
+const BURST_SPACING: f32 = 0.8;
 
 impl WaterManager {
     pub fn new(params: &Params) -> WaterManager {
@@ -160,6 +170,7 @@ impl WaterManager {
             types: params.water_particles.clone(),
             events: Vec::new(),
             reach: 1.0,
+            stamp: None,
             seed: 0x2545_F491,
         }
     }
@@ -184,6 +195,10 @@ impl WaterManager {
     /// `emitRequest` / `makeEmit`: adds up to `w.count` particles; returns how many fit.
     pub fn emit(&mut self, w: &WaterEmit) -> u32 {
         let kind = (w.particle_type.max(0) as usize).min(16);
+        if w.burst && w.count > 0 {
+            let flat = Vec3::new(w.dir.x, 0.0, w.dir.z);
+            self.stamp = Some((flat.normalize_or(Vec3::Z), kind));
+        }
         let mut n = 0;
         while n < w.count && self.particles.len() < SLOTS {
             let tremble = Vec3::new(self.rand11(), self.rand11(), self.rand11()) * w.dir_tremble;
@@ -282,10 +297,13 @@ impl WaterManager {
 
     /// ModelWaterManager.cpp, `splashGround`: ground coverage uses mCleanSize * 10.
     /// RoR2 has no Sunshine pollution map, so keep bounded, drying surface marks instead.
-    /// Light bursts spread over twice that radius to lay a broad slide approach patch.
     fn wet_ground(&mut self, host: &dyn Host, pos: Vec3, normal: Vec3, kind: usize, burst: bool) {
-        let radius =
-            (self.types[kind].clean_size * 10.0 * if burst { 2.0 } else { 1.0 }).clamp(20.0, 400.0);
+        self.wet_ground_sized(host, pos, normal, kind, if burst { BURST_RADIUS } else { 1.0 });
+    }
+
+    /// As [`Self::wet_ground`], at `scale` times a drop's coverage.
+    fn wet_ground_sized(&mut self, host: &dyn Host, pos: Vec3, normal: Vec3, kind: usize, scale: f32) {
+        let radius = (self.types[kind].clean_size * 10.0 * scale).clamp(20.0, 400.0);
         let duration = self.types[kind].alive.clamp(30.0, k::STUCK_LIFE);
         let normal = normal.normalize_or(Vec3::Y);
         // Refresh nearby marks without building an opaque stack of overlapping decals.
@@ -342,7 +360,25 @@ impl WaterManager {
         }
     }
 
+    /// A light press's burst wets [`BURST_CIRCLES`] circles in a trail from Mario's feet forward, each on the
+    /// ground there (a ledge ends the trail), so the ground he is about to belly slide on is wet whatever
+    /// the drops do.
+    fn lay_burst(&mut self, host: &dyn Host, mario: Vec3, forward: Vec3, kind: usize) {
+        let radius = (self.types[kind].clean_size * 10.0 * BURST_RADIUS).clamp(20.0, 400.0);
+        for i in 0..BURST_CIRCLES {
+            let at = mario + forward * (i as f32 * radius * BURST_SPACING);
+            let Some(g) = host.ground(Vec3::new(at.x, mario.y + 25.0, at.z)) else { break };
+            if g.flags.has(SurfaceFlags::ILLEGAL | SurfaceFlags::WATER_SURFACE) || (g.height - mario.y).abs() > 80.0 {
+                break;
+            }
+            self.wet_ground_sized(host, Vec3::new(at.x, g.height, at.z), g.normal, kind, BURST_RADIUS);
+        }
+    }
+
     pub fn step(&mut self, host: &dyn Host, mario: Vec3) {
+        if let Some((forward, kind)) = self.stamp.take() {
+            self.lay_burst(host, mario, forward, kind);
+        }
         for p in &mut self.wet_patches {
             p.life -= 1.0;
         }
@@ -575,23 +611,56 @@ mod tests {
     }
 
     #[test]
-    fn a_light_burst_wets_a_broad_patch_where_it_lands() {
+    fn a_light_burst_wets_six_circles_from_his_feet_forward() {
         let mut w = WaterManager::new(&Params::default());
-        let mut drop = emit(Vec3::new(0.0, -1.0, 1.0));
-        drop.pos.y = 5.0;
+        let mut drop = emit(Vec3::new(0.0, -0.2, 1.0));
+        drop.pos.y = 150.0;
         drop.burst = true;
         w.emit(&drop);
+        // Before the drops land: the six circles, at his feet and out ahead in his aim, not off to a side.
         w.step(&FlatHost::default(), Vec3::ZERO);
-        let patch = &w.wet_patches[0];
-        assert!(patch.pos.z > 0.0, "burst did not land ahead of Mario");
-        assert_eq!(patch.radius, w.types[0].clean_size * 20.0);
-        assert!(w.on_ground_near(patch.pos + Vec3::X * 180.0));
-        assert!(!w.on_ground_near(patch.pos + Vec3::X * 250.0));
+        let radius = w.types[0].clean_size * 10.0 * BURST_RADIUS;
+        let mut trail: Vec<_> = w.wet_patches.iter().filter(|p| p.pos.x.abs() < 1.0).map(|p| p.pos.z).collect();
+        trail.sort_by(f32::total_cmp);
+        assert!(trail.len() >= BURST_CIRCLES, "{} circles", trail.len());
+        assert!(trail[0].abs() < 1.0, "none at his feet");
+        for pair in trail.windows(2).take(BURST_CIRCLES - 1) {
+            assert!((pair[1] - pair[0] - radius * BURST_SPACING).abs() < 1.0, "spacing {:?}", pair);
+        }
+        assert!(w.on_ground_near(Vec3::ZERO));
+        assert!(w.on_ground_near(Vec3::new(0.0, 0.0, radius * BURST_SPACING * 5.0)));
+        assert!(!w.on_ground_near(Vec3::new(0.0, 0.0, radius * BURST_SPACING * 5.0 + radius * 1.5)));
+        assert!(!w.on_ground_near(Vec3::new(radius * 1.5, 0.0, 0.0)));
+        // A plain spray lays no trail of its own.
         let mut normal = WaterManager::new(&Params::default());
         drop.burst = false;
         normal.emit(&drop);
         normal.step(&FlatHost::default(), Vec3::ZERO);
-        assert!(!normal.on_ground_near(patch.pos + Vec3::X * 180.0));
+        assert!(!normal.on_ground_near(Vec3::ZERO));
+    }
+
+    #[test]
+    fn a_burst_trail_stops_at_a_ledge() {
+        struct Ledge;
+        impl Host for Ledge {
+            fn ground(&self, p: Vec3) -> Option<crate::GroundHit> {
+                FlatHost::default().ground(p).filter(|_| p.z < 100.0)
+            }
+            fn roof(&self, _p: Vec3) -> Option<crate::RoofHit> {
+                None
+            }
+            fn walls(&self, c: Vec3, _r: f32, _m: usize, _out: &mut Vec<crate::WallHit>) -> Vec3 {
+                c
+            }
+            fn event(&mut self, _e: crate::Event) {}
+        }
+        let mut w = WaterManager::new(&Params::default());
+        let mut drop = emit(Vec3::new(0.0, -0.2, 1.0));
+        drop.burst = true;
+        w.emit(&drop);
+        w.step(&Ledge, Vec3::ZERO);
+        assert!(w.wet_patches.iter().all(|p| p.pos.z < 100.0 + 1.0), "wet past the ledge");
+        assert!(!w.wet_patches.is_empty());
     }
 
     #[test]

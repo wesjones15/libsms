@@ -228,8 +228,10 @@ sets state 1, and on normal ground `doSliding` uses `mWasOnWaterSlip` (0.97) for
 slide's friction instead of the normal slip's (`mInWaterSlip` 0.9 in water): about twice as far.
 Ground impacts leave persistent, drying wet marks in `WaterManager`, independent of whether
 an airborne droplet sticks or splashes away. Their base radius uses the disc's
-`mCleanSize * 10` (`TModelWaterManager::splashGround`); light bursts use twice that radius
-as a host-style approximation of a broad approach patch (not verified against vanilla).
+`mCleanSize * 10` (`TModelWaterManager::splashGround`). A light press's burst also wets six
+circles in a trail from Mario's feet forward in his aim (`water::BURST_CIRCLES`, each half that
+radius and 0.8 radii apart, each on the ground there, ending at a ledge), laid when the burst is
+emitted: a host-style approximation of Sunshine's short splash ahead (not verified against vanilla).
 Marks last the particle type's `mAlive`, capped at 256 water frames, and repeated spray
 refreshes nearby coverage. Presentation appends their surface quads after drops and splashes,
 over the disc's soft water mask, with opacity fading over the last 60 water frames.

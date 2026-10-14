@@ -1388,7 +1388,7 @@ mod tests {
     }
 
     #[test]
-    fn a_disc_light_burst_wets_a_broad_patch_ahead_without_a_slide_charge() {
+    fn a_disc_light_burst_wets_six_circles_from_his_feet_forward() {
         let Some(dir) = libsms::assets::find(None) else {
             return;
         };
@@ -1413,22 +1413,20 @@ mod tests {
                 sms_sim_step(sim, &host, &pad, 0, 1.0 / 120.0, std::ptr::null_mut());
             }
             let s = &*sim;
-            let patch = s
+            let mario = s.sim.mario.pos;
+            let mut trail: Vec<f32> = s
                 .water
                 .wet_patches
                 .iter()
-                .find(|p| p.pos.z > s.sim.mario.pos.z)
-                .expect("a light burst left no wet ground ahead");
-            assert!(
-                patch.radius >= 160.0,
-                "burst radius {} is narrower than Mario",
-                patch.radius
-            );
-            assert!(s.water.on_ground_near(patch.pos));
-            assert!(
-                !s.water
-                    .on_ground_near(patch.pos + Vec3::X * (patch.radius + 10.0))
-            );
+                .filter(|p| (p.pos.x - mario.x).abs() < 5.0 && p.pos.z >= mario.z - 5.0)
+                .map(|p| p.pos.z - mario.z)
+                .collect();
+            trail.sort_by(f32::total_cmp);
+            assert!(trail.len() >= 6, "a light burst left {} circles ahead: {trail:?}", trail.len());
+            assert!(trail[0] < 5.0, "no circle at his feet: {trail:?}");
+            assert!(trail[5] > trail[0] + 100.0, "the trail doesn't reach forward: {trail:?}");
+            let first = s.water.wet_patches.iter().find(|p| (p.pos.x - mario.x).abs() < 5.0).unwrap();
+            assert!(s.water.on_ground_near(first.pos));
             sms_sim_free(sim);
         }
     }
