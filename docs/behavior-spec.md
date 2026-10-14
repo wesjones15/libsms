@@ -231,7 +231,10 @@ an airborne droplet sticks or splashes away. Their base radius uses the disc's
 `mCleanSize * 10` (`TModelWaterManager::splashGround`); light bursts use twice that radius
 as a host-style approximation of a broad approach patch (not verified against vanilla).
 Marks last the particle type's `mAlive`, capped at 256 water frames, and repeated spray
-refreshes nearby coverage. A sampled 3x3 surface grid follows slopes and rejects ledges.
+refreshes nearby coverage. Presentation appends their surface quads after drops and splashes,
+over the disc's soft water mask, with opacity fading over the last 60 water frames.
+RoR2 draws them as a subtle black alpha overlay (`Look.GroundWetness`, default 0.12);
+they darken the terrain colour beneath them without changing its material. A sampled 3x3 surface grid follows slopes and rejects ledges.
 `on_ground_near` tests the same circular footprint and height that presentation draws,
 so an invisible droplet 300 units away can no longer make dry ground count as wet.
 The host feeds `Mario::water_underfoot` from `WaterManager::on_ground_near` each step. The game's

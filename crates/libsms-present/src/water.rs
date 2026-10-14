@@ -50,10 +50,11 @@ pub struct WaterLook {
     /// `timg/splash.bti` coloured as the game does.
     pub splash: WaterTexture,
     splashes: Vec<Splash>,
-    /// This frame's quads: [`Self::drop_quads`] drops, then [`Self::splash_quads`] splashes.
+    /// This frame's quads: drops, splashes, then ground wetness (texture 0, dark alpha blend).
     pub vertices: Vec<WaterVertex>,
     pub drop_quads: u32,
     pub splash_quads: u32,
+    pub wet_quads: u32,
     /// Colour and opacity to draw the drops in (`gModelWaterManagerWaterColor`; juice when
     /// Yoshi spits it).
     pub tint: [f32; 4],
@@ -233,6 +234,28 @@ impl WaterLook {
             );
         }
         self.splash_quads = (self.vertices.len() / 4) as u32 - self.drop_quads;
+        // Sunshine writes water coverage to the ground's pollution map. Hosts without that
+        // map receive soft dark marks on sampled terrain, with the slide's exact footprint.
+        let before = self.vertices.len();
+        for patch in &water.wet_patches {
+            let alpha = (patch.life / patch.duration.min(60.0)).clamp(0.0, 1.0);
+            for y in 0..2 {
+                for x in 0..2 {
+                    let Some(corners) = patch.cell(x, y) else {
+                        continue;
+                    };
+                    for (pos, uv) in corners.into_iter().zip([
+                        [x as f32 * 0.5, y as f32 * 0.5],
+                        [(x + 1) as f32 * 0.5, y as f32 * 0.5],
+                        [(x + 1) as f32 * 0.5, (y + 1) as f32 * 0.5],
+                        [x as f32 * 0.5, (y + 1) as f32 * 0.5],
+                    ]) {
+                        self.vertices.push(WaterVertex { pos, uv, alpha });
+                    }
+                }
+            }
+        }
+        self.wet_quads = ((self.vertices.len() - before) / 4) as u32;
     }
 }
 
@@ -276,9 +299,51 @@ mod tests {
             splashed |= look.splash_quads > 0;
             assert_eq!(
                 look.vertices.len() as u32,
-                4 * (look.drop_quads + look.splash_quads)
+                4 * (look.drop_quads + look.splash_quads + look.wet_quads)
             );
         }
         assert!(drawn && splashed, "drawn {drawn} splashed {splashed}");
+    }
+
+    #[test]
+    fn wet_terrain_is_camera_independent_and_fades_with_gameplay_wetness() {
+        let mut water = WaterManager::new(&Params::default());
+        water.emit(&WaterEmit {
+            nozzle: NozzleKind::Spray,
+            pos: Vec3::Y * 5.0,
+            dir: -Vec3::Y,
+            power: 40.0,
+            count: 1,
+            attack: 1,
+            hit_radius: 50.0,
+            hit_height: 80.0,
+            inherit: Vec3::ZERO,
+            size: 50.0,
+            size_tremble: 0.0,
+            dir_tremble: 0.0,
+            pow_tremble: 0.0,
+            particle_type: 0,
+            burst: true,
+        });
+        water.step(&FlatHost::default(), Vec3::ZERO);
+        water.particles.clear();
+        let mut look = WaterLook::default();
+        look.build(&water, 0.0, Vec3::Y * 500.0, Vec3::X, Vec3::Z, 0);
+        assert_eq!(
+            (look.drop_quads, look.splash_quads, look.wet_quads),
+            (0, 0, 4)
+        );
+        let surface = look.vertices.clone();
+        assert!(surface.iter().all(|v| v.pos.y == 1.0 && v.alpha == 1.0));
+        look.build(&water, 0.0, Vec3::X * 500.0, Vec3::Z, Vec3::Y, 0);
+        assert_eq!(look.vertices, surface);
+        water.wet_patches[0].life = 30.0;
+        look.build(&water, 0.0, Vec3::Y * 500.0, Vec3::X, Vec3::Z, 0);
+        assert!(look.vertices.iter().all(|v| (v.alpha - 0.5).abs() < 0.001));
+        water.wet_patches[0].life = 1.0;
+        water.step(&FlatHost::default(), Vec3::ZERO);
+        look.build(&water, 0.0, Vec3::Y * 500.0, Vec3::X, Vec3::Z, 0);
+        assert_eq!(look.wet_quads, 0);
+        assert!(!water.on_ground_near(Vec3::ZERO));
     }
 }

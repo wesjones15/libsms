@@ -27,7 +27,7 @@ use libsms::{
 use view::SmsView;
 
 /// ABI version, bumped when the C interface changes.
-pub const SMS_ABI_VERSION: u32 = 15;
+pub const SMS_ABI_VERSION: u32 = 16;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sms_abi_version() -> u32 {
@@ -1337,7 +1337,7 @@ mod tests {
         assert_eq!(
             &sizes[..n],
             &[
-                12, 20, 8, 16, 32, 56, 24, 52, 40, 24, 12, 64, 48, 52, 24, 24, 24, 36, 16, 12, 32,
+                12, 20, 8, 16, 32, 56, 24, 52, 40, 24, 12, 64, 48, 52, 24, 28, 24, 36, 16, 12, 32,
                 36
             ]
         );
@@ -1443,6 +1443,7 @@ mod tests {
                 ..SmsPad::default()
             };
             let mut most = 0;
+            let mut most_wet = 0;
             for _ in 0..120 {
                 sms_sim_step(sim, &host, &spray, 0, 1.0 / 60.0, v);
                 view::sms_view_update(v, sim, &frame);
@@ -1450,10 +1451,12 @@ mod tests {
                 assert_eq!(view::sms_view_water_info(v, &mut w), 1);
                 let mut corners = 0;
                 view::sms_view_water_vertices(v, &mut corners);
-                assert_eq!(corners, 4 * (w.drop_quads + w.splash_quads));
+                assert_eq!(corners, 4 * (w.drop_quads + w.splash_quads + w.wet_quads));
                 most = most.max(w.drop_quads);
+                most_wet = most_wet.max(w.wet_quads);
             }
             assert!(most > 10, "{most} drops");
+            assert!(most_wet > 0, "spray impacts never reached the terrain renderer");
             assert_eq!(
                 view::sms_view_water_texture(v, 0, &mut tex, std::ptr::null_mut(), 0),
                 1

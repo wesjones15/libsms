@@ -13,7 +13,7 @@
 //! any frame. Sound plays for the ticks a sim runs with this view passed to `sms_sim_step`.
 //!
 //! FLUDD's water is separate geometry in world space: [`sms_view_water_vertices`] (quads, the
-//! drops then the splashes, counted in [`sms_view_water_info`]) over the two textures from
+//! drops, splashes, then ground wetness, counted in [`sms_view_water_info`]) over the two textures from
 //! [`sms_view_water_texture`].
 //!
 //! So are the game's particle effects on Mario (`libsms_present::particles`: movement dust,
@@ -146,6 +146,8 @@ pub struct SmsWaterInfo {
     pub drop_quads: u32,
     pub splash_quads: u32,
     pub tint: [f32; 4],
+    /// After splashes: ground wetness over texture 0, drawn black with low alpha.
+    pub wet_quads: u32,
 }
 
 /// A corner of a particle quad: world position (sim units), texture coordinates and colour
@@ -762,6 +764,7 @@ pub unsafe extern "C" fn sms_view_water_info(view: *mut SmsView, out: *mut SmsWa
                 drop_quads: v.water.drop_quads,
                 splash_quads: v.water.splash_quads,
                 tint: v.water.tint,
+                wet_quads: v.water.wet_quads,
             };
             1
         })
