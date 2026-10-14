@@ -1185,6 +1185,47 @@ mod tests {
     }
 
     #[test]
+    fn a_host_aim_pitches_the_water_the_way_it_points() {
+        let Some(mut v) = view() else {
+            return;
+        };
+        let a = libsms::Assets::discover(None).unwrap();
+        let mut sim = Sim::new(a.params, a.anim_table, Vec3::ZERO, 0);
+        sim.mario.give_fludd();
+        let mut host = libsms::FlatHost::default();
+        let pad = libsms::Pad {
+            r_analog: 140,
+            ..Default::default()
+        };
+        let rise = |sim: &Sim| {
+            let f = sim.mario.fludd.as_ref().unwrap();
+            let (_, d) = f.emitter(0).expect("muzzle reported");
+            d.normalize().y
+        };
+        let mut at = |sim: &mut Sim, yaw_turn: i16, pitch: f32| {
+            let yaw = sim.mario.model_yaw.wrapping_add(yaw_turn);
+            let units = (pitch * (32768.0 / std::f32::consts::PI)) as i16;
+            sim.mario.aim = Some(libsms::Aim { yaw, pitch: units });
+            for _ in 0..30 {
+                sim.advance(&mut host, &pad, i16::MIN, 1.0 / 60.0);
+                v.update(sim, 1.0 / 60.0);
+            }
+            rise(sim)
+        };
+        for turn in [0i16, 0x4000, -0x4000, i16::MIN] {
+            // The drawn head points where it is aimed (the water itself is aimed exactly).
+            for pitch in [0.6f32, 0.3, 0.0, -0.3, -0.6] {
+                let rise = at(&mut sim, turn, pitch);
+                println!("turn {turn:#x} pitch {pitch}: head rises {rise:.2}");
+                assert!(
+                    (rise - pitch.sin()).abs() < 0.12,
+                    "aimed {pitch}, head rose {rise} (turn {turn:#x})"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn pound_impacts_stay_at_landing_when_mario_rebounds() {
         let Some(mut v) = view() else {
             return;

@@ -163,7 +163,9 @@ impl Fludd {
         self.slots[self.nozzle as usize].amount
     }
 
-    /// Nozzle pitch in angle units, positive up.
+    /// The nozzle's angle in angle units, as the game keeps it (`getGunAngle`): drawn, a negative
+    /// angle lifts the barrel (the rest angle is `-mLAngleBase`) and the Spray's neck only turns
+    /// for those. A host aim sets it for the head and sends the water by its own pitch.
     pub fn gun_angle(&self) -> f32 {
         self.slots[self.nozzle as usize].gun_angle
     }
@@ -325,6 +327,10 @@ impl Fludd {
         }
     }
 }
+
+/// How far the Spray nozzle's neck points below level with no rotation (angle units; measured
+/// from the disc's model: its muzzle looks about 8 degrees down at `gun_angle` 0).
+const AIM_DROOP: f32 = 1500.0;
 
 impl Mario {
     pub(crate) fn nozzle_pitch_dir(&self, kind: NozzleKind, index: usize) -> Vec3 {
@@ -703,8 +709,14 @@ impl Mario {
         // calcGunAngle
         let s = &mut f.slots[kind as usize];
         if let Some(a) = aim {
-            // The L-button camera: the nozzle takes its pitch, unclamped and at once.
-            s.gun_angle = a.pitch as f32;
+            // The L-button camera: the nozzle takes its pitch, unclamped and at once. The neck's
+            // angle counts the other way round (negative lifts the barrel: the rest angle,
+            // `-mLAngleBase`, points it up a little) from a rest that droops a little itself.
+            s.gun_angle = if kind == NozzleKind::Yoshi {
+                a.pitch as f32
+            } else {
+                -(a.pitch as f32) - AIM_DROOP
+            };
         } else {
             let target = if squatting {
                 (s.gun_angle + pad.stick.y * 10_000.0).clamp(np_min(&p, kind), np_max(&p, kind))
@@ -774,17 +786,16 @@ impl Mario {
             ),
         };
         // A host aim (the lock-on) sends the water where it points, whichever way Mario faces
-        // or runs; not in the game, where the camera turns Mario instead.
+        // or runs; not in the game, where the camera turns Mario instead. Its heading and
+        // pitch, whether or not the drawn head has swung that far yet.
         let dir = match self.aim {
-            // Its heading set to the aim's, whether or not the drawn head has swivelled that
-            // far yet (idempotent), the rise kept.
             Some(a) if !self.on_yoshi() => {
-                let h = dir.x.hypot(dir.z);
-                if h > 1e-4 {
-                    Vec3::new(h * sin(a.yaw), dir.y, h * cos(a.yaw))
-                } else {
-                    dir
-                }
+                let pitch = a.pitch as f32 * (std::f32::consts::PI / 32768.0);
+                Vec3::new(
+                    pitch.cos() * sin(a.yaw),
+                    pitch.sin(),
+                    pitch.cos() * cos(a.yaw),
+                )
             }
             _ => dir,
         };

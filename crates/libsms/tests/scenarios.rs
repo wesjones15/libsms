@@ -2718,7 +2718,12 @@ fn the_l_camera_aims_the_nozzle_and_turns_a_crouching_mario() {
         "{:#x}",
         m.face_yaw
     );
-    assert_eq!(m.fludd.as_ref().unwrap().gun_angle(), 0x1000 as f32);
+    // The neck's angle counts the other way (negative lifts the barrel), a little more for its droop.
+    let gun = m.fludd.as_ref().unwrap().gun_angle();
+    assert!(
+        (-0x1000 as f32 - 2000.0..-0x1000 as f32).contains(&gun),
+        "{gun}"
+    );
 }
 
 #[test]
@@ -2738,7 +2743,12 @@ fn a_host_aim_without_l_turns_a_standing_mario_and_pitches_the_nozzle() {
         "{:#x}",
         m.face_yaw
     );
-    assert_eq!(m.fludd.as_ref().unwrap().gun_angle(), 0x1000 as f32);
+    // The neck's angle counts the other way (negative lifts the barrel), a little more for its droop.
+    let gun = m.fludd.as_ref().unwrap().gun_angle();
+    assert!(
+        (-0x1000 as f32 - 2000.0..-0x1000 as f32).contains(&gun),
+        "{gun}"
+    );
 }
 
 #[test]
@@ -2765,6 +2775,33 @@ fn a_host_aim_sends_the_water_its_way_even_while_mario_runs_elsewhere() {
     let d = dir.expect("sprayed");
     // Yaw 0x4000 faces +X (forward is (sin, cos)).
     assert!(d.x > 0.7 && d.z.abs() < 0.5, "{d:?}");
+}
+
+#[test]
+fn a_host_aim_pitches_the_water_as_it_points() {
+    let rise = |pitch: i16| {
+        let mut s = Scene::flat();
+        s.sim.mario.give_fludd();
+        s.sim.mario.aim = Some(libsms::Aim { yaw: 0, pitch });
+        s.pad.r_analog = 140;
+        let mut dir = None;
+        for _ in 0..120 {
+            s.host.events.clear();
+            s.step(1);
+            for e in &s.host.events {
+                if let Event::WaterEmit(we) = e {
+                    dir.get_or_insert(we.dir);
+                }
+            }
+        }
+        dir.expect("sprayed")
+    };
+    // A quarter of the way up (45 degrees) and down, and level: exactly where it points.
+    let (up, down, level) = (rise(0x2000), rise(-0x2000), rise(0));
+    println!("up {up:?} down {down:?} level {level:?}");
+    assert!((up.y - 0.707).abs() < 0.02 && up.z > 0.6, "{up:?}");
+    assert!((down.y + 0.707).abs() < 0.02 && down.z > 0.6, "{down:?}");
+    assert!(level.y.abs() < 0.02 && level.z > 0.99, "{level:?}");
 }
 
 #[test]
