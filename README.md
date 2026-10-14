@@ -43,6 +43,11 @@ A host does the same on first run with `Assets::ensure(iso, dir, log)`, then nev
 disc again. Everything else (`Assets::discover`, the tests, the viewer) reads from `assets/` and
 falls back to the decomp's code defaults when it is missing.
 
+Non-Rust hosts use ABI 18 exports `sms_assets_complete`, `sms_find_disc` and
+`sms_extract`. Discovery checks `SMS_DISC` and the supplied directories for Sunshine
+ISO/GCM/CISO images. Extraction returns a UTF-8 status/error message; a complete cache
+succeeds without the disc. Run extraction on a worker and wait before creating sims or views.
+
 RVZ, WIA and WBFS images are not supported by the Rust extractor; convert to ISO, or use
 `python tools/extract_assets.py <image>`, which delegates to decomp-toolkit's `dtk`.
 

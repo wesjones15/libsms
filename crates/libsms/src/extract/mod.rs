@@ -129,7 +129,7 @@ pub const DISC_FOLDERS: [&str; 1] = ["AudioRes/"];
 
 /// Files that must exist for the library and viewer to work. Adding one here makes an older
 /// `assets/` incomplete, so hosts re-extract it on the next run.
-pub const REQUIRED: [&str; 30] = [
+pub const REQUIRED: [&str; 35] = [
     "params_mario/run.prm",
     "params_mario/jump.prm",
     "params_mario/mario.prm",
@@ -158,6 +158,11 @@ pub const REQUIRED: [&str; 30] = [
     "scene/mapobj/coin.bmd",
     "params_mario/dmghamukuri.prm",
     "particle/ms_m_sphipd_a.jpa",
+    "particle/ms_m_watslide_a.jpa",
+    "particle/ms_m_watslide_b.jpa",
+    "particle/ms_m_watslide_c.jpa",
+    "particle/ms_coinget_a.jpa",
+    "particle/ms_coinget_b.jpa",
     "game_6/scrn/standard_1.blo",
     "enemy/kagemario/default.bmd",
 ];

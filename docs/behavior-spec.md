@@ -620,3 +620,12 @@ Coins fall and settle on world geometry, spin at two degrees per sim tick
 (TItemManager::perform), and use the coin/Mario pickup cylinders.
 The host caps loose coins at 128, expires them after 60 seconds, and clears them
 on scene changes and run exit. Nintendo files stay in the ignored assets folder.
+
+### First-run extraction for native hosts
+
+ABI 18 exposes sms_assets_complete, sms_find_disc and sms_extract to non-Rust hosts.
+Discovery checks SMS_DISC and supplied folders, validates the Sunshine Game ID, and accepts
+ISO/GCM/CISO. An incomplete cache is extracted from the user's disc; a complete cache is reused
+without reopening the disc. The required-file list includes wet-slide waves and coin pickup
+effects, so older caches missing these assets are repaired. Hosts wait before creating sims
+or views while extraction writes files, and receive a UTF-8 error on failure.

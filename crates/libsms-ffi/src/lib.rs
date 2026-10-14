@@ -12,6 +12,7 @@
 //! posed and skinned, and the game's sounds). [`sms_struct_sizes`] lets a host check its copies
 //! of these structs.
 
+pub mod assets;
 pub mod view;
 
 use std::ffi::{CStr, CString, c_char, c_void};
@@ -27,7 +28,7 @@ use libsms::{
 use view::SmsView;
 
 /// ABI version, bumped when the C interface changes.
-pub const SMS_ABI_VERSION: u32 = 17;
+pub const SMS_ABI_VERSION: u32 = 18;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sms_abi_version() -> u32 {
