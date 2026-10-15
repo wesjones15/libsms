@@ -32,14 +32,14 @@ Workspace:
 - `crates/libsms-assets/`: readers for drawing (J3D `.bmd` models incl. MAT3/TEV materials, GX
   textures, `.btp` patterns, `.blo` screens, skinning, which hand models each clip uses). Like libpikmin-assets.
 - `crates/viewer/`: sample host. Draws the disc's Mario (body, hands, cap, FLUDD + nozzle) with a
-  GLSL TEV interpreter on raw miniquad pipelines (`j3d.rs`). `SMS_SHOT=<png>` (+`SMS_SHOT_FRAME`,
+  GLSL TEV interpreter on raw miniquad pipelines (`j3d.rs`). `SMS_SHOT=<png>` (+`SMS_SHOT_FRAME`, or `SMS_SHOT_TIME=<seconds of sim time>`, which a rocket launch needs; `SMS_NOZZLE=<1-4>`,
   `SMS_CAM=yaw,pitch,dist`, `SMS_HIDE=body,cap,hands,fludd,nozzle`) takes a screenshot and quits;
   `SMS_R=<0-255>` holds the trigger, `SMS_HANG=1` starts hanging from a ledge, `SMS_HOLD=1`
   starts carrying fruit, `SMS_YOSHI=1` rides Yoshi (`=2`: he stands by), `SMS_B=<frame>` presses
   B once, `SMS_HIT=<frame>` hurts Mario then (K in play), `SMS_FOCUS=yoshi` points the camera at Yoshi, `SMS_PROF=1` prints where each second's
   frame time went (sim, scene, water). No GL state queries per frame: `glGetIntegerv` waits for
   the GPU (it cost 5 ms a frame while spraying). FLUDD and the nozzle pose from `Mario::fludd_look`, and the drawn
-  muzzles go back through `Mario::set_emitters`. Water is `libsms::water` drawn like the game: coverage into the
+  muzzles go back through `Mario::set_emitters`. It does not draw the JPA particle effects (smoke, bursts, exhaust): only a host using `libsms-present`'s `View` does, so test those headlessly, as the nozzle tests in `view.rs` do (set `SMS_ASSETS` or they skip). Water is `libsms::water` drawn like the game: coverage into the
   window's alpha against the scene's depth, then a refracting screen pass (`water.rs`); fruit is `props.rs`; a
   walking Strollin' Stu for Yoshi to eat is `stu.rs` (a stand-in, no enemy AI; walking into
   it hurts Mario); coins are `coin.rs`; the damage flash is `Look::fog`;

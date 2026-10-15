@@ -943,6 +943,7 @@ async fn main() {
         mq(sim.mario.pos) + vec3(0.0, 1.0, 0.0)
     };
     let mut frame_no = 0u32;
+    let mut sim_secs = 0.0f32;
     let prof = std::env::var("SMS_PROF").is_ok();
     let mut prof_acc = [0.0f64; 5];
     // `SMS_CAM=yaw,pitch,dist` overrides the starting camera.
@@ -958,6 +959,7 @@ async fn main() {
 
     loop {
         let dt = get_frame_time().min(0.1);
+        sim_secs += dt;
 
         // Camera.
         if is_key_down(KeyCode::Left) {
@@ -1013,6 +1015,8 @@ async fn main() {
         // `SMS_R=<0-255>` holds the trigger (for screenshots of spraying).
         if let Some(r) = std::env::var("SMS_R").ok().and_then(|v| v.parse().ok()) {
             pad.r_analog = r;
+            // All the way in is the click that crouches him (Ctrl): what the Rocket charges from.
+            pad.r = r >= 255;
         }
         // `SMS_B=<frame>` presses B on that frame (for screenshots of the tongue).
         if std::env::var("SMS_B")
@@ -1064,6 +1068,22 @@ async fn main() {
             }
             if is_key_pressed(KeyCode::G) {
                 f.refill(&p);
+            }
+            // `SMS_NOZZLE=<1-4>` starts with that nozzle (Spray, Hover, Rocket, Turbo), for screenshots.
+            if frame_no == 0
+                && let Some(n) = std::env::var("SMS_NOZZLE").ok().and_then(|v| v.parse::<u32>().ok())
+            {
+                let kind = match n {
+                    1 => Some(NozzleKind::Spray),
+                    2 => Some(NozzleKind::Hover),
+                    3 => Some(NozzleKind::Rocket),
+                    4 => Some(NozzleKind::Turbo),
+                    _ => None,
+                };
+                if let Some(kind) = kind {
+                    f.change_nozzle(kind, false, &p);
+                    f.refill(&p);
+                }
             }
         }
 
@@ -1276,7 +1296,13 @@ async fn main() {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(90u32);
-            if frame_no == at {
+            // `SMS_SHOT_TIME=<seconds>` waits for that much sim time instead (frames run as fast as
+            // the machine draws them, so a frame count isn't a moment in the game).
+            let due = match std::env::var("SMS_SHOT_TIME").ok().and_then(|v| v.parse::<f32>().ok()) {
+                Some(t) => sim_secs >= t,
+                None => frame_no == at,
+            };
+            if due {
                 get_screen_data().export_png(&path);
                 break;
             }
