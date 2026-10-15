@@ -2573,6 +2573,8 @@ mod tests {
                     | "ms_m_watslide_b"
                     | "ms_m_watslide_c"
                     | "ms_nozzlesmoke"
+                    | "ms_watboost_a"
+                    | "ms_watboost_b"
             ) || crate::view::SUPER_POUND_FLAMES.contains(&name);
             if !held {
                 p.emit(name, Mat4::IDENTITY, 1.0);

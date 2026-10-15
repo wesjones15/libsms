@@ -228,7 +228,12 @@ requested each tick at every muzzle (`FxAt::Muzzle`, matrices from the posed noz
 `MV24_JUMP_SPECIAL` voice and fires `ms_m_rocket_d`, `ms_m_rocket_c` and `ms_hipdrop_a` at Mario, and
 `ms_m_rocket_a`/`b`/`b2` from the first muzzle, following it as it moves (`FxAt::MuzzleFollow`, one-shots
 whose emitter tracks the muzzle). The Hover starts with the `MV21_JUMP_SMALL` voice and the Turbo with
-`MV15_EXERT_INST` (it never enters the Rocket status, so it has no rocket effects). Rocketing with water
+`MV15_EXERT_INST` (it never enters the Rocket status, so it has no rocket effects). The **Turbo dash**
+(`checkController` sets `MARIO_FLAG_FLUDD_EMITTING` once charged and running, `Mario::dashing`) starts
+`PO_SNIPER_TRIGGER` on Mario, then `PO_SPREAD` every tick of the dash (`MarioRun`); `TMarioEffect` plays
+the `01_waterboost` cone on FLUDD's emit matrix (`_in` while it lasts, `_out` after, `View`'s model 12) and
+binds `ms_watboost_a`/`b` (ids 0xFE, 0xFF) to the first muzzle. The cone's `.btk` (texture scroll) isn't
+ported yet: it draws with its first frame's texture. Rocketing with water
 tips Mario's head back by `mHoverHeadAngle`; an upward-aimed nozzle tips it by half the gun's angle
 (`MarioHeadCtrl`; his other head turns, toward signs and walls, aren't done). The spin-shot's effects
 (`ms_m_spinshot_a`/`b`, `emitRotateShootEffect`) aren't ported.

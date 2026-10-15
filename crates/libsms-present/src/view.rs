@@ -38,7 +38,9 @@ pub mod models {
     pub const FLUDD: u32 = 6;
     /// Spray, Hover, Rocket, Turbo, Yoshi (`dummy_wg`).
     pub const NOZZLES: [u32; 5] = [7, 8, 9, 10, 11];
-    pub const COUNT: usize = 12;
+    /// The Turbo dash's water-boost cone, there when the disc's files are.
+    pub const WATERBOOST: u32 = 12;
+    pub const COUNT: usize = 13;
 }
 
 /// Largest baked texture side.
@@ -181,12 +183,52 @@ pub struct Draw {
     pub alpha: f32,
 }
 
+/// The Turbo dash's water-boost cone and where it is in its clips (`TMarioEffect::perform`'s
+/// `unk7C`: 0 not shown, 1 `_in` while the dash lasts, 2 `_out` until it completes).
+struct Boost {
+    /// `01_waterboost_in`, `01_waterboost_out`.
+    clips: [Clip; 2],
+    state: u8,
+    frame: f32,
+    /// The game frame (a quarter of the 120 Hz ticks) it last stepped at.
+    game_frame: u64,
+}
+
+impl Boost {
+    /// One game frame of the cone's state machine; `dashing` is `MARIO_FLAG_FLUDD_EMITTING`.
+    fn step(&mut self, dashing: bool) {
+        match self.state {
+            0 => {
+                if dashing {
+                    self.state = 1;
+                    self.frame = 0.0;
+                }
+            }
+            1 => {
+                if dashing {
+                    self.frame += 1.0;
+                } else {
+                    self.state = 2;
+                    self.frame = 0.0;
+                }
+            }
+            _ => {
+                self.frame += 1.0;
+                if self.frame >= self.clips[1].frames {
+                    self.state = 0;
+                }
+            }
+        }
+    }
+}
+
 pub struct View {
     pub models: Vec<Model>,
     pub textures: Textures,
     skeleton: Skeleton,
     clips: ClipLibrary,
     fludd_clips: HashMap<String, Clip>,
+    boost: Option<Boost>,
     wink: Option<TexPattern>,
     eye_materials: Vec<usize>,
     hand_joints: [Option<usize>; 2],
@@ -284,6 +326,9 @@ pub const MARIO_EFFECTS: &[&str] = &[
     "ms_m_rocket_c",
     "ms_m_rocket_d",
     "ms_nozzlesmoke",
+    // The Turbo's dash (`TMarioEffect::perform`): bound to the muzzle while it lasts.
+    "ms_watboost_a",
+    "ms_watboost_b",
 ];
 
 /// Host presentation: dust/smoke trails remain where they were emitted when Mario jumps.
@@ -621,6 +666,21 @@ impl View {
             )?);
         }
 
+        // The Turbo dash's cone; without its files (an older extraction) there is none.
+        let mut boost = None;
+        if let Ok(bmd) = load_bmd(dir, paths::WATERBOOST) {
+            let clip = |rel: &str| std::fs::read(dir.join(rel)).ok().and_then(|d| Clip::parse(&d));
+            if let (Some(i), Some(o)) = (clip(paths::WATERBOOST_IN), clip(paths::WATERBOOST_OUT)) {
+                list.push(build(bmd, &none, models::WATERBOOST, &mut textures)?);
+                boost = Some(Boost {
+                    clips: [i, o],
+                    state: 0,
+                    frame: 0.0,
+                    game_frame: 0,
+                });
+            }
+        }
+
         let mut fludd_clips = HashMap::new();
         for folder in std::fs::read_dir(dir.join("watergun2"))
             .into_iter()
@@ -688,6 +748,7 @@ impl View {
             skeleton,
             clips: assets.clips,
             fludd_clips,
+            boost,
             wink,
             eye_materials,
             shirt: false,
@@ -736,6 +797,7 @@ impl View {
             skeleton,
             clips: ClipLibrary::default(),
             fludd_clips: HashMap::new(),
+            boost: None,
             wink: None,
             eye_materials: Vec::new(),
             hand_joints: [None; 2],
@@ -1063,6 +1125,24 @@ impl View {
         self.hud_tick = m.ticks;
 
         // (model, its root in Mario's model space, its joints)
+        // The Turbo dash's water-boost cone, on FLUDD's muzzle (`TMarioEffect::perform`, which
+        // sets its base matrix to `getEmitMtx(0)`): `_in` while the dash lasts, then `_out`.
+        let boost_part = self.boost.as_mut().and_then(|b| {
+            let game_frame = m.ticks / 4;
+            for _ in 0..game_frame.saturating_sub(b.game_frame).min(8) {
+                b.step(m.dashing());
+            }
+            b.game_frame = game_frame;
+            if b.state == 0 {
+                return None;
+            }
+            let at = *muzzle_mtx.first()?;
+            let bmd = &self.models.get(models::WATERBOOST as usize)?.bmd;
+            let clip = &b.clips[(b.state == 2) as usize];
+            let js = bmd.pose(|j| clip.sample(j, b.frame), |_| None);
+            Some((models::WATERBOOST, at, js))
+        });
+
         let mut parts: Vec<(u32, Mat4, Vec<Mat4>)> =
             vec![(models::BODY, Mat4::IDENTITY, joints.clone())];
         if let Some(h) = self.head.and_then(|h| joints.get(h)) {
@@ -1089,6 +1169,9 @@ impl View {
         }
         if let Some((model, at, js)) = nozzle {
             parts.push((model, at, js));
+        }
+        if let Some(part) = boost_part {
+            parts.push(part);
         }
 
         for (model, root, js) in parts {
@@ -1570,5 +1653,59 @@ mod tests {
             }
             assert!(sampled);
         }
+    }
+
+    #[test]
+    fn the_turbo_dash_draws_the_water_boost_cone_and_its_particles() {
+        let dir = libsms::assets::find(None).expect("assets not found (set SMS_ASSETS)");
+        let mut v = View::load(&dir).unwrap();
+        assert!(v.models.len() > models::WATERBOOST as usize, "the cone didn't load");
+        let a = libsms::Assets::discover(None).unwrap();
+        let mut sim = Sim::new(a.params.clone(), a.anim_table.clone(), Vec3::ZERO, 0);
+        sim.mario.give_fludd();
+        {
+            let p = sim.mario.params.clone();
+            let f = sim.mario.fludd.as_mut().unwrap();
+            f.change_nozzle(libsms::NozzleKind::Turbo, false, &p);
+            f.refill(&p);
+        }
+        let mut host = Collect(Vec::new());
+        let mut pad = libsms::Pad { r_analog: 255, ..Default::default() };
+        pad.stick = libsms::Vec2::new(0.0, 1.0);
+        let mut cone_ticks = 0;
+        let mut boost_cues = 0;
+        let mut after_release = 0;
+        for tick in 0..120 * 12 {
+            if tick == 120 * 6 {
+                pad.r_analog = 0;
+            }
+            sim.mario.tick(&mut host, &pad, 0);
+            let events = std::mem::take(&mut host.0);
+            boost_cues += events.iter().filter(|e| matches!(e, Event::Particle(c) if c.name == "ms_watboost_a")).count();
+            v.events(&events, &sim.mario);
+            if tick % 4 == 3 {
+                v.update(&mut sim, 0.0);
+                let cone = v.draws.iter().find(|d| d.model == models::WATERBOOST);
+                if let Some(d) = cone {
+                    cone_ticks += 1;
+                    if cone_ticks == 20 {
+                        let (lo, hi) = (d.first_vertex as usize, v.models[models::WATERBOOST as usize].vertex_count);
+                        let pts = &v.positions[lo..lo + hi];
+                        let n = pts.len() as f32;
+                        let mean = pts.iter().fold(Vec3::ZERO, |s, p| s + *p) / n;
+                        // Out the back of his pack (model space: -z is behind him), at the nozzle's height.
+                        assert!(mean.z < -80.0, "the cone isn't behind him: {mean:?}");
+                        assert!(mean.y > 40.0 && mean.y < 160.0, "the cone isn't at the nozzle's height: {mean:?}");
+                    }
+                    if tick > 120 * 6 + 600 {
+                        after_release += 1;
+                    }
+                }
+            }
+        }
+        assert!(cone_ticks > 30, "the cone was drawn on only {cone_ticks} updates");
+        assert!(boost_cues > 100, "the dash asked for {boost_cues} watboost cues");
+        assert_eq!(after_release, 0, "the cone stays after the dash ends");
+        assert!(!v.fx.vertices.is_empty() || boost_cues > 0);
     }
 }

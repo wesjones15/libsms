@@ -624,6 +624,9 @@ impl Mario {
             self.set_player_velocity(v);
             // `startSoundActor(MSD_SE_PO_SPREAD)`, every tick of the dash (a held sound).
             self.cue("MSD_SE_PO_SPREAD");
+            // `TMarioEffect::perform`: `ms_watboost_a` and `_b` bound to the emit matrix while it lasts.
+            self.fx("ms_watboost_a", crate::event::FxAt::Muzzle(0));
+            self.fx("ms_watboost_b", crate::event::FxAt::Muzzle(0));
         }
         false
     }

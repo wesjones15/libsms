@@ -75,6 +75,11 @@ pub mod paths {
     pub const NOZZLE_TURBO: &str = "watergun2/back_wg/back_wg.bmd";
     /// The Yoshi slot's model (`nozzleBmdData[3]`): FLUDD's head folded away while Mario rides.
     pub const NOZZLE_YOSHI: &str = "watergun2/dummy_wg/dummy_wg.bmd";
+    /// The Turbo dash's water-boost cone (`TMarioEffect::TMarioEffect`, MarioEffect.cpp): the model and its
+    /// two clips (`startDashEffect` plays `_in`, `endDashEffect` `_out`).
+    pub const WATERBOOST: &str = "01_waterboost/01_waterboost.bmd";
+    pub const WATERBOOST_IN: &str = "01_waterboost/01_waterboost_in.bck";
+    pub const WATERBOOST_OUT: &str = "01_waterboost/01_waterboost_out.bck";
     /// Blinking (`marioAnimeTexPatternFilenames[0]`, MarioDraw.cpp).
     pub const WINK: &str = "btp/ma_wink_tx.btp";
     /// Shadow Mario's model (`/scene/kagemario/`, gathered from the stage archives).
