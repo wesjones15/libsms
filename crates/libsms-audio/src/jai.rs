@@ -290,6 +290,17 @@ impl SyncHandler for Jai {
                 let i = (e.tracks[t].route & 0xFF) as usize;
                 let p = self.se_track_params.get(i).copied().unwrap_or_default();
                 let o = &mut e.outer[t];
+                // Leaf tracks start with outer switches off. JAI's per-sound layers
+                // need the same enabled parameters as JAISystemInterface::outerInit.
+                for flag in [
+                    update::VOLUME,
+                    update::PAN,
+                    update::PITCH,
+                    update::FXMIX,
+                    update::DOLBY,
+                ] {
+                    o.on(flag);
+                }
                 o.set(update::VOLUME, p.volume);
                 o.set(update::PAN, p.pan);
                 o.set(update::PITCH, p.pitch);
@@ -1264,15 +1275,19 @@ impl SoundSystem {
         if let Some(t) = self.engine.route_track(r, route) {
             let o = &mut self.engine.outer[t];
             if changed[0] {
+                o.on(update::VOLUME);
                 o.set(update::VOLUME, volume);
             }
             if changed[1] {
+                o.on(update::PITCH);
                 o.set(update::PITCH, pitch);
             }
             if changed[2] {
+                o.on(update::PAN);
                 o.set(update::PAN, pan);
             }
             if changed[3] {
+                o.on(update::FXMIX);
                 o.set(update::FXMIX, fxmix);
             }
         }
