@@ -19,6 +19,7 @@
 //! code defaults and a plain capsule are used, and the HUD says so. `--demo` replays a script.
 
 mod coin;
+mod fx;
 mod j3d;
 mod mario_model;
 mod props;
@@ -922,6 +923,8 @@ async fn main() {
     }
     let mut water = WaterManager::new(&params);
     let mut water_view = assets.as_ref().and_then(|a| water::WaterView::load(&a.dir));
+    // The game's particle effects (nozzle mist, smoke, exhaust), run by libsms-present's View.
+    let mut fx_layer = assets.as_ref().and_then(|a| fx::FxLayer::load(&a.dir));
     let mut water_ticks = 0u32;
     let mut props = assets.as_ref().map(|a| props::Props::load(&a.dir));
     let mut coin_model = assets.as_ref().and_then(|a| {
@@ -1097,6 +1100,9 @@ async fn main() {
                 audio.events(&world.sounds, mario);
                 audio.tick(mario);
             }
+            if let Some(fx) = &mut fx_layer {
+                fx.events(&world.sounds, mario);
+            }
             world.sounds.clear();
         });
         world.touch(&mut sim.mario);
@@ -1259,6 +1265,12 @@ async fn main() {
             _ => draw_mario(&sim, rig.as_ref(), sim.alpha()),
         }
         let t2 = std::time::Instant::now();
+        if let Some(fx) = fx_layer.as_mut() {
+            let fwd = (camera.target - camera.position).normalize_or_zero();
+            let right = fwd.cross(vec3(0.0, 1.0, 0.0)).normalize_or_zero();
+            fx.update(&mut sim, dt, right, right.cross(fwd));
+            fx.draw(S);
+        }
         match water_view.as_mut() {
             Some(v) => v.draw(&water, &camera, sim.mario.juice_color()),
             None => draw_water_plain(&water),

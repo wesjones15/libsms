@@ -39,7 +39,7 @@ Workspace:
   B once, `SMS_HIT=<frame>` hurts Mario then (K in play), `SMS_FOCUS=yoshi` points the camera at Yoshi, `SMS_PROF=1` prints where each second's
   frame time went (sim, scene, water). No GL state queries per frame: `glGetIntegerv` waits for
   the GPU (it cost 5 ms a frame while spraying). FLUDD and the nozzle pose from `Mario::fludd_look`, and the drawn
-  muzzles go back through `Mario::set_emitters`. It does not draw the JPA particle effects (smoke, bursts, exhaust): only a host using `libsms-present`'s `View` does, so test those headlessly, as the nozzle tests in `view.rs` do (set `SMS_ASSETS` or they skip). Water is `libsms::water` drawn like the game: coverage into the
+  muzzles go back through `Mario::set_emitters`. It draws the JPA particle effects (the nozzle mist, smoke, bursts, exhaust) through `libsms-present`'s `View` (`fx.rs`, macroquad quads; refraction batches and the water-boost cone model aren't drawn); the `nozzle` example renders them headlessly to a PNG, and the nozzle tests in `view.rs` check them (set `SMS_ASSETS` or they skip). Water is `libsms::water` drawn like the game: coverage into the
   window's alpha against the scene's depth, then a refracting screen pass (`water.rs`); fruit is `props.rs`; a
   walking Strollin' Stu for Yoshi to eat is `stu.rs` (a stand-in, no enemy AI; walking into
   it hurts Mario); coins are `coin.rs`; the damage flash is `Look::fog`;
