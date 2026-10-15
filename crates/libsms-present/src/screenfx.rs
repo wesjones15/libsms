@@ -18,8 +18,13 @@
 //! inset 100 pixels, fading in over 32 frames, then solid for 100) comes in behind it, so the
 //! cut-out letters fill with red ([`Frame::card`]).
 //!
+//! The two play together on a real game over, as the game's own screens do (`TMarDirector` state
+//! 7 starts the letters and the wipe at once): the letters are under the wipe, so they dim and
+//! then vanish as its black comes in.
+//!
 //! Both run at the game's 30 frames a second: [`ScreenFx::step`] takes seconds and runs the whole
-//! frames that makes. Positions are on a 640 by 480 screen (the wipe's `hx.width` by
+//! frames that makes, and what is drawn is worked out between the last two of them, so a host
+//! drawing faster than that sees smooth motion. Positions are on a 640 by 480 screen (the wipe's `hx.width` by
 //! `hx.height`; the 600 wide HUD layout is centred on it).
 
 use std::path::Path;
@@ -59,9 +64,9 @@ pub struct Card {
 }
 
 /// What to draw this frame, back to front: the whole screen covered by black at `fill` (alpha),
-/// the `card` (alpha 0 when there is none), the `overlay` (black pixels with their alpha, over the
-/// middle 640 by 480 of the screen, and black at `edge` alpha where the screen goes past it),
-/// then the sprites.
+/// the sprites, the `card` (alpha 0 when there is none), then the `overlay` (black pixels with
+/// their alpha, over the middle 640 by 480 of the screen, and black at `edge` alpha where the
+/// screen goes past it).
 #[derive(Debug, Clone, Default)]
 pub struct Frame {
     pub fill: f32,
@@ -250,6 +255,8 @@ pub struct ScreenFx {
     /// Seconds not yet run as frames.
     spare: f32,
     game_over: GameOver,
+    /// The state a frame before, for drawing between them.
+    game_over_before: GameOver,
     /// Bumped by every [`ScreenFx::start`] and whenever the frame changes.
     pub version: u32,
     now: Frame,
@@ -340,6 +347,7 @@ impl ScreenFx {
             frame: 0,
             spare: 0.0,
             game_over: GameOver::new(),
+            game_over_before: GameOver::new(),
             version: 0,
             now: Frame::default(),
         })
@@ -371,6 +379,7 @@ impl ScreenFx {
         self.frame = 0;
         self.spare = 0.0;
         self.game_over = GameOver::new();
+        self.game_over_before = GameOver::new();
         self.build();
         true
     }
@@ -399,22 +408,22 @@ impl ScreenFx {
         }
     }
 
-    /// The running effect `seconds` on, in whole game frames.
+    /// The running effect `seconds` on: whole game frames run, and what is drawn is the way
+    /// between the last two.
     pub fn step(&mut self, seconds: f32) {
-        if self.kind.is_none() || self.finished() {
+        if self.kind.is_none() {
             return;
         }
-        self.spare += seconds.max(0.0) * FPS;
-        let mut ran = false;
-        while self.spare >= 1.0 && !self.finished() {
-            self.spare -= 1.0;
-            self.frame += 1;
-            if self.kind == Some(Kind::GameOver) {
-                self.game_over.tick();
+        if !self.finished() {
+            self.spare += seconds.max(0.0) * FPS;
+            while self.spare >= 1.0 && !self.finished() {
+                self.spare -= 1.0;
+                self.frame += 1;
+                if self.kind == Some(Kind::GameOver) {
+                    self.game_over_before = self.game_over.clone();
+                    self.game_over.tick();
+                }
             }
-            ran = true;
-        }
-        if ran {
             self.build();
         }
     }
@@ -426,41 +435,42 @@ impl ScreenFx {
 
     fn build(&mut self) {
         self.version = self.version.wrapping_add(1);
+        // How far from the last whole game frame to the next.
+        let frac = self.spare.clamp(0.0, 1.0);
         self.now = match self.kind {
-            Some(Kind::TooBad) => self.too_bad(),
-            Some(Kind::GameOver) => self.game_over_frame(),
+            Some(Kind::TooBad) => self.too_bad(frac),
+            Some(Kind::GameOver) => self.game_over_frame(frac),
             None => Frame::default(),
         };
     }
 
-    fn too_bad(&self) -> Frame {
-        let f = self.frame;
-        let fill = (1.0 - f as f32 / TOO_BAD_OPEN as f32).max(0.0);
-        // The letters leave with the frame count run out, fading over its last second.
-        let leaving = ((TOO_BAD_LENGTH.saturating_sub(f)) as f32 / FPS).clamp(0.0, 1.0);
+    /// The letters `frac` of a frame past the whole frame `self.frame`: `processMiss`' stretches
+    /// of each letter's own clock `t` (in frames), each a Bezier worked out in between.
+    fn letters(&self, frac: f32) -> Vec<Sprite> {
+        let ft = self.frame as f32 + frac;
+        // They leave with the frame count run out, fading over its last second.
+        let leaving = ((TOO_BAD_LENGTH as f32 - ft) / FPS).clamp(0.0, 1.0);
         let mut sprites = Vec::new();
         for (i, l) in self.letters.iter().enumerate() {
-            let t = f as i32 - 10 * i as i32;
-            if t < 0 {
+            let t = ft - 10.0 * i as f32;
+            if t < 0.0 {
                 continue;
             }
-            // processMiss: the stretches of each letter's own clock `t` (in frames).
-            let (y, spin, alpha) = if t < 60 {
-                let u = t as f32 / 60.0;
+            let (y, spin, alpha) = if t < 60.0 {
                 // Turning once and fading in (12 of 255 a frame) while it drops.
                 (
-                    bezier(-270.0, -270.0, 30.0, u),
-                    (-t as f32) * 6.0,
-                    (12.0 * (t + 1) as f32 / 255.0).min(1.0),
+                    bezier(-270.0, -270.0, 30.0, t / 60.0),
+                    -t * 6.0,
+                    (12.0 * (t + 1.0) / 255.0).min(1.0),
                 )
-            } else if t < 100 {
-                (bezier(30.0, -80.0, -80.0, (t - 60) as f32 / 40.0), 0.0, 1.0)
-            } else if t < 140 {
-                (bezier(-80.0, -80.0, 0.0, (t - 100) as f32 / 40.0), 0.0, 1.0)
-            } else if t < 300 {
+            } else if t < 100.0 {
+                (bezier(30.0, -80.0, -80.0, (t - 60.0) / 40.0), 0.0, 1.0)
+            } else if t < 140.0 {
+                (bezier(-80.0, -80.0, 0.0, (t - 100.0) / 40.0), 0.0, 1.0)
+            } else if t < 300.0 {
                 (0.0, 0.0, 1.0)
             } else {
-                (bezier(0.0, 0.0, 150.0, ((t - 300) as f32 / 30.0).min(1.0)), 0.0, 1.0)
+                (bezier(0.0, 0.0, 150.0, ((t - 300.0) / 30.0).min(1.0)), 0.0, 1.0)
             };
             sprites.push(Sprite {
                 picture: l.picture,
@@ -470,31 +480,38 @@ impl ScreenFx {
                 color: [1.0, 1.0, 1.0, alpha * leaving],
             });
         }
+        sprites
+    }
+
+    fn too_bad(&self, frac: f32) -> Frame {
+        let fill = (1.0 - (self.frame as f32 + frac) / TOO_BAD_OPEN as f32).max(0.0);
         Frame {
             fill,
             card: Card::default(),
             overlay: None,
             edge: 0.0,
-            sprites,
+            sprites: self.letters(frac),
         }
     }
 
-    fn game_over_frame(&self) -> Frame {
-        let g = &self.game_over;
+    fn game_over_frame(&self, frac: f32) -> Frame {
+        let (g, before) = (&self.game_over, &self.game_over_before);
         let Some(picture) = self.game_over_picture else {
             return Frame::default();
         };
         let img = &self.pictures[picture as usize];
         // Let go at the end.
         let out = if g.state == 6 {
-            let t = g.after.saturating_sub(GAME_OVER_HOLD) as f32 / GAME_OVER_FADE as f32;
+            let t = (g.after.saturating_sub(GAME_OVER_HOLD) as f32 + frac) / GAME_OVER_FADE as f32;
             (1.0 - t).clamp(0.0, 1.0)
         } else {
             1.0
         };
+        let lerp = |a: f32, b: f32| a + (b - a) * frac;
+        let (mag, rot, fade) = (lerp(before.mag, g.mag), lerp(before.rot, g.rot), lerp(before.fade, g.fade));
         // `Hxs_GameOver(alpha, 2 mag, rot)`: alpha is the fade-in until the wipe has pulled back.
-        let alpha = if g.state >= 2 { 1.0 } else { (g.fade / 255.0).clamp(0.0, 1.0) };
-        let corners = game_over_uv(g.mag * 2.0, g.rot, img);
+        let alpha = if g.state >= 2 { 1.0 } else { (fade / 255.0).clamp(0.0, 1.0) };
+        let corners = game_over_uv(mag * 2.0, rot, img);
         let (w, h) = (OVERLAY[0] as usize, OVERLAY[1] as usize);
         let mut rgba = vec![0u8; w * h * 4];
         for y in 0..h {
@@ -535,7 +552,8 @@ impl ScreenFx {
             }),
             // Past the picture the texture is clamped to its border, which is black.
             edge: sample_alpha(img, -1.0, -1.0) * alpha * out,
-            sprites: Vec::new(),
+            // The letters of the miss, under the wipe's black.
+            sprites: self.letters(frac),
         }
     }
 }
@@ -642,6 +660,36 @@ mod tests {
         run(&mut fx, 400);
         assert!(fx.finished());
         assert_eq!(fx.frame().edge, 0.0);
+    }
+
+    #[test]
+    fn game_over_has_the_letters_of_a_miss_under_it() {
+        let Some(mut fx) = fx() else { return };
+        if !fx.has(Kind::TooBad) || !fx.start(Kind::GameOver) {
+            return;
+        }
+        run(&mut fx, 40);
+        let f = fx.frame();
+        assert!(f.overlay.is_some() && f.sprites.len() >= 3, "{} letters", f.sprites.len());
+        // The black does not open: that is a miss's.
+        assert_eq!(f.fill, 0.0);
+    }
+
+    #[test]
+    fn what_is_drawn_moves_between_game_frames() {
+        let Some(mut fx) = fx() else { return };
+        if !fx.start(Kind::TooBad) {
+            return;
+        }
+        run(&mut fx, 20);
+        let a = fx.frame().sprites[0].center[1];
+        // A quarter of a frame later the first letter has moved, though no game frame has run.
+        fx.step(0.25 / FPS);
+        let b = fx.frame().sprites[0].center[1];
+        assert!(b > a, "{a} -> {b}");
+        fx.step(0.5 / FPS);
+        let c = fx.frame().sprites[0].center[1];
+        assert!(c > b);
     }
 
     #[test]
