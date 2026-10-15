@@ -426,6 +426,15 @@ impl Audio {
         }
     }
 
+    /// A host-owned object's sound effect (`MSD_SE_*`, as `startSoundActor` plays it) at `pos`, on
+    /// its own actor group; false for a name the game doesn't have. The Shine's appearance is one.
+    pub fn play_at(&self, name: &str, pos: Vec3) -> bool {
+        self.sys
+            .lock()
+            .ok()
+            .is_some_and(|mut sys| sys.play(name, Some(pos), COIN).is_some())
+    }
+
     pub fn tick(&mut self, mario: &Mario) {
         if let Ok(mut sys) = self.sys.lock() {
             self.scene.tick(&mut sys, mario);

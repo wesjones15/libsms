@@ -440,6 +440,29 @@ pub unsafe extern "C" fn sms_view_camera_shot(
     }
 }
 
+/// Plays a sound effect of the game's (`name`, an `MSD_SE_*`) at `pos` (sim world units) through a
+/// view that has sound. Returns 0 without sound or for a name the game doesn't have.
+///
+/// # Safety
+/// `view` from [`sms_view_new`]; `name` a nul-terminated UTF-8 string; `pos` readable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_sound(view: *mut SmsView, name: *const c_char, pos: *const SmsVec3) -> u8 {
+    if name.is_null() {
+        return 0;
+    }
+    // SAFETY: as documented.
+    let (Some(pos), Ok(name)) = (unsafe { pos.as_ref() }, unsafe { std::ffi::CStr::from_ptr(name) }.to_str())
+    else {
+        return 0;
+    };
+    let pos = Vec3::from(*pos);
+    if !pos.is_finite() {
+        return 0;
+    }
+    // SAFETY: as documented.
+    unsafe { with_view(view, 0, |v| v.audio.as_ref().is_some_and(|a| a.play_at(name, pos)) as u8) }
+}
+
 /// # Safety
 /// `view` from [`sms_view_new`] and not used afterwards. Null is ignored.
 #[unsafe(no_mangle)]
