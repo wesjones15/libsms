@@ -686,6 +686,43 @@ mod tests {
     }
 
     #[test]
+    fn held_fludd_output_has_headroom_at_device_rates() {
+        let Some((assets, _)) = fixture() else {
+            return;
+        };
+        let data = Arc::new(SoundData::load(&assets.dir).unwrap());
+        for rate in [32000, 48000] {
+            let mut sys = SoundSystem::new(data.clone());
+            let mut scene = SceneAudio::load(&assets.dir, &sys);
+            let mario = Mario::new(
+                assets.params.clone(),
+                assets.anim_table.clone(),
+                Vec3::ZERO,
+                0,
+            );
+            let cue = Event::Sound(SoundCue {
+                name: "MSD_SE_PO_HOVER",
+                pos: Vec3::ZERO,
+                info: None,
+            });
+            let mut buffer = vec![0.0; rate / 30 * 2];
+            let mut peak = 0.0f32;
+            let mut clipped = 0;
+            for _ in 0..120 {
+                scene.events(&mut sys, &[cue], &mario);
+                sys.frame();
+                sys.render(&mut buffer, rate as f32);
+                assert!(buffer.iter().all(|v| v.is_finite()));
+                peak = peak.max(buffer.iter().map(|v| v.abs()).fold(0.0, f32::max));
+                clipped += buffer.iter().filter(|v| v.abs() >= 0.999).count();
+            }
+            eprintln!("hover {rate} Hz: peak {peak}, clipped {clipped}");
+            assert!(peak > 0.001, "silent hover loop");
+            assert_eq!(clipped, 0, "hover loop clips before host volume is applied");
+        }
+    }
+
+    #[test]
     fn held_water_keeps_its_handle_then_stops_and_music_cycles() {
         let Some((assets, mut sys)) = fixture() else {
             return;
