@@ -226,7 +226,9 @@ pub unsafe extern "C" fn sms_view_new(assets_dir: *const c_char, sound: u8) -> *
 
 /// [`sms_view_new`] drawing `look`: 0 Mario, 1 Shadow Mario, 2 a static yellow coin.
 /// Coin views use the usual model readers; hosts supply instance transforms and never
-/// call sms_view_update (Mario's animation update) on them.
+/// call sms_view_update (Mario's animation update) on them. `look` 3 is the Shine Sprite: the
+/// same readers, with the model posed by [`sms_view_shine_update`] (never `sms_view_update`),
+/// its glow in the `sms_view_fx_*` readers and the Shine Get camera in [`sms_view_camera_shot`].
 ///
 /// # Safety
 /// `assets_dir` a nul-terminated UTF-8 path.
@@ -248,6 +250,7 @@ pub unsafe extern "C" fn sms_view_new_look(
         let look = match look {
             1 => libsms_present::Look::Shadow,
             2 => libsms_present::Look::Coin,
+            3 => libsms_present::Look::Shine,
             _ => libsms_present::Look::Mario,
         };
         let view = View::load_look(&dir, look).ok()?;
@@ -302,6 +305,138 @@ pub unsafe extern "C" fn sms_view_coin_get(view: *mut SmsView, pos: *const SmsVe
                 a.coin_get(pos);
             }
         });
+    }
+}
+
+/// One call of [`sms_view_shine_update`]: where the Shine is and which of its animations.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SmsShineFrame {
+    /// Seconds since the last call, for its glow.
+    pub dt: f32,
+    /// Where it stands (sim world units) and turned how far (a 16-bit angle).
+    pub pos: SmsVec3,
+    pub yaw: i16,
+    /// 0 waiting (the model's own pose), 1 `shine_float`, 2 `shine_demo_shine_get`.
+    pub clip: u8,
+    pub _pad: u8,
+    /// Frame of that clip, 60 a second.
+    pub frame: f32,
+    /// The glow's size: 1, or one half once taken.
+    pub scale: f32,
+    /// The camera's right and up, for the glow's billboards.
+    pub right: SmsVec3,
+    pub up: SmsVec3,
+}
+
+/// A Shine view's animation lengths ([`sms_view_shine_info`]).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SmsShineInfo {
+    /// `shine_float`'s and `shine_demo_shine_get`'s frames.
+    pub float_frames: f32,
+    pub demo_frames: f32,
+    /// The Shine Get camera's path for a Shine in the open and under a roof; 0 without it.
+    pub camera_outside_frames: f32,
+    pub camera_inside_frames: f32,
+}
+
+/// The Shine Get camera at one moment ([`sms_view_camera_shot`]).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SmsCameraShot {
+    pub eye: SmsVec3,
+    pub at: SmsVec3,
+    /// Unit up vector.
+    pub up: SmsVec3,
+    /// Vertical field of view, degrees.
+    pub fov: f32,
+}
+
+/// Poses a [`sms_view_new_look`] Shine view (look 3) and runs its glow: the model's posed vertices
+/// go to the usual readers, one draw (the host places its own instance), the glow to the
+/// `sms_view_fx_*` readers (sim world units).
+///
+/// # Safety
+/// `view` a Shine view; `frame` readable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_shine_update(view: *mut SmsView, frame: *const SmsShineFrame) {
+    // SAFETY: as documented.
+    let Some(f) = (unsafe { frame.as_ref() }).copied() else {
+        return;
+    };
+    if !Vec3::from(f.pos).is_finite() {
+        return;
+    }
+    // SAFETY: as documented.
+    unsafe {
+        with_view(view, (), |v| {
+            v.view.set_camera(Vec3::from(f.right), Vec3::from(f.up));
+            v.view.update_shine(
+                if f.dt.is_finite() { f.dt.clamp(0.0, 0.25) } else { 0.0 },
+                Vec3::from(f.pos),
+                f.yaw,
+                f.clip,
+                if f.frame.is_finite() { f.frame.max(0.0) } else { 0.0 },
+                if f.scale.is_finite() { f.scale.clamp(0.0, 8.0) } else { 1.0 },
+            );
+        })
+    }
+}
+
+/// The Shine's animation and camera lengths. Returns 0 for a view that isn't a Shine's.
+///
+/// # Safety
+/// `view` from [`sms_view_new_look`]; `out` writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_shine_info(view: *mut SmsView, out: *mut SmsShineInfo) -> u8 {
+    // SAFETY: as documented.
+    unsafe {
+        with_view(view, 0, |v| {
+            let (Some(out), Some(clips)) = (out.as_mut(), v.view.shine_clip_frames()) else {
+                return 0;
+            };
+            *out = SmsShineInfo {
+                float_frames: clips[0],
+                demo_frames: clips[1],
+                camera_outside_frames: v.view.demo_camera_frames(false),
+                camera_inside_frames: v.view.demo_camera_frames(true),
+            };
+            1
+        })
+    }
+}
+
+/// The Shine Get camera (`inside` non-zero for a Shine under a roof) at clip frame `frame`: sim
+/// units with Mario's feet at the origin, facing along +Z (the demo turns it by the Shine's yaw).
+/// Returns 0 without the camera's files.
+///
+/// # Safety
+/// `view` a Shine view; `out` writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_camera_shot(
+    view: *mut SmsView,
+    inside: u8,
+    frame: f32,
+    out: *mut SmsCameraShot,
+) -> u8 {
+    // SAFETY: as documented.
+    unsafe {
+        with_view(view, 0, |v| {
+            let (Some(out), Some(s)) = (
+                out.as_mut(),
+                v.view.demo_camera(inside != 0, if frame.is_finite() { frame } else { 0.0 }),
+            ) else {
+                return 0;
+            };
+            *out = SmsCameraShot {
+                eye: s.eye.into(),
+                at: s.at.into(),
+                up: s.up.into(),
+                fov: s.fov,
+            };
+            1
+        })
     }
 }
 
@@ -1171,7 +1306,7 @@ pub unsafe extern "C" fn sms_view_life_pixels(
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SmsScreenFx {
-    /// 0 nothing running, 1 "TOO BAD!", 2 GAME OVER.
+    /// 0 nothing running, 1 "TOO BAD!", 2 GAME OVER, 3 the Shine Get's letters.
     pub kind: u32,
     /// 1 once the running one has played out.
     pub finished: u32,
@@ -1208,9 +1343,9 @@ pub struct SmsScreenSprite {
     pub color: [f32; 4],
 }
 
-/// Starts losing screen `which` (0 "TOO BAD!", 1 GAME OVER) from its first frame; it plays as the
-/// host steps it ([`sms_view_screenfx_step`]). Returns 0 without its pictures (the disc's wipe
-/// pictures are an optional part of the assets).
+/// Starts screen `which` (0 "TOO BAD!", 1 GAME OVER, 2 the Shine Get's "SHINE!" letters) from its
+/// first frame; it plays as the host steps it ([`sms_view_screenfx_step`]). Returns 0 without its
+/// pictures (the disc's wipe pictures are an optional part of the assets).
 ///
 /// # Safety
 /// `view` from [`sms_view_new`].
@@ -1221,6 +1356,7 @@ pub unsafe extern "C" fn sms_view_screenfx_start(view: *mut SmsView, which: u8) 
         with_view(view, 0, |v| {
             let kind = match which {
                 0 => libsms_present::screenfx::Kind::TooBad,
+                2 => libsms_present::screenfx::Kind::ShineGet,
                 _ => libsms_present::screenfx::Kind::GameOver,
             };
             v.view.screenfx.as_mut().is_some_and(|f| f.start(kind)) as u8
@@ -1278,6 +1414,7 @@ pub unsafe extern "C" fn sms_view_screenfx_info(view: *mut SmsView, out: *mut Sm
                     None => 0,
                     Some(libsms_present::screenfx::Kind::TooBad) => 1,
                     Some(libsms_present::screenfx::Kind::GameOver) => 2,
+                    Some(libsms_present::screenfx::Kind::ShineGet) => 3,
                 },
                 finished: f.finished() as u32,
                 version: f.version,

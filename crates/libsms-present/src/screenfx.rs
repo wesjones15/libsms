@@ -8,6 +8,13 @@
 //! (`TMarDirector` state 7, `startWipe(10, 0, 2.2)`): [`Frame::fill`] is that black. Not drawn:
 //! the star burst as each letter lands (`createEmitter(0x1F9)`).
 //!
+//! "SHINE!" is `TConsoleStr::processShineGet` (the same screen's `sg00..sg05` panes, `S H I N E !`):
+//! each letter, six frames after the one before, flies in from the upper right with a small
+//! overshoot, settles, waits, and flies off to the lower left. It plays over the scene while Mario
+//! holds the Shine up (`fireGetStar` asks for it). The game starts it a fixed time into the demo
+//! (`TConsoleStr::unk20`); [`SHINE_GET_DELAY`] is that wait here. Not drawn: the star bursts
+//! that mark each letter (`createEmitter(0x1FE)` and `0x1FF`).
+//!
 //! GAME OVER is `Hx_GameOver` (GC2D/hx_wiper.c): the picture `wipe_gameover.bti` (from the
 //! disc's `common.szs` or `cmn2d_*.szs`; its intensity is its alpha) drawn in black through
 //! `Hxs_GameOver` over the whole screen, so the screen goes black with the letters cut out of
@@ -42,6 +49,8 @@ pub const FPS: f32 = 30.0;
 pub enum Kind {
     TooBad,
     GameOver,
+    /// The letters of a Shine Get.
+    ShineGet,
 }
 
 /// One picture on the screen: `picture` index into [`ScreenFx::picture`], its middle and size in
@@ -247,6 +256,8 @@ impl GameOver {
 pub struct ScreenFx {
     pictures: Vec<Image>,
     letters: Vec<Letter>,
+    /// `sg00..sg05`.
+    shine_letters: Vec<Letter>,
     /// `wipe_gameover.bti`'s picture index, with the disc's wipes.
     game_over_picture: Option<u32>,
     kind: Option<Kind>,
@@ -262,6 +273,12 @@ pub struct ScreenFx {
     now: Frame,
 }
 
+/// Game frames a Shine Get waits before its letters start: the game's `TConsoleStr::unk20` is
+/// 180 units of a clock that runs at a half step a frame, which would be twelve seconds into a
+/// demo the stage ends before; here they come a second in, as the pose is held.
+pub const SHINE_GET_DELAY: u32 = 30;
+/// Frames the Shine Get's letters are shown for: the last one's leaving (`6 * 5 + 280`).
+const SHINE_GET_LENGTH: u32 = SHINE_GET_DELAY + 30 + 280;
 /// How long the black takes to open onto the scene (the wipe's 2.2 seconds).
 const TOO_BAD_OPEN: u32 = 66;
 /// Frames the whole "TOO BAD!" is shown for: the last letter settled (frame 200) and a moment,
@@ -294,38 +311,35 @@ impl ScreenFx {
         let blo = std::fs::read(root.join("scrn/big_tx_1.blo"))
             .map_err(|e| format!("game_6/scrn/big_tx_1.blo: {e}"))
             .and_then(|b| Screen::parse(&b).map_err(|e| e.to_string()));
+        let mut shine_letters = Vec::new();
         match blo {
             Ok(screen) => {
-                for i in 0..7 {
-                    let Some(p) = screen.find(tag(&format!("ms0{i}"))) else {
-                        why = format!("no pane ms0{i}");
-                        letters.clear();
-                        break;
-                    };
-                    let Some(file) = p.texture.as_deref() else {
-                        why = format!("pane ms0{i} has no picture");
-                        letters.clear();
-                        break;
-                    };
-                    // Each letter is its own picture: the texture times the pane's corner colours.
-                    let index = match read(&root.join("timg").join(file), file) {
-                        Ok(img) => {
-                            pictures.push(tint(img, p.corners));
-                            pictures.len() - 1
-                        }
-                        Err(e) => {
-                            why = e;
-                            letters.clear();
-                            break;
-                        }
-                    };
-                    // The HUD's 600 wide layout, centred on the 640 wide screen.
-                    let (w, h) = (p.rect[2] as f32, p.rect[3] as f32);
-                    letters.push(Letter {
-                        picture: index as u32,
-                        at: [p.at[0] as f32 + w * 0.5 + 20.0, p.at[1] as f32 + h * 0.5],
-                        size: [w, h],
-                    });
+                // One effect's letters: panes `<prefix>00..`, each its own picture (the texture
+                // times the pane's corner colours). The HUD's 600 wide layout is centred on the
+                // 640 wide screen.
+                let mut load = |prefix: &str, count: usize| -> Result<Vec<Letter>, String> {
+                    let mut out = Vec::new();
+                    for i in 0..count {
+                        let pane = format!("{prefix}0{i}");
+                        let p = screen.find(tag(&pane)).ok_or(format!("no pane {pane}"))?;
+                        let file = p.texture.as_deref().ok_or(format!("pane {pane} has no picture"))?;
+                        let img = read(&root.join("timg").join(file), file)?;
+                        pictures.push(tint(img, p.corners));
+                        let (w, h) = (p.rect[2] as f32, p.rect[3] as f32);
+                        out.push(Letter {
+                            picture: pictures.len() as u32 - 1,
+                            at: [p.at[0] as f32 + w * 0.5 + 20.0, p.at[1] as f32 + h * 0.5],
+                            size: [w, h],
+                        });
+                    }
+                    Ok(out)
+                };
+                match load("ms", 7) {
+                    Ok(l) => letters = l,
+                    Err(e) => why = e,
+                }
+                if let Ok(l) = load("sg", 6) {
+                    shine_letters = l;
                 }
             }
             Err(e) => why = e,
@@ -342,12 +356,13 @@ impl ScreenFx {
                 None
             }
         };
-        if letters.is_empty() && game_over_picture.is_none() {
+        if letters.is_empty() && game_over_picture.is_none() && shine_letters.is_empty() {
             return Err(why);
         }
         Ok(ScreenFx {
             pictures,
             letters,
+            shine_letters,
             game_over_picture,
             kind: None,
             frame: 0,
@@ -364,6 +379,7 @@ impl ScreenFx {
         match kind {
             Kind::TooBad => !self.letters.is_empty(),
             Kind::GameOver => self.game_over_picture.is_some(),
+            Kind::ShineGet => !self.shine_letters.is_empty(),
         }
     }
 
@@ -408,6 +424,7 @@ impl ScreenFx {
         match self.kind {
             None => true,
             Some(Kind::TooBad) => self.frame >= TOO_BAD_LENGTH,
+            Some(Kind::ShineGet) => self.frame >= SHINE_GET_LENGTH,
             Some(Kind::GameOver) => {
                 self.game_over.after >= GAME_OVER_HOLD + GAME_OVER_FADE
             }
@@ -446,6 +463,10 @@ impl ScreenFx {
         self.now = match self.kind {
             Some(Kind::TooBad) => self.too_bad(frac),
             Some(Kind::GameOver) => self.game_over_frame(frac),
+            Some(Kind::ShineGet) => Frame {
+                sprites: self.shine_letters(frac),
+                ..Frame::default()
+            },
             None => Frame::default(),
         };
     }
@@ -490,6 +511,39 @@ impl ScreenFx {
                 size: l.size,
                 rotation: spin.to_radians(),
                 color: [1.0, 1.0, 1.0, alpha * leaving],
+            });
+        }
+        sprites
+    }
+
+    /// `processShineGet`' stretches of each letter's own clock `t` (frames since it showed):
+    /// flying in over 40 frames, settling over 20, resting until 200, then flying off over 40 while
+    /// fading by 7 of 255 a frame. Offsets are from where the letter rests.
+    fn shine_letters(&self, frac: f32) -> Vec<Sprite> {
+        let ft = (self.frame as f32 + frac) - SHINE_GET_DELAY as f32;
+        let mut sprites = Vec::new();
+        for (i, l) in self.shine_letters.iter().enumerate() {
+            let t = ft - 6.0 * i as f32;
+            if !(0.0..280.0).contains(&t) {
+                continue;
+            }
+            let at = |p: [f32; 3], q: [f32; 3], u: f32| [bezier(p[0], p[1], p[2], u), bezier(q[0], q[1], q[2], u)];
+            let offset = if t < 40.0 {
+                at([150.0, -21.0, -21.0], [-50.0, 7.0, 7.0], t / 40.0)
+            } else if t < 60.0 {
+                at([-21.0, -21.0, 0.0], [7.0, 7.0, 0.0], (t - 40.0) / 20.0)
+            } else if t < 200.0 {
+                [0.0, 0.0]
+            } else {
+                at([0.0, 0.0, -200.0], [0.0, 0.0, 65.0], ((t - 200.0) / 40.0).min(1.0))
+            };
+            let alpha = if t > 200.0 { (1.0 - 7.0 * (t - 200.0) / 255.0).max(0.0) } else { 1.0 };
+            sprites.push(Sprite {
+                picture: l.picture,
+                center: [l.at[0] + offset[0], l.at[1] + offset[1]],
+                size: l.size,
+                rotation: 0.0,
+                color: [1.0, 1.0, 1.0, alpha],
             });
         }
         sprites
@@ -648,6 +702,30 @@ mod tests {
         assert_eq!(f.fill, 0.0);
         run(&mut fx, 30);
         assert!(fx.finished());
+    }
+
+    #[test]
+    fn the_shine_get_letters_fly_in_in_turn_and_leave() {
+        let Some(mut fx) = fx() else { return };
+        if !fx.start(Kind::ShineGet) {
+            eprintln!("skipped: no shine letters");
+            return;
+        }
+        assert!(fx.frame().sprites.is_empty(), "nothing before the delay");
+        run(&mut fx, SHINE_GET_DELAY + 1);
+        assert_eq!(fx.frame().sprites.len(), 1, "the S first");
+        run(&mut fx, 6 * 5);
+        let sprites = fx.frame().sprites.clone();
+        assert_eq!(sprites.len(), 6, "S H I N E !");
+        // Settled at their places, in order from left to right, still opaque.
+        run(&mut fx, 40);
+        let f = fx.frame();
+        assert_eq!(f.sprites.len(), 6);
+        assert!(f.sprites.windows(2).all(|w| w[0].center[0] < w[1].center[0]));
+        assert!(f.sprites.iter().all(|s| s.color[3] == 1.0 && s.rotation == 0.0));
+        run(&mut fx, 400);
+        assert!(fx.finished());
+        assert!(fx.frame().sprites.is_empty());
     }
 
     #[test]

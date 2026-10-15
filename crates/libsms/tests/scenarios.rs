@@ -2853,6 +2853,79 @@ fn a_knock_out_lays_mario_down() {
     assert_eq!(s.event_count(|e| matches!(e, Event::Down)), 1);
 }
 
+#[test]
+fn a_shine_touched_on_the_ground_starts_the_pose_at_once() {
+    let mut s = Scene::flat();
+    s.sim.mario.health = 3;
+    assert!(s.sim.mario.get_shine(Vec3::new(0.0, 50.0, 0.0), 0x2000));
+    s.step(2);
+    let m = s.mario();
+    assert_eq!(m.status, Status::WinDemo);
+    assert!(m.win_demo_posing());
+    assert_eq!(m.face_yaw, 0x2000);
+    assert_eq!(m.health, m.params.mario.hp_max, "a Shine refills his health");
+    assert_eq!(s.event_count(|e| matches!(e, Event::ShineTouch { .. })), 1);
+    assert_eq!(s.event_count(|e| matches!(e, Event::ShineDemo { .. })), 1);
+    assert_eq!(sound_count(&s, "MSD_SE_SY_GET_SHINE"), 1);
+    assert_eq!(m.anim.clip, "demo_shine_get");
+}
+
+#[test]
+fn a_shine_touched_in_the_air_lets_him_land_before_the_demo() {
+    let mut s = Scene::flat();
+    s.press_a();
+    assert!(s.until(600, |m| m.pos.y > 40.0 && m.vel.y < 5.0), "near the top of the jump");
+    assert!(s.sim.mario.get_shine(s.sim.mario.pos, 0));
+    s.step(1);
+    assert!(s.mario().is_win_demo());
+    assert!(!s.mario().win_demo_posing(), "still falling");
+    assert_eq!(s.event_count(|e| matches!(e, Event::ShineDemo { .. })), 0);
+    assert!(s.until(600, |m| m.win_demo_posing()));
+    assert!(s.mario().pos.y.abs() < 1.0, "landed: {:?}", s.mario().pos);
+    assert!(s.mario().speed().abs() < 0.01);
+    assert_eq!(s.event_count(|e| matches!(e, Event::ShineDemo { .. })), 1);
+}
+
+#[test]
+fn the_shine_pose_holds_still_and_is_not_interrupted() {
+    let mut s = Scene::flat();
+    s.sim.mario.get_shine(Vec3::ZERO, 0);
+    s.pad.stick = Vec2::new(0.0, 1.0);
+    s.pad.a = true;
+    s.secs(2.0);
+    let m = s.mario();
+    assert_eq!(m.status, Status::WinDemo, "the sticks do nothing");
+    assert!(m.pos.length() < 1.0, "{:?}", m.pos);
+    let hp = m.health;
+    assert!(!s.sim.mario.damage(Vec3::new(100.0, 0.0, 0.0), libsms::DamageKind::EnemyCommon));
+    assert_eq!(s.mario().health, hp);
+    // A second touch (the Shine is gone) changes nothing.
+    assert!(!s.sim.mario.get_shine(Vec3::ZERO, 0x4000));
+    assert_eq!(s.event_count(|e| matches!(e, Event::ShineDemo { .. })), 1);
+}
+
+#[test]
+fn ending_the_shine_demo_lets_him_stand_again() {
+    let mut s = Scene::flat();
+    s.sim.mario.get_shine(Vec3::ZERO, 0);
+    s.secs(1.0);
+    s.sim.mario.end_win_demo();
+    s.pad = Pad::default();
+    s.secs(1.0);
+    assert_eq!(s.mario().status, Status::Wait);
+    s.run_forward();
+    s.secs(1.0);
+    assert_eq!(s.mario().status, Status::Run);
+}
+
+#[test]
+fn a_mario_who_is_down_cannot_get_a_shine() {
+    let mut s = Scene::flat();
+    s.sim.mario.knock_out();
+    assert!(!s.sim.mario.get_shine(Vec3::ZERO, 0));
+    assert_eq!(s.mario().status, Status::DownLoser);
+}
+
 fn dive_slide(shallow_wets: bool, water: Option<f32>) -> f32 {
     let mut s = Scene::flat();
     s.sim.mario.options.shallow_water_wets = shallow_wets;

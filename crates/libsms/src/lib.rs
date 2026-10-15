@@ -32,6 +32,7 @@ pub mod carry;
 mod ground;
 pub mod hang;
 mod physics;
+pub mod shine;
 
 pub use anim::{AnimState, AnimTable, ClipInfo, LoopMode};
 pub use assets::Assets;

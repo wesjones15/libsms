@@ -30,12 +30,16 @@ const COIN: u64 = 0x434F_494E;
 pub fn render_stings(dir: &Path) -> Result<(), String> {
     let out = dir.join("ror2_audio");
     // `death.wav` is the miss jingle ("Too Bad!"); the game-over song and the blue coin's
-    // pickup sound are cached beside it.
+    // pickup sound are cached beside it, and the Shine Get fanfare (`MSD_BGM_GET_SHINE`: about
+    // four and a half seconds, then silence) and the "puzzle solved" chime a host may use for
+    // finding a secret (`MSD_SE_SY_PROBLEM_SOLVED`: under two seconds).
     let stings = [
         ("spawn.wav", "MSD_BGM_DOLPIC", 75),
         ("death.wav", "MSD_BGM_MISS", 138),
         ("gameover.wav", "MSD_BGM_GAMEOVER", 250),
         ("bluecoin.wav", "MSD_SE_SY_BLUE_COIN_GET", 36),
+        ("shineget.wav", "MSD_BGM_GET_SHINE", 150),
+        ("secret.wav", "MSD_SE_SY_PROBLEM_SOLVED", 66),
     ];
     if stings.iter().all(|(file, _, _)| out.join(file).is_file()) {
         return Ok(());

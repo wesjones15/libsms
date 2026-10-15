@@ -66,6 +66,12 @@ pub enum Event {
     },
     /// Out of health (`loserExec`): Mario lies down for good until the host restarts him.
     Down,
+    /// He touched a Shine Sprite at `pos`, turned `yaw` ([`crate::Mario::get_shine`]): he is
+    /// falling to the floor if he was in the air, and the pickup's sound has been asked for.
+    ShineTouch { pos: Vec3, yaw: i16 },
+    /// He has landed with the Shine (`winDemo` calling `fireGetStar`): the host starts the Shine
+    /// Get camera, letters and fanfare, and the stage ends. `pos` is where he stands.
+    ShineDemo { pos: Vec3, yaw: i16 },
     /// A ground pound began (its wind-up, `changePlayerStatus(HIP_ATTACK)`).
     PoundStart,
     /// Host limits ([`crate::Limits`]): FLUDD started in mid-air and spent a use; `extra`:

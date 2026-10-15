@@ -422,6 +422,7 @@ impl Host for World {
             }
             // The portable host view consumes particle cues; this viewer has its own renderer.
             Event::Particle(_) | Event::AirNozzle { .. } | Event::AirJump | Event::WetSlide => {}
+            Event::ShineTouch { .. } | Event::ShineDemo { .. } => {}
         }
     }
 }

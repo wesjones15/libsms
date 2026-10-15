@@ -48,6 +48,8 @@ pub mod clip {
     pub const BACK_DOWN: ClipName = "bkdwn";
     pub const FORE_DOWN: ClipName = "jfdwn";
     pub const SLIDE_FORE: ClipName = "sdwnf";
+    /// Holding the Shine Sprite over his head (`ANIM_DEMO_SHINE_GET`).
+    pub const DEMO_SHINE_GET: ClipName = "demo_shine_get";
 }
 
 /// BCK loop modes (`J3DFrameCtrl` attribute).

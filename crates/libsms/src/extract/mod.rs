@@ -105,7 +105,7 @@ pub const EXTRACTS: [(&str, &str, &str); 8] = [
 /// the paths in them are alternatives in the same order (`|`): a USA disc keeps them in
 /// `common.szs` and `subtitle.szs`, a European one in a pair per language (`cmn2d_en.szs`,
 /// `subtitle_en.szs`).
-pub const OPTIONAL_EXTRACTS: [(&str, &str, &str); 2] = [
+pub const OPTIONAL_EXTRACTS: [(&str, &str, &str); 9] = [
     (
         "common.szs|cmn2d_en.szs",
         "2d/wipe_gameover.bti|wipe_gameover.bti",
@@ -115,6 +115,47 @@ pub const OPTIONAL_EXTRACTS: [(&str, &str, &str); 2] = [
         "subtitle.szs|subtitle_en.szs",
         "timg/wipe_m_mark.bti|timg/wipe_m_mark.bti",
         "wipe/wipe_m_mark.bti",
+    ),
+    // The Shine Sprite and its Shine Get demo. The camera is `TCameraBck` (Camera/CameraBck.cpp):
+    // `camera_model.bmd` is a two-joint rig (`cam_position`, `cam_interest`) the demo's `.bck`
+    // animates; `common.szs` holds them. The Shine itself (`TShine::makeMActors`, Item.cpp) is
+    // `/scene/mapobj/shine.bmd` with `shine_float.bck` (it bobs while it waits) and
+    // `shine_demo_shine_get.bck` (it rises over Mario's head). Every stage archive carries the
+    // same copies; Airstrip's is read.
+    (
+        "common.szs",
+        "camera/camera_model.bmd",
+        "camera/camera_model.bmd",
+    ),
+    (
+        "common.szs",
+        "camera/camera_demo_shine_get_outside.bck",
+        "camera/camera_demo_shine_get_outside.bck",
+    ),
+    (
+        "common.szs",
+        "camera/camera_demo_shine_get_inside.bck",
+        "camera/camera_demo_shine_get_inside.bck",
+    ),
+    (
+        "scene/airport0.szs",
+        "mapobj/shine.bmd",
+        "scene/mapobj/shine.bmd",
+    ),
+    (
+        "scene/airport0.szs",
+        "mapobj/shine_float.bck",
+        "scene/mapobj/shine_float.bck",
+    ),
+    (
+        "scene/airport0.szs",
+        "mapobj/shine_demo_shine_get.bck",
+        "scene/mapobj/shine_demo_shine_get.bck",
+    ),
+    (
+        "scene/airport0.szs",
+        "mapobj/shine_empty.bmd",
+        "scene/mapobj/shine_empty.bmd",
     ),
 ];
 
@@ -231,6 +272,8 @@ pub fn extract_extras(
 ) -> Result<usize, ExtractError> {
     let mut disc = Disc::open(iso)?;
     let mut wrote = 0;
+    // The archive read last: several pieces come out of one.
+    let mut cache: Option<(&str, rarc::Archive)> = None;
     for (archive, inner, dest) in OPTIONAL_EXTRACTS {
         let target = safe_join(out, dest)?;
         if target.is_file() {
@@ -238,17 +281,27 @@ pub fn extract_extras(
         }
         let mut found = Err(ExtractError::Missing(format!("{archive}:{inner}")));
         for (arc_name, path) in archive.split('|').zip(inner.split('|')) {
-            found = disc.read_file(&format!("data/{arc_name}")).and_then(|raw| {
-                let bytes = if yaz0::is_yaz0(&raw) {
-                    yaz0::decompress(&raw)?
-                } else {
-                    raw
-                };
-                let arc = rarc::Archive::parse(bytes)?;
-                arc.file(path)
+            if cache.as_ref().map(|c| c.0) != Some(arc_name) {
+                cache = disc
+                    .read_file(&format!("data/{arc_name}"))
+                    .and_then(|raw| {
+                        let bytes = if yaz0::is_yaz0(&raw) {
+                            yaz0::decompress(&raw)?
+                        } else {
+                            raw
+                        };
+                        rarc::Archive::parse(bytes)
+                    })
+                    .ok()
+                    .map(|a| (arc_name, a));
+            }
+            found = match &cache {
+                Some((_, arc)) => arc
+                    .file(path)
                     .map(|d| d.to_vec())
-                    .ok_or_else(|| ExtractError::Missing(format!("{arc_name}:{path}")))
-            });
+                    .ok_or_else(|| ExtractError::Missing(format!("{arc_name}:{path}"))),
+                None => Err(ExtractError::Missing(format!("data/{arc_name}"))),
+            };
             if found.is_ok() {
                 break;
             }

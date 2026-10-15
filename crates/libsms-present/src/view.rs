@@ -24,6 +24,7 @@ use libsms_assets::{Batch, Bmd, Pose, paths};
 
 use crate::hud::{Gauge, Hud};
 use crate::coins::{CoinMeter, Kind as CoinKind};
+use crate::democam::DemoCamera;
 use crate::life::LifeMeter;
 use crate::screenfx::ScreenFx;
 use crate::particles::Particles;
@@ -122,6 +123,9 @@ pub enum Look {
     Shadow,
     /// The disc's yellow coin, a static model for hosts to instance and spin themselves.
     Coin,
+    /// The Shine Sprite (`TShine`): its model, animations and glow effects, and the Shine Get
+    /// demo's camera path, for a host to place and drive with [`View::update_shine`].
+    Shine,
 }
 
 /// [`Look::Shadow`]'s ramp: dark where Mario's colours are dark, light where they're light.
@@ -232,6 +236,17 @@ impl Boost {
     }
 }
 
+/// The Shine Sprite's clips, glow effects and demo camera ([`Look::Shine`]).
+struct Shine {
+    /// `shine_float`, `shine_demo_shine_get`.
+    clips: [Clip; 2],
+    camera: Option<DemoCamera>,
+    /// Joint `body`, where the game binds the glow (`getAnmMtx(2)`).
+    body: usize,
+    /// 120 Hz ticks since it began, for the particle frames.
+    ticks: f32,
+}
+
 pub struct View {
     pub models: Vec<Model>,
     pub textures: Textures,
@@ -247,6 +262,7 @@ pub struct View {
     center: Option<usize>,
     /// The game's particle effects on Mario: dust, stars, smears, spray and pound flames.
     pub fx: Particles,
+    shine: Option<Shine>,
     /// Movement effects and super-pound flames have independent host switches.
     pub movement_effects: bool,
     pub pound_flames: bool,
@@ -295,6 +311,15 @@ pub const SUPER_POUND_FLAMES: [&str; 4] = [
     "ms_m_sphipd_b",
     "ms_m_sphipd_c",
     "ms_m_sphipd_d",
+];
+
+/// The Shine's glow (`TShine::calc`, Item.cpp): the rays, sparkles, the halo and the rainbow
+/// arc, bound to its `body` joint. The halo and arc go with a Shine not yet collected.
+pub const SHINE_EFFECTS: [&str; 4] = [
+    "ms_shine_senko",
+    "ms_shine_kira",
+    "ms_shine_promi",
+    "ms_shine_bow",
 ];
 
 /// TMario::emitGetCoinEffect (MarioParticle.cpp), shared by all three coin colours.
@@ -648,6 +673,9 @@ impl View {
         if look == Look::Coin {
             return Self::load_coin(dir);
         }
+        if look == Look::Shine {
+            return Self::load_shine(dir);
+        }
         let assets = libsms::Assets::load(dir);
         let skeleton = assets.skeleton.clone().ok_or("no rig (bmd/ma_mdl1.bmd)")?;
         let mut textures = Textures {
@@ -779,6 +807,7 @@ impl View {
             fx.set_fixed_height(name, true);
         }
         Ok(View {
+            shine: None,
             hand_joints: [b.joint("jnt_hand_R"), b.joint("jnt_hand_L")],
             head: b.joint("M_head"),
             chest: b.joint("jnt_chest"),
@@ -850,6 +879,7 @@ impl View {
         let colors = model.batch_color.clone();
         let texture_ids = model.batch_texture.clone();
         Ok(View {
+            shine: None,
             models: vec![model],
             textures,
             skeleton,
@@ -897,6 +927,167 @@ impl View {
             colors,
             texture_ids,
         })
+    }
+
+    /// The Shine Sprite: `scene/mapobj/shine.bmd` with its two clips, its glow effects and the
+    /// Shine Get camera. The host draws one instance and drives it with [`Self::update_shine`].
+    fn load_shine(dir: &Path) -> Result<View, String> {
+        let data = std::fs::read(dir.join("scene/mapobj/shine.bmd")).map_err(|e| e.to_string())?;
+        let skeleton = Skeleton::from_bmd(&data).ok_or("the Shine has no rig")?;
+        let body = skeleton.find("body").ok_or("the Shine has no body joint")?;
+        let clip = |name: &str| {
+            std::fs::read(dir.join(format!("scene/mapobj/{name}.bck")))
+                .ok()
+                .and_then(|d| Clip::parse(&d))
+                .ok_or(format!("{name}.bck didn't load"))
+        };
+        let clips = [clip("shine_float")?, clip("shine_demo_shine_get")?];
+        let mut textures = Textures::default();
+        let model = build(
+            Bmd::parse(&data).map_err(|e| e.to_string())?,
+            &|_, _| None,
+            models::COUNT as u32,
+            &mut textures,
+        )?;
+        let mut fx = Particles::load(dir, &SHINE_EFFECTS);
+        // `TShine::calc` asks for them at these rates and lives near the camera (`mKiraRate`,
+        // `mSenkoRate`, `mBowRate`, `mPromiLife`: the first of each table).
+        fx.set_rate_scale("ms_shine_senko", 0.15);
+        fx.set_life_time("ms_shine_promi", 30.0);
+        for name in SHINE_EFFECTS {
+            fx.set_world_space(name, true);
+        }
+        let mut view = View {
+            shine: Some(Shine {
+                clips,
+                camera: DemoCamera::load(dir),
+                body,
+                ticks: 0.0,
+            }),
+            models: vec![model],
+            textures,
+            skeleton,
+            clips: ClipLibrary::default(),
+            fludd_clips: HashMap::new(),
+            boost: None,
+            wink: None,
+            eye_materials: Vec::new(),
+            hand_joints: [None; 2],
+            head: None,
+            chest: None,
+            center: None,
+            fx,
+            movement_effects: true,
+            pound_flames: false,
+            fx_ticks: Vec::new(),
+            fx_binds: Vec::new(),
+            hud: None,
+            hud_shown: false,
+            life: [None, None],
+            coins: [None, None, None],
+            screenfx: ScreenFx::load(dir).ok(),
+            hud_tick: 0,
+            shirt: false,
+            time: 0.0,
+            blink_at: 0.0,
+            right: Vec3::X,
+            up: Vec3::Y,
+            lag: 0.0,
+            yaw_seen: [(0, 0); 2],
+            draws: vec![Draw {
+                key: 1,
+                model: 0,
+                kind: 0,
+                flags: 0,
+                pos: Vec3::ZERO,
+                rot: Quat::IDENTITY,
+                first_vertex: 0,
+                first_color: 0,
+                alpha: 1.0,
+            }],
+            positions: Vec::new(),
+            normals: Vec::new(),
+            uvs: Vec::new(),
+            colors: Vec::new(),
+            texture_ids: Vec::new(),
+        };
+        view.update_shine(0.0, Vec3::ZERO, 0, 0, 0.0, 1.0);
+        Ok(view)
+    }
+
+    /// The Shine's clips' lengths in frames (`shine_float`, `shine_demo_shine_get`), None if this
+    /// isn't a [`Look::Shine`] view.
+    pub fn shine_clip_frames(&self) -> Option<[f32; 2]> {
+        self.shine.as_ref().map(|s| [s.clips[0].frames, s.clips[1].frames])
+    }
+
+    /// The Shine Get camera at clip frame `frame` of the outside or inside path, in sim units
+    /// with Mario's feet at the origin (not yet turned by the Shine's yaw); None without the
+    /// camera's files.
+    pub fn demo_camera(&self, inside: bool, frame: f32) -> Option<crate::democam::Shot> {
+        self.shine.as_ref()?.camera.as_ref().map(|c| c.shot(inside, frame))
+    }
+
+    /// The demo camera path's length in clip frames, 0 without it.
+    pub fn demo_camera_frames(&self, inside: bool) -> f32 {
+        self.shine
+            .as_ref()
+            .and_then(|s| s.camera.as_ref())
+            .map_or(0.0, |c| c.frames(inside))
+    }
+
+    /// Poses the Shine and runs its glow, `dt` seconds after the last call. `clip` is 0 for the
+    /// model as it waits (it only turns, which the host does), 1 for `shine_float` (it floats up
+    /// as Mario touches it) or 2 for `shine_demo_shine_get` (it rises over his head), at `frame`
+    /// of it (60 a second). The instance stands at `pos` turned `yaw` (a 16-bit angle) and the
+    /// glow follows it; `scale` is the glow's size (`setGlobalScale`: 1, or one half once
+    /// taken). The posed vertices replace the view's buffers, for the host's one instance.
+    pub fn update_shine(&mut self, dt: f32, pos: Vec3, yaw: i16, clip: u8, frame: f32, scale: f32) {
+        let Some(shine) = self.shine.as_mut() else {
+            return;
+        };
+        let model = &self.models[0];
+        let joints = match clip {
+            1 | 2 => {
+                let c = &shine.clips[(clip - 1) as usize];
+                model.bmd.pose(|j| c.sample(j, frame), |_| None)
+            }
+            _ => model.bind.clone(),
+        };
+        self.positions.clear();
+        self.normals.clear();
+        self.uvs.clear();
+        let pose = Pose::new(&model.bmd, Mat4::IDENTITY, &joints);
+        for b in &model.batches {
+            let hide = model.bmd.materials[b.material].cull == Cull::All;
+            for v in &b.vertices {
+                let (p, n) = pose.skin(v);
+                self.positions.push(if hide { Vec3::ZERO } else { p });
+                self.normals.push(n.normalize_or_zero());
+                self.uvs.push([v.uv[0].x, v.uv[0].y]);
+            }
+        }
+        self.colors = model.batch_color.clone();
+        self.texture_ids = model.batch_texture.clone();
+
+        // The glow, asked for every game frame (30 a second, four ticks of 120).
+        let root = Mat4::from_rotation_translation(
+            Quat::from_rotation_y(yaw as f32 * std::f32::consts::PI / 32768.0),
+            pos,
+        );
+        let at = root * joints[shine.body];
+        for (slot, name) in SHINE_EFFECTS.iter().enumerate() {
+            self.fx.request_scaled(slot as u32, name, at, scale);
+        }
+        shine.ticks += dt.max(0.0) * 120.0;
+        let tick = shine.ticks as u64;
+        for slot in 0..SHINE_EFFECTS.len() as u32 {
+            self.fx.rebind(slot, at);
+        }
+        self.fx.advance(tick);
+        let fraction = self.fx.render_fraction(shine.ticks as f64);
+        self.fx
+            .build_interpolated(self.right, self.up, fraction, |_| true);
     }
 
     /// A host-owned coin was collected. The two disc effects stay at the collection point.
@@ -1303,6 +1494,58 @@ mod tests {
             Ok(v) => Some(v),
             Err(e) => panic!("loading Mario's models: {e}"),
         }
+    }
+
+    fn shine() -> Option<View> {
+        let dir = libsms::assets::find(None)?;
+        if !dir.join("scene/mapobj/shine.bmd").is_file() {
+            eprintln!("skipped: needs the Shine's files (sms_extract_extras)");
+            return None;
+        }
+        Some(View::load_look(&dir, Look::Shine).expect("loading the Shine"))
+    }
+
+    #[test]
+    fn the_shine_loads_its_model_clips_and_camera() {
+        let Some(v) = shine() else { return };
+        assert_eq!(v.models.len(), 1);
+        let n = v.models[0].vertex_count;
+        assert!(n > 0);
+        assert_eq!(v.positions.len(), n);
+        assert_eq!(v.normals.len(), n);
+        assert_eq!(v.uvs.len(), n);
+        assert_eq!(v.shine_clip_frames(), Some([79.0, 419.0]));
+        assert!(v.demo_camera_frames(false) > 400.0);
+        assert!(v.demo_camera(false, 10.0).is_some());
+    }
+
+    #[test]
+    fn the_shine_floats_up_and_holds_its_pose_with_the_clips() {
+        let Some(mut v) = shine() else { return };
+        let top = |v: &View| v.positions.iter().map(|p| p.y).fold(f32::MIN, f32::max);
+        v.update_shine(0.0, Vec3::ZERO, 0, 0, 0.0, 1.0);
+        let waiting = top(&v);
+        // `shine_float` lifts it about 170 units at its middle, back down at its end.
+        v.update_shine(0.0, Vec3::ZERO, 0, 1, 40.0, 1.0);
+        assert!(top(&v) > waiting + 100.0, "{} -> {}", waiting, top(&v));
+        v.update_shine(0.0, Vec3::ZERO, 0, 1, 79.0, 1.0);
+        assert!((top(&v) - waiting).abs() < 5.0);
+        // The demo's clip starts above Mario's head (the model's local origin is his feet).
+        v.update_shine(0.0, Vec3::ZERO, 0, 2, 0.0, 1.0);
+        assert!(top(&v) > 200.0, "{}", top(&v));
+    }
+
+    #[test]
+    fn the_shine_glows_with_its_disc_particles() {
+        let Some(mut v) = shine() else { return };
+        assert!(v.fx.has("ms_shine_kira") && v.fx.has("ms_shine_bow"));
+        for _ in 0..90 {
+            v.update_shine(1.0 / 30.0, Vec3::new(0.0, 100.0, 0.0), 0, 0, 0.0, 1.0);
+        }
+        assert!(!v.fx.vertices.is_empty(), "sparkles and rays");
+        // Every vertex is in the world, around where it's placed.
+        let far = v.fx.vertices.iter().any(|f| f.pos.distance(Vec3::new(0.0, 170.0, 0.0)) > 3000.0);
+        assert!(!far);
     }
 
     #[test]

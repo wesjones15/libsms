@@ -330,7 +330,7 @@ mod tests {
                 "{}",
                 CStr::from_bytes_until_nul(&msg).unwrap().to_string_lossy()
             );
-            for name in ["spawn.wav", "death.wav", "gameover.wav", "bluecoin.wav"] {
+            for name in ["spawn.wav", "death.wav", "gameover.wav", "bluecoin.wav", "shineget.wav", "secret.wav"] {
                 let wav = std::fs::read(cache.join("ror2_audio").join(name)).unwrap();
                 assert_eq!(&wav[..4], b"RIFF");
                 assert_eq!(&wav[8..16], b"WAVEfmt ");

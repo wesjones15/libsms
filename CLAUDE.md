@@ -65,7 +65,9 @@ Workspace:
   rays in two layers, lit by health share, a cyan shield after them; `LifeMeter::load(dir, 10, false)`
   fills the empty arc on top with two more rays for a sun alone; `sms_view_life_*`; `--example life`
   draws it, `--example blo` in libsms-assets lists a screen's panes) and `audio` (the viewer's old `sound.rs`: the game's
-  sounds on cpal, music optional).
+  sounds on cpal, music optional). `Look::Shine` (`sms_view_new_look(.., 3)`) is the Shine Sprite as a prop: `shine.bmd` posed by
+  `shine_float` / `shine_demo_shine_get` (`sms_view_shine_update`), its glow (`ms_shine_*.jpa`, in the `sms_view_fx_*` readers) and `democam` (the Shine Get
+  camera path, `sms_view_camera_shot`); the "SHINE!" letters are `screenfx` kind 2. Their files are `OPTIONAL_EXTRACTS` (`sms_extract_extras`).
   `cargo run -p libsms-present --example bakes -- <dir>` writes every bake to PNG; `--example hud
   -- out.png` draws the water gauge at a few levels.
 - `crates/libsms-ffi/`: C ABI (`sms.dll`): `SmsHost` callbacks (ground/roof/walls/events/enemies),
@@ -128,5 +130,5 @@ double/triple chain, dive/belly slide, ground pound, wall slide/kick, bump knock
 Spray/Hover/Rocket/Turbo, crouch, nozzle swap, FLUDD/nozzle/pumping-arm animation and sound cues,
 water particles, ledge grab/hanging/shimmy/climb, grabbing/carrying/putting/throwing,
 Yoshi's egg, riding, flutter, tongue and juice, damage, health and coins, stomping and
-pounding enemies, water hitting enemies. Not yet: swimming, bars, wires, poles, fences,
+pounding enemies, water hitting enemies, the Shine Get pose (`shine.rs`: `Mario::get_shine`, the `WinDemo` status, `Event::ShineTouch` / `ShineDemo`). Not yet: swimming, bars, wires, poles, fences,
 the Spray "bomb". See the spec.

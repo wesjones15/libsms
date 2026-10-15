@@ -114,6 +114,9 @@ pub enum Status {
     YoshiThrown,
     /// Out of health (`DOWN_LOSER`, `loserDown`): lying down for good.
     DownLoser,
+    /// Got a Shine Sprite (`MARIO_STATUS_WIN_DEMO`, `winDemo`, MarioAutodemo.cpp): lands, then
+    /// holds the Shine over his head until the host ends the demo ([`Mario::end_win_demo`]).
+    WinDemo,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -136,7 +139,7 @@ impl Status {
             | UltraJumpSlip | BroadJumpSlip | BackDown | ForeDown | ShortBackDown
             | ShortForeDown | SafeBackDown | SafeForeDown | CatchDown => Kind::Running,
             CatchLost | Take | TakePose | Putting | Pitching => Kind::Action,
-            Hanging | Ascend | Descend | HangJumping | DownLoser => Kind::Special,
+            Hanging | Ascend | Descend | HangJumping | DownLoser | WinDemo => Kind::Special,
             _ => Kind::Jumping,
         }
     }

@@ -28,7 +28,7 @@ use libsms::{
 use view::SmsView;
 
 /// ABI version, bumped when the C interface changes.
-pub const SMS_ABI_VERSION: u32 = 24;
+pub const SMS_ABI_VERSION: u32 = 25;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sms_abi_version() -> u32 {
@@ -148,6 +148,12 @@ pub enum SmsEventKind {
     /// Floor contact: value = drop in sim units; arg bits 1 dive, 2 ground pound,
     /// 4 cushioned (water/Yoshi/slow landing); pos = contact position.
     FallImpact = 19,
+    /// Mario touched a Shine ([`sms_sim_shine_get`]): `pos` is the Shine, `arg` the yaw it
+    /// turned him to. The Shine's pickup sound is a `Sound` event of its own.
+    ShineTouch = 20,
+    /// The Shine Get demo began: he has landed with the Shine over his head. `pos` is where he
+    /// stands, `arg` his yaw: the host starts the camera, letters and fanfare.
+    ShineDemo = 21,
 }
 
 /// An enemy the host reports ([`libsms::Enemy`]): a standing cylinder.
@@ -281,7 +287,9 @@ pub struct SmsState {
     pub pounding: u8,
     /// 1 standing in shallow water (the host's `water`).
     pub in_water: u8,
-    pub _pad: [u8; 2],
+    /// 1 in the Shine Get pose and still falling to the floor, 2 holding the Shine up, else 0.
+    pub win_demo: u8,
+    pub _pad: u8,
 }
 
 /// Host tuning that departs from the game on purpose ([`libsms::Options`]); zeroes and ones
@@ -545,6 +553,16 @@ impl Host for FfiHost<'_> {
             }
             Event::AirJump => e.kind = SmsEventKind::AirJump as u32,
             Event::WetSlide => e.kind = SmsEventKind::WetSlide as u32,
+            Event::ShineTouch { pos, yaw } => {
+                e.kind = SmsEventKind::ShineTouch as u32;
+                e.arg = yaw as i32;
+                e.pos = pos.into();
+            }
+            Event::ShineDemo { pos, yaw } => {
+                e.kind = SmsEventKind::ShineDemo as u32;
+                e.arg = yaw as i32;
+                e.pos = pos.into();
+            }
             Event::Sound(s) => {
                 e.kind = SmsEventKind::Sound as u32;
                 e.value = s.info.unwrap_or(0.0);
@@ -776,7 +794,12 @@ pub unsafe extern "C" fn sms_sim_state(sim: *const SmsSim, out: *mut SmsState) -
         has_fludd: m.fludd.is_some() as u8,
         pounding: m.pounding(),
         in_water: m.in_water() as u8,
-        _pad: [0; 2],
+        win_demo: if m.win_demo_posing() {
+            2
+        } else {
+            m.is_win_demo() as u8
+        },
+        _pad: 0,
     };
     1
 }
@@ -980,6 +1003,33 @@ pub unsafe extern "C" fn sms_sim_boost_jump(sim: *mut SmsSim, factor: f32) {
     }
 }
 
+/// Mario touches a Shine Sprite at `pos`, turned `yaw` (a 16-bit angle, 0x8000 a half turn): he
+/// takes the win pose (see `libsms::shine`). Returns 1 if he took it, 0 if he already has one or
+/// is down.
+///
+/// # Safety
+/// `sim` from [`sms_sim_new`]; `pos` readable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_sim_shine_get(sim: *mut SmsSim, pos: *const SmsVec3, yaw: i16) -> u8 {
+    // SAFETY: the caller promised valid pointers.
+    match (unsafe { sim.as_mut() }, unsafe { pos.as_ref() }) {
+        (Some(s), Some(p)) => s.sim.mario.get_shine(Vec3::new(p.x, p.y, p.z), yaw) as u8,
+        _ => 0,
+    }
+}
+
+/// Lets Mario out of the Shine Get pose, for a host whose stage didn't end.
+///
+/// # Safety
+/// `sim` from [`sms_sim_new`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_sim_shine_end(sim: *mut SmsSim) {
+    // SAFETY: the caller promised a valid pointer.
+    if let Some(s) = unsafe { sim.as_mut() } {
+        s.sim.mario.end_win_demo();
+    }
+}
+
 /// Sets host tuning (see [`SmsTuning`]); a new sim has the game's.
 ///
 /// # Safety
@@ -1077,6 +1127,9 @@ pub unsafe extern "C" fn sms_struct_sizes(out: *mut u32, max: u32) -> u32 {
         size_of::<SmsLimits>(),
         size_of::<view::SmsScreenFx>(),
         size_of::<view::SmsScreenSprite>(),
+        size_of::<view::SmsShineFrame>(),
+        size_of::<view::SmsShineInfo>(),
+        size_of::<view::SmsCameraShot>(),
     ];
     if !out.is_null() {
         for (i, s) in sizes.iter().take(max as usize).enumerate() {
@@ -1334,16 +1387,61 @@ mod tests {
 
     #[test]
     fn struct_sizes_are_what_hosts_mirror() {
-        let mut sizes = [0u32; 24];
-        let n = unsafe { sms_struct_sizes(sizes.as_mut_ptr(), 24) } as usize;
+        let mut sizes = [0u32; 27];
+        let n = unsafe { sms_struct_sizes(sizes.as_mut_ptr(), 27) } as usize;
         // ror2-mario's Native.cs and ror2-common's view structs check these at load.
         assert_eq!(
             &sizes[..n],
             &[
                 12, 20, 8, 16, 32, 56, 24, 52, 40, 24, 12, 64, 48, 52, 24, 28, 24, 36, 16, 12, 32,
-                36, 72, 40
+                36, 72, 40, 52, 16, 40
             ]
         );
+    }
+
+    #[test]
+    fn the_shine_has_its_own_view_and_mario_takes_it_through_the_host_abi() {
+        let Some(dir) = libsms::assets::find(None) else {
+            return;
+        };
+        if !dir.join("scene/mapobj/shine.bmd").is_file() {
+            return;
+        }
+        let dir = CString::new(dir.to_string_lossy().as_bytes()).unwrap();
+        unsafe {
+            let shine = view::sms_view_new_look(dir.as_ptr(), 0, 3);
+            assert!(!shine.is_null());
+            let mut info = view::SmsShineInfo::default();
+            assert_eq!(view::sms_view_shine_info(shine, &mut info), 1);
+            assert_eq!((info.float_frames, info.demo_frames), (79.0, 419.0));
+            assert!(info.camera_outside_frames > 400.0);
+            let mut shot = view::SmsCameraShot::default();
+            assert_eq!(view::sms_view_camera_shot(shine, 0, 0.0, &mut shot), 1);
+            assert!(shot.fov > 20.0 && shot.fov < 90.0);
+            let frame = view::SmsShineFrame {
+                dt: 1.0 / 30.0,
+                clip: 1,
+                frame: 40.0,
+                scale: 1.0,
+                right: SmsVec3 { x: 1.0, y: 0.0, z: 0.0 },
+                up: SmsVec3 { x: 0.0, y: 1.0, z: 0.0 },
+                ..Default::default()
+            };
+            view::sms_view_shine_update(shine, &frame);
+            let mut count = 0;
+            assert!(!view::sms_view_positions(shine, &mut count).is_null());
+            assert!(count > 0);
+            view::sms_view_free(shine);
+
+            // Mario takes the pose through the sim's own calls.
+            let at = SmsVec3 { x: 0.0, y: 0.0, z: 0.0 };
+            let sim = sms_sim_new(dir.as_ptr(), &at, 0);
+            assert!(!sim.is_null());
+            assert_eq!(sms_sim_shine_get(sim, &at, 0x1000), 1);
+            assert_eq!(sms_sim_shine_get(sim, &at, 0x1000), 0, "already in the pose");
+            sms_sim_shine_end(sim);
+            sms_sim_free(sim);
+        }
     }
 
     #[test]

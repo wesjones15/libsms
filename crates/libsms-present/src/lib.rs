@@ -6,6 +6,7 @@
 
 pub mod audio;
 pub mod coins;
+pub mod democam;
 pub mod hud;
 pub mod life;
 pub mod particles;

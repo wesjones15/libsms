@@ -369,6 +369,10 @@ struct Effect {
     world_space: bool,
     fixed_height: bool,
     speed: f32,
+    /// `setRate`: the emitter's rate times this (1: the file's).
+    rate_scale: f32,
+    /// `setLifeTime`: the particles' life in frames, instead of the file's.
+    life: Option<f32>,
 }
 
 /// Every effect the host may ask for, and the emitters running.
@@ -615,6 +619,8 @@ impl Particles {
             world_space: false,
             fixed_height: false,
             speed: 1.0,
+            rate_scale: 1.0,
+            life: None,
         });
     }
 
@@ -631,6 +637,22 @@ impl Particles {
     pub fn set_fixed_height(&mut self, name: &str, fixed_height: bool) {
         if let Some(&i) = self.by_name.get(name) {
             self.effects[i].fixed_height = fixed_height;
+        }
+    }
+
+    /// `JPABaseEmitter::setRate`: the effect's emitters spawn this many times as many
+    /// particles as the file says (the Shine's rays are asked for at a fraction of theirs).
+    pub fn set_rate_scale(&mut self, name: &str, rate: f32) {
+        if let Some(&i) = self.by_name.get(name) {
+            self.effects[i].rate_scale = rate.max(0.0);
+        }
+    }
+
+    /// `JPABaseEmitter::setLifeTime`: its particles live this many frames, whatever the file
+    /// says.
+    pub fn set_life_time(&mut self, name: &str, frames: f32) {
+        if let Some(&i) = self.by_name.get(name) {
+            self.effects[i].life = Some(frames.max(1.0));
         }
     }
 
@@ -837,10 +859,10 @@ impl Particles {
             start: em.start_frame,
             status: FIRST_EMIT | EMIT_NEXT_FRAME,
             max_frame: em.max_frame,
-            rate: em.rate,
+            rate: em.rate * self.effects[effect].rate_scale,
             volume_size: em.volume_size as f32,
             volume_sweep: em.volume_sweep,
-            lifetime: em.lifetime as f32,
+            lifetime: self.effects[effect].life.unwrap_or(em.lifetime as f32),
             spawn_timer: 0.0,
             emit_timer: 0.0,
             emit_rate: if em.emit_interval == 0 {
