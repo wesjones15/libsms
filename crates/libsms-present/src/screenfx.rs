@@ -18,9 +18,9 @@
 //! inset 100 pixels, fading in over 32 frames, then solid for 100) comes in behind it, so the
 //! cut-out letters fill with red ([`Frame::card`]).
 //!
-//! The two play together on a real game over, as the game's own screens do (`TMarDirector` state
-//! 7 starts the letters and the wipe at once): the letters are under the wipe, so they dim and
-//! then vanish as its black comes in.
+//! The two play together on a real game over: the letters come first and settle, and a moment
+//! later ([`GAME_OVER_DELAY`] frames) the wipe starts over them, so they dim and then vanish as
+//! its black comes in.
 //!
 //! Both run at the game's 30 frames a second: [`ScreenFx::step`] takes seconds and runs the whole
 //! frames that makes, and what is drawn is worked out between the last two of them, so a host
@@ -267,6 +267,9 @@ const TOO_BAD_OPEN: u32 = 66;
 /// Frames the whole "TOO BAD!" is shown for: the last letter settled (frame 200) and a moment,
 /// fading over the last second.
 const TOO_BAD_LENGTH: u32 = 215;
+/// Frames of "TOO BAD!" a game over shows before the wipe starts: the letters have landed and
+/// settled by then, as the game's screen shows them.
+pub const GAME_OVER_DELAY: u32 = 180;
 /// GAME OVER's black is held this long after its wipe ends, then fades.
 const GAME_OVER_HOLD: u32 = 15;
 const GAME_OVER_FADE: u32 = 20;
@@ -419,7 +422,7 @@ impl ScreenFx {
             while self.spare >= 1.0 && !self.finished() {
                 self.spare -= 1.0;
                 self.frame += 1;
-                if self.kind == Some(Kind::GameOver) {
+                if self.kind == Some(Kind::GameOver) && self.frame > GAME_OVER_DELAY {
                     self.game_over_before = self.game_over.clone();
                     self.game_over.tick();
                 }
@@ -448,8 +451,13 @@ impl ScreenFx {
     /// of each letter's own clock `t` (in frames), each a Bezier worked out in between.
     fn letters(&self, frac: f32) -> Vec<Sprite> {
         let ft = self.frame as f32 + frac;
-        // They leave with the frame count run out, fading over its last second.
-        let leaving = ((TOO_BAD_LENGTH as f32 - ft) / FPS).clamp(0.0, 1.0);
+        // A miss's leave with the frame count run out, fading over its last second; a game
+        // over's go under the wipe's black.
+        let leaving = if self.kind == Some(Kind::GameOver) {
+            1.0
+        } else {
+            ((TOO_BAD_LENGTH as f32 - ft) / FPS).clamp(0.0, 1.0)
+        };
         let mut sprites = Vec::new();
         for (i, l) in self.letters.iter().enumerate() {
             let t = ft - 10.0 * i as f32;
@@ -500,6 +508,13 @@ impl ScreenFx {
             return Frame::default();
         };
         let img = &self.pictures[picture as usize];
+        // The letters have the screen to themselves until the wipe starts.
+        if self.frame <= GAME_OVER_DELAY {
+            return Frame {
+                sprites: self.letters(frac),
+                ..Frame::default()
+            };
+        }
         // Let go at the end.
         let out = if g.state == 6 {
             let t = (g.after.saturating_sub(GAME_OVER_HOLD) as f32 + frac) / GAME_OVER_FADE as f32;
@@ -637,8 +652,8 @@ mod tests {
         if !fx.start(Kind::GameOver) {
             return;
         }
-        // Through the spin, the pull back and the bounce.
-        run(&mut fx, 50 + 10 + 10);
+        // Through the spin, the pull back and the bounce (after the letters' head start).
+        run(&mut fx, GAME_OVER_DELAY + 50 + 10 + 10);
         let f = fx.frame();
         let o = f.overlay.as_ref().expect("overlay");
         assert!(o.rgba.chunks_exact(4).all(|p| p[..3] == [0, 0, 0]));
@@ -668,10 +683,15 @@ mod tests {
         if !fx.has(Kind::TooBad) || !fx.start(Kind::GameOver) {
             return;
         }
-        run(&mut fx, 40);
+        // The letters play first, with no black over them.
+        run(&mut fx, 100);
         let f = fx.frame();
-        assert!(f.overlay.is_some() && f.sprites.len() >= 3, "{} letters", f.sprites.len());
-        // The black does not open: that is a miss's.
+        assert!(f.overlay.is_none() && f.sprites.len() == 7, "{} letters", f.sprites.len());
+        assert_eq!(f.fill, 0.0);
+        // Then the wipe starts over them.
+        run(&mut fx, GAME_OVER_DELAY - 100 + 40);
+        let f = fx.frame();
+        assert!(f.overlay.is_some() && f.sprites.len() == 7);
         assert_eq!(f.fill, 0.0);
     }
 
