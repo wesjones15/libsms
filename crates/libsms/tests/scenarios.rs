@@ -3022,3 +3022,39 @@ fn the_turbo_dash_has_its_start_sound_and_its_spread_sound_every_tick() {
     assert!(dash_starts >= 2, "the fire sound and the dash start sound should both play: {dash_starts}");
     assert!(spreads > 60, "the dash has no spread sound: {spreads}");
 }
+
+/// A Turbo dash jump (`broadJumping`) keeps its dash flag until he lands, and takes no dive. Once the
+/// Turbo is let go in the air the dash is over, and B dives like out of any other nozzle's jump.
+#[test]
+fn letting_go_of_the_turbo_in_a_dash_jump_ends_the_dash_and_allows_a_dive() {
+    let mut s = Scene::flat();
+    s.sim.mario.give_fludd();
+    {
+        let p = s.sim.mario.params.clone();
+        let f = s.sim.mario.fludd.as_mut().unwrap();
+        f.change_nozzle(NozzleKind::Turbo, false, &p);
+        f.refill(&p);
+    }
+    s.pad.stick = Vec2::new(0.0, 1.0);
+    s.pad.r_analog = 255;
+    s.secs(6.0);
+    assert!(s.sim.mario.dashing(), "he never dashed: {:?}", s.sim.mario.status);
+    s.pad.a = true;
+    s.step(30);
+    assert_eq!(s.sim.mario.status, Status::BroadJump, "the dash didn't jump");
+    assert!(s.sim.mario.dashing());
+    // Held, he can't dive.
+    s.pad.b = true;
+    s.step(2);
+    s.pad.b = false;
+    s.step(2);
+    assert_eq!(s.sim.mario.status, Status::BroadJump, "dived with the Turbo held");
+    // Let go: the dash ends, and B dives.
+    s.pad.r_analog = 0;
+    s.step(4);
+    assert!(!s.sim.mario.dashing(), "the dash outlives the trigger in the air");
+    assert_eq!(s.sim.mario.status, Status::BroadJump, "landed too soon for the test");
+    s.pad.b = true;
+    s.step(2);
+    assert_eq!(s.sim.mario.status, Status::JumpCatch, "he can't dive after letting go of the Turbo");
+}

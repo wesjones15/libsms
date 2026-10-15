@@ -118,8 +118,14 @@ impl Mario {
             }
             MissJump => self.miss_jumping(host),
             BroadJump => {
+                // Host: once the Turbo is let go the dash is over (`broadJumping` keeps its flag
+                // until he lands, which keeps the water-boost cone and sounds going), and he can
+                // dive like out of any other nozzle's jump.
+                if !self.turbo_held && self.check_back_trig() {
+                    return true;
+                }
                 self.jumping_basic(host, Run, "broad_jump", 1);
-                self.fludd_emitting = true;
+                self.fludd_emitting = self.turbo_held;
                 false
             }
             RotateBroadJump => {

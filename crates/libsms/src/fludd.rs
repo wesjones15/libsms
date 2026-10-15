@@ -478,7 +478,8 @@ impl Mario {
         let turbo = f.nozzle == NozzleKind::Turbo;
         let state_active = f.trigger_state() == TriggerState::Active;
         let mut dash_began = false;
-        if turbo && self.upper == UpperState::Pumping && r_level > 0.0 && f.water > 0 {
+        self.turbo_held = turbo && self.upper == UpperState::Pumping && r_level > 0.0 && f.water > 0;
+        if self.turbo_held {
             if self.intended_mag == 0.0 {
                 self.intended_yaw = self.face_yaw;
             }

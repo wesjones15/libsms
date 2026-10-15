@@ -342,6 +342,8 @@ pub struct Mario {
     pub(crate) seed: u32,
     pub(crate) dash_speed: f32,
     pub(crate) dash_timer: i32,
+    /// The Turbo's trigger is held with water in the tank (`turbo_dash_control`).
+    pub(crate) turbo_held: bool,
     pub(crate) fludd_emitting: bool,
     pub(crate) hover_target_y: f32,
     /// In shallow water (`MARIO_FLAG_IN_SHALLOW_WATER`, `thinkWaterSurface`).
@@ -454,6 +456,7 @@ impl Mario {
             seed: 0x1234_5679,
             dash_speed: 0.0,
             dash_timer: 0,
+            turbo_held: false,
             fludd_emitting: false,
             hover_target_y: pos.y,
             in_water: false,

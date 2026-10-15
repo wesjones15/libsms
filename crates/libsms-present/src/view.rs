@@ -78,6 +78,10 @@ pub struct Model {
     pub batch_env: Vec<Option<Option<[[f32; 3]; 2]>>>,
     /// Colour for untextured batches (white for textured ones).
     batch_color: Vec<C4>,
+    /// Per vertex, in vertex order: the alpha a see-through batch takes from its vertices (the
+    /// water-boost cone fades along its length that way), 1 elsewhere. A batch that has some
+    /// carries bit 4 in `batch_lit`; a host multiplies it into the batch's colour.
+    pub vertex_alpha: Vec<f32>,
 }
 
 impl Model {
@@ -195,6 +199,10 @@ struct Boost {
 }
 
 impl Boost {
+    /// Clip frames per game frame: `setRate(SMSGetAnmFrameRate())`, 60 over the 30 fps the game
+    /// runs at, so the clips' 60 fps frames play in real time.
+    const RATE: f32 = 2.0;
+
     /// One game frame of the cone's state machine; `dashing` is `MARIO_FLAG_FLUDD_EMITTING`.
     fn step(&mut self, dashing: bool) {
         match self.state {
@@ -206,14 +214,14 @@ impl Boost {
             }
             1 => {
                 if dashing {
-                    self.frame += 1.0;
+                    self.frame += Self::RATE;
                 } else {
                     self.state = 2;
                     self.frame = 0.0;
                 }
             }
             _ => {
-                self.frame += 1.0;
+                self.frame += Self::RATE;
                 if self.frame >= self.clips[1].frames {
                     self.state = 0;
                 }
@@ -470,6 +478,10 @@ fn build(
                 };
                 let al = if spec(a) {
                     0.0
+                } else if a.mat_from_vertex && matches!(m.blend(), Blend::AlphaBlend | Blend::Additive) {
+                    // A see-through batch's vertex alpha reaches hosts per vertex
+                    // ([`Model::vertex_alpha`]); the bake is the texture's alone.
+                    1.0
                 } else if a.mat_from_vertex {
                     avg(i)[3]
                 } else {
@@ -505,6 +517,7 @@ fn build(
         batch_cull: Vec::new(),
         batch_env: Vec::new(),
         batch_color: Vec::new(),
+        vertex_alpha: Vec::new(),
         batches,
         bmd,
     };
@@ -515,7 +528,7 @@ fn build(
         let baked = usize::try_from(tex).ok().map(|i| &textures.list[i]);
         // Where a channel takes its alpha from the vertices (the water-boost cone fades along its
         // length that way), the batch's vertex alpha: lowest and mean.
-        let (vertex_min, vertex_mean) = {
+        let alphas: Option<Vec<f32>> = {
             let set = if m.chans[1].mat_from_vertex {
                 Some(0)
             } else if m.chans[3].mat_from_vertex {
@@ -523,18 +536,16 @@ fn build(
             } else {
                 None
             };
-            let alphas = set.map(|s| {
+            set.map(|s| {
                 model.batches[bi]
                     .vertices
                     .iter()
                     .map(|v| v.colors[s][3] as f32 / 255.0)
-                    .collect::<Vec<_>>()
-            });
-            match alphas.filter(|a| !a.is_empty()) {
-                Some(a) => (a.iter().copied().fold(1.0, f32::min), a.iter().sum::<f32>() / a.len() as f32),
-                None => (1.0, 1.0),
-            }
+                    .collect()
+            })
+            .filter(|a: &Vec<f32>| !a.is_empty())
         };
+        let vertex_min = alphas.as_ref().map_or(1.0, |a| a.iter().copied().fold(1.0, f32::min));
         let blend = match m.blend() {
             Blend::Opaque => blend::OPAQUE,
             Blend::AlphaTest => blend::CUTOUT,
@@ -546,7 +557,16 @@ fn build(
             Blend::AlphaBlend => blend::TRANSLUCENT,
             Blend::Additive => blend::ADDITIVE,
         };
-        let lit = (m.chans[0].lighting as u8) | ((m.chans[1].lighting as u8) << 1);
+        let see_through = matches!(blend, blend::TRANSLUCENT | blend::ADDITIVE);
+        let vertex_faded = see_through && vertex_min < 0.999;
+        let lit = (m.chans[0].lighting as u8) | ((m.chans[1].lighting as u8) << 1) | ((vertex_faded as u8) << 2);
+        match alphas.filter(|_| vertex_faded) {
+            Some(a) => model.vertex_alpha.extend(a),
+            None => {
+                let n = model.batches[bi].vertices.len();
+                model.vertex_alpha.extend(std::iter::repeat_n(1.0, n));
+            }
+        }
         let cull = match m.cull {
             Cull::Back => 0,
             Cull::Front => 1,
@@ -554,13 +574,7 @@ fn build(
         };
         let env = baked.and_then(|b| b.env);
         let color = if tex >= 0 {
-            // Hosts get a colour per batch, not per vertex: a translucent batch faded by its
-            // vertices is as translucent as they are on average.
-            if blend == blend::TRANSLUCENT && vertex_mean < 0.999 {
-                [1.0, 1.0, 1.0, vertex_mean]
-            } else {
-                [1.0; 4]
-            }
+            [1.0; 4]
         } else {
             let c = model.source().flat_color(mi, &inputs);
             textures.shade.map_or(c, |s| s.color(c))
@@ -1751,7 +1765,33 @@ mod tests {
         for (i, b) in m.batches.iter().enumerate() {
             assert_ne!(m.batch_blend[i], blend::OPAQUE, "{} is an opaque shell", m.bmd.materials[b.material].name);
         }
-        let faded = (0..m.batches.len()).filter(|&i| m.batch_blend[i] == blend::TRANSLUCENT && m.batch_color_of(i)[3] < 1.0).count();
+        // Their fade is per vertex, flagged for the host, and the bake carries none of it.
+        let faded = (0..m.batches.len()).filter(|&i| m.batch_lit[i] & 4 != 0).count();
         assert!(faded >= 2, "the faded layers don't carry their vertex alpha");
+        assert_eq!(m.vertex_alpha.len(), m.vertex_count);
+        let (lo, hi) = m.vertex_alpha.iter().fold((1.0f32, 0.0f32), |(l, h), &a| (l.min(a), h.max(a)));
+        assert!(lo < 0.1 && hi > 0.9, "the vertex alpha doesn't run from clear to solid: {lo}..{hi}");
+        for i in (0..m.batches.len()).filter(|&i| m.batch_lit[i] & 4 != 0) {
+            assert_eq!(m.batch_color_of(i), [1.0; 4], "the mean alpha is applied twice");
+        }
+    }
+
+    /// The cone's clips play in real time (`setRate(SMSGetAnmFrameRate())`, two 60 fps frames a
+    /// game frame): the `_out` clip's 21 frames take eleven game frames, not twenty-one.
+    #[test]
+    fn the_water_boost_cone_plays_its_clips_in_real_time() {
+        let dir = libsms::assets::find(None).expect("assets not found (set SMS_ASSETS)");
+        let v = View::load(&dir).unwrap();
+        let mut b = v.boost.expect("the cone's files are there");
+        b.step(true);
+        assert_eq!(b.state, 1);
+        b.step(false);
+        assert_eq!(b.state, 2);
+        let mut steps = 0;
+        while b.state == 2 {
+            b.step(false);
+            steps += 1;
+        }
+        assert_eq!(steps, 11, "the cone fades out over {steps} game frames");
     }
 }

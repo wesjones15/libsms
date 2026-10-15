@@ -64,7 +64,8 @@ pub struct SmsBatch {
     pub texture: i32,
     /// `libsms_present::view::blend`: 0 opaque, 1 cutout, 2 translucent, 3 additive.
     pub blend: u8,
-    /// Lit in the game: 1 its colour, 2 its alpha. 0: unlit.
+    /// Lit in the game: 1 its colour, 2 its alpha. 0: unlit. Plus 4: the batch fades by its
+    /// vertices' alpha ([`sms_view_vertex_alphas`]); its texture carries none of it.
     pub lit: u8,
     /// 0 back, 1 front, 2 none (GX faces are front when clockwise on screen).
     pub cull: u8,
@@ -501,6 +502,35 @@ pub unsafe extern "C" fn sms_view_uvs(
                 out.add(n).write([vtx.uv[0].x, vtx.uv[0].y]);
                 n += 1;
             }
+            n as u32
+        })
+    }
+}
+
+/// The model's vertex alphas, one float per vertex in vertex order (1 where a vertex has none;
+/// batches with [`SmsBatch::lit`] bit 4 have them): what a see-through batch's vertices fade it
+/// by. Returns how many.
+///
+/// # Safety
+/// `view` from [`sms_view_new`]; `out` writable for `max` floats.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_vertex_alphas(
+    view: *mut SmsView,
+    model: u32,
+    out: *mut f32,
+    max: u32,
+) -> u32 {
+    // SAFETY: as documented.
+    unsafe {
+        with_view(view, 0, |v| {
+            let Some(m) = v.view.models.get(model as usize) else {
+                return 0;
+            };
+            if out.is_null() {
+                return 0;
+            }
+            let n = m.vertex_alpha.len().min(max as usize);
+            std::ptr::copy_nonoverlapping(m.vertex_alpha.as_ptr(), out, n);
             n as u32
         })
     }
