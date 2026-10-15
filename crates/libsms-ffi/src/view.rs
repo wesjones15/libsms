@@ -466,6 +466,35 @@ pub unsafe extern "C" fn sms_view_sound(view: *mut SmsView, name: *const c_char,
     unsafe { with_view(view, 0, |v| v.audio.as_ref().is_some_and(|a| a.play_at(name, pos)) as u8) }
 }
 
+/// A held sound of a host object (the Shine's `MSD_SE_SHINE_EXIST` hum, which the game asks for
+/// every frame): call it every frame the object makes it, with its position (sim world units); it
+/// starts the first time and fades when the calls stop. Returns 0 without sound or for an unknown
+/// name.
+///
+/// # Safety
+/// `view` from [`sms_view_new`]; `name` a nul-terminated UTF-8 string; `pos` readable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_hold_sound(
+    view: *mut SmsView,
+    name: *const c_char,
+    pos: *const SmsVec3,
+) -> u8 {
+    if name.is_null() {
+        return 0;
+    }
+    // SAFETY: as documented.
+    let (Some(pos), Ok(name)) = (unsafe { pos.as_ref() }, unsafe { std::ffi::CStr::from_ptr(name) }.to_str())
+    else {
+        return 0;
+    };
+    let pos = Vec3::from(*pos);
+    if !pos.is_finite() {
+        return 0;
+    }
+    // SAFETY: as documented.
+    unsafe { with_view(view, 0, |v| v.audio.as_mut().is_some_and(|a| a.hold_at(name, pos)) as u8) }
+}
+
 /// # Safety
 /// `view` from [`sms_view_new`] and not used afterwards. Null is ignored.
 #[unsafe(no_mangle)]

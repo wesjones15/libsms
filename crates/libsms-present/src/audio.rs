@@ -114,6 +114,8 @@ struct SceneAudio {
     yoshi: [(AnimationPlayer, Option<&'static str>); 2],
     /// Held sounds (ids without `0x800`) the sim re-requests each tick, by name.
     held: HashMap<&'static str, SoundHandle>,
+    /// Held sounds of host-owned objects ([`Audio::hold_at`]), by name.
+    hums: HashMap<String, SoundHandle>,
     tracks: Vec<(String, u32)>,
     track: Option<usize>,
     ticks: u32,
@@ -179,6 +181,7 @@ impl SceneAudio {
             yoshi_tables,
             yoshi: Default::default(),
             held: HashMap::new(),
+            hums: HashMap::new(),
             tracks,
             track: None,
             ticks: 0,
@@ -191,7 +194,7 @@ impl SceneAudio {
             p.stop(sys);
             *c = None;
         }
-        for (_, h) in self.held.drain() {
+        for (_, h) in self.held.drain().chain(self.hums.drain().map(|(_, h)| ("", h))) {
             sys.stop(h, 0);
         }
         self.clip = None;
@@ -336,6 +339,26 @@ impl SceneAudio {
         }
     }
 
+    /// A host object's held sound (`startSoundActor` asked for again every frame, as the Shine's
+    /// hum is): started the first time, kept alive while asked for, and let fade when it isn't.
+    fn hold(&mut self, sys: &mut SoundSystem, name: &str, pos: Vec3) -> bool {
+        if let Some(&h) = self.hums.get(name)
+            && sys.refresh(h, pos)
+        {
+            return true;
+        }
+        match sys.play(name, Some(pos), COIN) {
+            Some(h) => {
+                self.hums.insert(name.to_owned(), h);
+                true
+            }
+            None => {
+                self.hums.remove(name);
+                false
+            }
+        }
+    }
+
     fn cycle(&mut self, sys: &mut SoundSystem) {
         let next = self.track.map_or(0, |i| i + 1);
         sys.stop_bgm(0);
@@ -433,6 +456,16 @@ impl Audio {
             .lock()
             .ok()
             .is_some_and(|mut sys| sys.play(name, Some(pos), COIN).is_some())
+    }
+
+    /// A host object's held sound (an `MSD_SE_*` the game re-requests every frame, like
+    /// `MSD_SE_SHINE_EXIST`, the Shine's hum) at `pos`: call it every frame the object makes it. It
+    /// starts on the first call and fades when the calls stop. False for a name the game lacks.
+    pub fn hold_at(&mut self, name: &str, pos: Vec3) -> bool {
+        match self.sys.lock() {
+            Ok(mut sys) => self.scene.hold(&mut sys, name, pos),
+            Err(_) => false,
+        }
     }
 
     pub fn tick(&mut self, mario: &Mario) {
@@ -814,6 +847,33 @@ mod tests {
             assert!(emits > 0 && peak > 0.001, "no audible nozzle activity");
             assert_eq!(clipped, 0, "full {nozzle:?} mix clips before host gain");
         }
+    }
+
+    #[test]
+    fn a_host_objects_hum_is_started_once_kept_while_asked_for_and_fades() {
+        let Some((assets, mut sys)) = fixture() else {
+            return;
+        };
+        let mut scene = SceneAudio::load(&assets.dir, &sys);
+        let at = Vec3::new(0.0, 100.0, 0.0);
+        assert!(scene.hold(&mut sys, "MSD_SE_SHINE_EXIST", at), "the game has the Shine's hum");
+        let handle = scene.hums["MSD_SE_SHINE_EXIST"];
+        let mut buffer = [0.0; 1600];
+        let mut loud = 0.0f32;
+        for _ in 0..40 {
+            assert!(scene.hold(&mut sys, "MSD_SE_SHINE_EXIST", at));
+            sys.frame();
+            sys.render(&mut buffer, 24000.0);
+            loud = loud.max(buffer.iter().fold(0.0, |m, v| m.max(v.abs())));
+        }
+        assert_eq!(scene.hums["MSD_SE_SHINE_EXIST"], handle, "asking again kept the same sound");
+        assert!(loud > 0.001, "it hums: {loud}");
+        for _ in 0..60 {
+            sys.frame();
+            sys.render(&mut buffer, 24000.0);
+        }
+        assert!(!sys.is_playing(handle), "it fades once nobody asks for it");
+        assert!(!scene.hold(&mut sys, "MSD_SE_NOT_A_SOUND", at));
     }
 
     #[test]
