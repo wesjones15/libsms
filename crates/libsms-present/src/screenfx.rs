@@ -270,6 +270,8 @@ const TOO_BAD_LENGTH: u32 = 215;
 /// Frames of "TOO BAD!" a game over shows before the wipe starts: the letters have landed and
 /// settled by then, as the game's screen shows them.
 pub const GAME_OVER_DELAY: u32 = 180;
+/// How much faster a game over's letters play than a miss's, to be settled before the wipe starts.
+pub const GAME_OVER_LETTER_RATE: f32 = 1.7;
 /// GAME OVER's black is held this long after its wipe ends, then fades.
 const GAME_OVER_HOLD: u32 = 15;
 const GAME_OVER_FADE: u32 = 20;
@@ -450,7 +452,8 @@ impl ScreenFx {
     /// The letters `frac` of a frame past the whole frame `self.frame`: `processMiss`' stretches
     /// of each letter's own clock `t` (in frames), each a Bezier worked out in between.
     fn letters(&self, frac: f32) -> Vec<Sprite> {
-        let ft = self.frame as f32 + frac;
+        let rate = if self.kind == Some(Kind::GameOver) { GAME_OVER_LETTER_RATE } else { 1.0 };
+        let ft = (self.frame as f32 + frac) * rate;
         // A miss's leave with the frame count run out, fading over its last second; a game
         // over's go under the wipe's black.
         let leaving = if self.kind == Some(Kind::GameOver) {
