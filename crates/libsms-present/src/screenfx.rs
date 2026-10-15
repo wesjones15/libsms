@@ -267,11 +267,12 @@ const TOO_BAD_OPEN: u32 = 66;
 /// Frames the whole "TOO BAD!" is shown for: the last letter settled (frame 200) and a moment,
 /// fading over the last second.
 const TOO_BAD_LENGTH: u32 = 215;
-/// Frames of "TOO BAD!" a game over shows before the wipe starts: the letters have landed and
-/// settled by then, as the game's screen shows them.
-pub const GAME_OVER_DELAY: u32 = 180;
-/// How much faster a game over's letters play than a miss's, to be settled before the wipe starts.
+/// How much faster a game over's letters play than a miss's.
 pub const GAME_OVER_LETTER_RATE: f32 = 1.7;
+/// Frames of "TOO BAD!" a game over shows before the wipe starts: the letters have landed and
+/// settled, as the game's screen shows them (frame 180 at the game's pace), so the wipe comes
+/// when it did, in step with the letters, however fast they play.
+pub const GAME_OVER_DELAY: u32 = (180.0 / GAME_OVER_LETTER_RATE) as u32;
 /// GAME OVER's black is held this long after its wipe ends, then fades.
 const GAME_OVER_HOLD: u32 = 15;
 const GAME_OVER_FADE: u32 = 20;
