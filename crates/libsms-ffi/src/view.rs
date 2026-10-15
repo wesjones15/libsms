@@ -633,6 +633,16 @@ pub unsafe extern "C" fn sms_view_update(
     }
 }
 
+/// Host playback tone. Zero cutoff bypasses filtering; FLUDD gain leaves voices untouched.
+/// # Safety
+/// `view` must be null or a live view from `sms_view_new`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_set_audio_tone(view: *mut SmsView, cutoff: f32, fludd_gain: f32) {
+    unsafe { with_view(view, (), |v| {
+        if let Some(a) = &mut v.audio { a.set_tone(cutoff, fludd_gain); }
+    }) }
+}
+
 /// Mario says `name` (an `MSD_SE_MV*` voice, e.g. `MSD_SE_MV23_JUMP_LARGE_01`), cutting off
 /// his last voice. Nothing without sound or an unknown name.
 ///
