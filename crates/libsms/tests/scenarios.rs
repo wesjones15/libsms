@@ -3000,3 +3000,25 @@ fn the_spray_smokes_its_muzzle_only_while_water_leaves() {
     s.secs(1.0);
     assert!(cues(&s.host.events, "ms_nozzlesmoke").len() < 8, "smoke carries on after the spray stops");
 }
+
+/// The Turbo's dash (`checkController`, `TMarioEffect::startDashEffect`): once it is charged Mario
+/// starts `MSD_SE_PO_SNIPER_TRIGGER` on himself, then `MSD_SE_PO_SPREAD` every tick of the dash.
+#[test]
+fn the_turbo_dash_has_its_start_sound_and_its_spread_sound_every_tick() {
+    let mut s = Scene::flat();
+    s.sim.mario.give_fludd();
+    {
+        let p = s.sim.mario.params.clone();
+        let f = s.sim.mario.fludd.as_mut().unwrap();
+        f.change_nozzle(NozzleKind::Turbo, false, &p);
+        f.refill(&p);
+    }
+    s.pad.stick = Vec2::new(0.0, 1.0);
+    s.pad.r_analog = 255;
+    s.secs(6.0);
+    let dash_starts = voices(&s.host.events, "MSD_SE_PO_SNIPER_TRIGGER");
+    let spreads = voices(&s.host.events, "MSD_SE_PO_SPREAD");
+    assert!(s.sim.mario.dashing(), "he never dashed: {:?}", s.sim.mario.status);
+    assert!(dash_starts >= 2, "the fire sound and the dash start sound should both play: {dash_starts}");
+    assert!(spreads > 60, "the dash has no spread sound: {spreads}");
+}

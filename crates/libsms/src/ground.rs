@@ -622,6 +622,8 @@ impl Mario {
         if self.fludd_emitting {
             let v = self.params.mario.dash_max;
             self.set_player_velocity(v);
+            // `startSoundActor(MSD_SE_PO_SPREAD)`, every tick of the dash (a held sound).
+            self.cue("MSD_SE_PO_SPREAD");
         }
         false
     }

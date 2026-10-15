@@ -591,6 +591,12 @@ impl Mario {
         }
     }
 
+    /// The Turbo's dash is on (`MARIO_FLAG_FLUDD_EMITTING`): `TMarioEffect` draws the water-boost
+    /// cone and binds `ms_watboost_a/b` to FLUDD's muzzle while it lasts.
+    pub fn dashing(&self) -> bool {
+        self.fludd_emitting
+    }
+
     /// Starts particle effect `name` (a view draws it; MarioParticle.cpp).
     pub(crate) fn fx(&mut self, name: &'static str, at: crate::event::FxAt) {
         self.fx_scaled(name, at, 1.0);

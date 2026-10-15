@@ -477,6 +477,7 @@ impl Mario {
         let m = self.params.mario.clone();
         let turbo = f.nozzle == NozzleKind::Turbo;
         let state_active = f.trigger_state() == TriggerState::Active;
+        let mut dash_began = false;
         if turbo && self.upper == UpperState::Pumping && r_level > 0.0 && f.water > 0 {
             if self.intended_mag == 0.0 {
                 self.intended_yaw = self.face_yaw;
@@ -489,6 +490,7 @@ impl Mario {
                     self.dash_timer = m.dash_start_time as i32;
                     if !self.fludd_emitting && state_active {
                         self.fludd_emitting = true;
+                        dash_began = true;
                     }
                 }
                 if self.status != Status::Run {
@@ -514,6 +516,10 @@ impl Mario {
             }
             self.dash_timer = 0;
             self.fludd_emitting = false;
+        }
+        if dash_began {
+            // `startSoundActor(MSD_SE_PO_SNIPER_TRIGGER)` on Mario, as the dash begins.
+            self.cue("MSD_SE_PO_SNIPER_TRIGGER");
         }
     }
 

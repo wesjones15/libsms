@@ -94,7 +94,7 @@ const DOWNS: [Status; 16] = [
 ];
 
 impl Mario {
-    fn cue(&mut self, name: &'static str) {
+    pub(crate) fn cue(&mut self, name: &'static str) {
         self.events.push(Event::Sound(SoundCue {
             name,
             pos: self.pos,
