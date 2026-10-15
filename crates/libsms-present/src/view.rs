@@ -1011,7 +1011,7 @@ impl View {
             colors: Vec::new(),
             texture_ids: Vec::new(),
         };
-        view.update_shine(0.0, Vec3::ZERO, 0, 0, 0.0, 1.0);
+        view.update_shine(0.0, Vec3::ZERO, 0, 0, 0.0, 1.0, false);
         Ok(view)
     }
 
@@ -1041,8 +1041,19 @@ impl View {
     /// as Mario touches it) or 2 for `shine_demo_shine_get` (it rises over his head), at `frame`
     /// of it (60 a second). The instance stands at `pos` turned `yaw` (a 16-bit angle) and the
     /// glow follows it; `scale` is the glow's size (`setGlobalScale`: 1, or one half once
-    /// taken). The posed vertices replace the view's buffers, for the host's one instance.
-    pub fn update_shine(&mut self, dt: f32, pos: Vec3, yaw: i16, clip: u8, frame: f32, scale: f32) {
+    /// taken). The posed vertices replace the view's buffers, for the host's one instance. A host
+    /// that draws its instance mirrored across X (the models are right-handed) says so with
+    /// `mirror`, so the glow lands on the joint as drawn.
+    pub fn update_shine(
+        &mut self,
+        dt: f32,
+        pos: Vec3,
+        yaw: i16,
+        clip: u8,
+        frame: f32,
+        scale: f32,
+        mirror: bool,
+    ) {
         let Some(shine) = self.shine.as_mut() else {
             return;
         };
@@ -1071,11 +1082,10 @@ impl View {
         self.texture_ids = model.batch_texture.clone();
 
         // The glow, asked for every game frame (30 a second, four ticks of 120).
-        let root = Mat4::from_rotation_translation(
-            Quat::from_rotation_y(yaw as f32 * std::f32::consts::PI / 32768.0),
-            pos,
-        );
-        let at = root * joints[shine.body];
+        let turn = Quat::from_rotation_y(yaw as f32 * std::f32::consts::PI / 32768.0);
+        let joint = joints[shine.body].w_axis.truncate();
+        let joint = if mirror { Vec3::new(-joint.x, joint.y, joint.z) } else { joint };
+        let at = Mat4::from_rotation_translation(turn, pos + turn * joint);
         for (slot, name) in SHINE_EFFECTS.iter().enumerate() {
             self.fx.request_scaled(slot as u32, name, at, scale);
         }
@@ -1523,15 +1533,15 @@ mod tests {
     fn the_shine_floats_up_and_holds_its_pose_with_the_clips() {
         let Some(mut v) = shine() else { return };
         let top = |v: &View| v.positions.iter().map(|p| p.y).fold(f32::MIN, f32::max);
-        v.update_shine(0.0, Vec3::ZERO, 0, 0, 0.0, 1.0);
+        v.update_shine(0.0, Vec3::ZERO, 0, 0, 0.0, 1.0, false);
         let waiting = top(&v);
         // `shine_float` lifts it about 170 units at its middle, back down at its end.
-        v.update_shine(0.0, Vec3::ZERO, 0, 1, 40.0, 1.0);
+        v.update_shine(0.0, Vec3::ZERO, 0, 1, 40.0, 1.0, false);
         assert!(top(&v) > waiting + 100.0, "{} -> {}", waiting, top(&v));
-        v.update_shine(0.0, Vec3::ZERO, 0, 1, 79.0, 1.0);
+        v.update_shine(0.0, Vec3::ZERO, 0, 1, 79.0, 1.0, false);
         assert!((top(&v) - waiting).abs() < 5.0);
         // The demo's clip starts above Mario's head (the model's local origin is his feet).
-        v.update_shine(0.0, Vec3::ZERO, 0, 2, 0.0, 1.0);
+        v.update_shine(0.0, Vec3::ZERO, 0, 2, 0.0, 1.0, false);
         assert!(top(&v) > 200.0, "{}", top(&v));
     }
 
@@ -1540,7 +1550,7 @@ mod tests {
         let Some(mut v) = shine() else { return };
         assert!(v.fx.has("ms_shine_kira") && v.fx.has("ms_shine_bow"));
         for _ in 0..90 {
-            v.update_shine(1.0 / 30.0, Vec3::new(0.0, 100.0, 0.0), 0, 0, 0.0, 1.0);
+            v.update_shine(1.0 / 30.0, Vec3::new(0.0, 100.0, 0.0), 0, 0, 0.0, 1.0, false);
         }
         assert!(!v.fx.vertices.is_empty(), "sparkles and rays");
         // Every vertex is in the world, around where it's placed.

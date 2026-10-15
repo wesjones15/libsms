@@ -319,7 +319,9 @@ pub struct SmsShineFrame {
     pub yaw: i16,
     /// 0 waiting (the model's own pose), 1 `shine_float`, 2 `shine_demo_shine_get`.
     pub clip: u8,
-    pub _pad: u8,
+    /// 1: the host draws the instance mirrored across X (the models are right-handed), so the glow
+    /// is placed on the joint as drawn.
+    pub mirror: u8,
     /// Frame of that clip, 60 a second.
     pub frame: f32,
     /// The glow's size: 1, or one half once taken.
@@ -379,6 +381,7 @@ pub unsafe extern "C" fn sms_view_shine_update(view: *mut SmsView, frame: *const
                 f.clip,
                 if f.frame.is_finite() { f.frame.max(0.0) } else { 0.0 },
                 if f.scale.is_finite() { f.scale.clamp(0.0, 8.0) } else { 1.0 },
+                f.mirror != 0,
             );
         })
     }
