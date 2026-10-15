@@ -94,7 +94,6 @@ pub struct Audio {
     sys: Arc<Mutex<SoundSystem>>,
     /// Output gain 0..1, as `f32` bits.
     volume: Arc<AtomicU32>,
-    cutoff: Arc<AtomicU32>,
     _stream: cpal::Stream,
     pub rate: u32,
     pub channels: u16,
@@ -102,7 +101,6 @@ pub struct Audio {
 
 /// Kept separate from the device so integration tests can render the same cues headlessly.
 struct SceneAudio {
-    fludd_gain: f32,
     tables: HashMap<String, AnimSoundTable>,
     animation: AnimationPlayer,
     clip: Option<&'static str>,
@@ -171,7 +169,6 @@ impl SceneAudio {
             .collect();
         tracks.sort_by(|a, b| a.0.cmp(&b.0));
         Self {
-            fludd_gain: 1.0,
             tables,
             animation: AnimationPlayer::default(),
             clip: None,
@@ -307,13 +304,10 @@ impl SceneAudio {
             return;
         };
         if id & 0xC00 != 0 {
-            let h = match cue.info {
+            match cue.info {
                 Some(v) => sys.play_with_info(cue.name, Some(cue.pos), FLUDD, v),
                 None => sys.play(cue.name, Some(cue.pos), FLUDD),
             };
-            if let Some(h) = h {
-                self.fludd_volume(sys, cue.name, h);
-            }
             return;
         }
         if let Some(&h) = self.held.get(cue.name)
@@ -322,7 +316,6 @@ impl SceneAudio {
             if let Some(v) = cue.info {
                 sys.apply_info(h, cue.name, v);
             }
-            self.fludd_volume(sys, cue.name, h);
             return;
         }
         let h = match cue.info {
@@ -331,19 +324,11 @@ impl SceneAudio {
         };
         match h {
             Some(h) => {
-                self.fludd_volume(sys, cue.name, h);
                 self.held.insert(cue.name, h);
             }
             None => {
                 self.held.remove(cue.name);
             }
-        }
-    }
-
-    fn fludd_volume(&self, sys: &mut SoundSystem, name: &str, h: SoundHandle) {
-        if name.starts_with("MSD_SE_PO_") {
-            // A host mix layer, separate from the disc's pressure/pitch modulation on layer 0.
-            sys.set_volume(h, self.fludd_gain, 0, 5);
         }
     }
 
@@ -386,24 +371,16 @@ impl Audio {
         }
         let sys = Arc::new(Mutex::new(sys));
         let volume = Arc::new(AtomicU32::new(1.0f32.to_bits()));
-        let cutoff = Arc::new(AtomicU32::new(0.0f32.to_bits()));
         let device = cpal::default_host()
             .default_output_device()
             .ok_or("no output device")?;
         let config = device.default_output_config()?;
         let (rate, channels) = (config.sample_rate().0, config.channels());
         let v = volume.clone();
-        let lowpass = cutoff.clone();
         let stream = match config.sample_format() {
-            cpal::SampleFormat::F32 => {
-                output::<f32>(&device, &config.into(), sys.clone(), v, lowpass)?
-            }
-            cpal::SampleFormat::I16 => {
-                output::<i16>(&device, &config.into(), sys.clone(), v, lowpass)?
-            }
-            cpal::SampleFormat::U16 => {
-                output::<u16>(&device, &config.into(), sys.clone(), v, lowpass)?
-            }
+            cpal::SampleFormat::F32 => output::<f32>(&device, &config.into(), sys.clone(), v)?,
+            cpal::SampleFormat::I16 => output::<i16>(&device, &config.into(), sys.clone(), v)?,
+            cpal::SampleFormat::U16 => output::<u16>(&device, &config.into(), sys.clone(), v)?,
             format => return Err(format!("unsupported output sample format {format}").into()),
         };
         stream.play()?;
@@ -411,7 +388,6 @@ impl Audio {
             scene,
             sys,
             volume,
-            cutoff,
             _stream: stream,
             rate,
             channels,
@@ -422,13 +398,6 @@ impl Audio {
     pub fn set_volume(&self, v: f32) {
         self.volume
             .store(v.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
-    }
-
-    /// Host playback tone; standalone viewers keep the unfiltered disc mix by default.
-    pub fn set_tone(&mut self, cutoff: f32, fludd_gain: f32) {
-        self.cutoff
-            .store(cutoff.max(0.0).to_bits(), Ordering::Relaxed);
-        self.scene.fludd_gain = fludd_gain.clamp(0.0, 1.0);
     }
 
     /// The listener as a world-to-camera matrix (camera looking down -Z) and its position.
@@ -521,12 +490,10 @@ fn output<T: cpal::SizedSample + cpal::FromSample<f32>>(
     config: &cpal::StreamConfig,
     sys: Arc<Mutex<SoundSystem>>,
     volume: Arc<AtomicU32>,
-    cutoff: Arc<AtomicU32>,
 ) -> Result<cpal::Stream, cpal::BuildStreamError> {
     let channels = config.channels as usize;
     let rate = config.sample_rate.0 as f32;
     let mut scratch = Vec::new();
-    let mut filter = crate::audio_filter::LowPass::new(rate);
     device.build_output_stream(
         config,
         move |out: &mut [T], _| {
@@ -539,14 +506,12 @@ fn output<T: cpal::SizedSample + cpal::FromSample<f32>>(
                 sys.engine.output_gain = gain;
                 sys.render(&mut scratch, rate);
             }
-            filter.set_cutoff(f32::from_bits(cutoff.load(Ordering::Relaxed)));
             for (stereo, frame) in scratch
                 .as_chunks::<2>()
                 .0
                 .iter()
                 .zip(out.chunks_exact_mut(channels))
             {
-                let stereo = filter.process(*stereo);
                 for (c, sample) in frame.iter_mut().enumerate() {
                     let value = if channels == 1 {
                         (stereo[0] + stereo[1]) * 0.5
@@ -793,9 +758,9 @@ mod tests {
                 Vec3::ZERO,
                 0,
             );
-            // Match the restored RoR2 master/SFX levels. At unity the jump/hover mix
-            // saturates before the old callback could turn it down (39 samples).
-            sys.engine.output_gain = 0.4463511 * 0.4815751;
+            // Shared RoR2 output reference (-12 dB) at full game master/SFX.
+            // No per-nozzle gain or treble filter is applied.
+            sys.engine.output_gain = 10.0f32.powf(-12.0 / 20.0);
             sim.mario.give_fludd();
             let params = sim.mario.params.clone();
             let fludd = sim.mario.fludd.as_mut().unwrap();
@@ -836,45 +801,6 @@ mod tests {
             assert!(emits > 0 && peak > 0.001, "no audible nozzle activity");
             assert_eq!(clipped, 0, "full {nozzle:?} mix clips before host gain");
         }
-    }
-
-    #[test]
-    fn host_fludd_gain_reduces_the_loop_without_changing_its_pitch() {
-        let Some((assets, _)) = fixture() else {
-            return;
-        };
-        let data = Arc::new(SoundData::load(&assets.dir).unwrap());
-        let render = |gain| {
-            let mut sys = SoundSystem::new(data.clone());
-            let mut scene = SceneAudio::load(&assets.dir, &sys);
-            scene.fludd_gain = gain;
-            let cue = SoundCue {
-                name: "MSD_SE_PO_HOVER",
-                pos: Vec3::ZERO,
-                info: None,
-            };
-            let mut samples = Vec::new();
-            let mut frame = [0.0; 3200];
-            for _ in 0..60 {
-                scene.cue(&mut sys, &cue);
-                sys.frame();
-                sys.render(&mut frame, 48000.0);
-                samples.extend_from_slice(&frame);
-            }
-            samples
-        };
-        let original = render(1.0);
-        let softer = render(0.35);
-        assert!(original.iter().any(|v| v.abs() > 0.1));
-        let error = original
-            .iter()
-            .zip(&softer)
-            .map(|(a, b)| (a * 0.35 - b).abs())
-            .fold(0.0, f32::max);
-        assert!(
-            error < 0.002,
-            "gain changed the waveform beyond scaling: {error}"
-        );
     }
 
     #[test]
