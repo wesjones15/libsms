@@ -349,7 +349,13 @@ fn fx_matrix(at: FxAt, root: Mat4, joints: &[Mat4], center: Option<usize>, muzzl
         // emitAndBindToPosPtr follows position only, not Mario's rotation.
         FxAt::Feet => Some(Mat4::from_translation(root.w_axis.truncate())),
         // FLUDD's muzzle as drawn this frame (the nozzle's `null_G_muzzle` joints).
-        FxAt::Muzzle(i) | FxAt::MuzzleFollow(i) => muzzles.get(i as usize).map(|m| root * *m),
+        FxAt::Muzzle(i) => muzzles.get(i as usize).map(|m| root * *m),
+        // `rocketEffectStart`: emitAndBindToPosPtr(.., &mWaterGun->getEmitPos0()) follows the muzzle's
+        // position only. The muzzle joint points forward, so taking its rotation too turns the
+        // exhaust, which is authored to blow downward, sideways: it pools about his middle.
+        FxAt::MuzzleFollow(i) => muzzles
+            .get(i as usize)
+            .map(|m| Mat4::from_translation((root * *m).w_axis.truncate())),
     }
 }
 
@@ -1506,5 +1512,63 @@ mod tests {
         v.pound_flames = true;
         v.update(&mut sim, 0.0);
         assert_eq!(v.fx.vertices.len(), all);
+    }
+
+    /// Collects the sim's events over flat ground, for stepping a launch.
+    struct Collect(Vec<Event>);
+
+    impl libsms::Host for Collect {
+        fn ground(&self, p: Vec3) -> Option<libsms::GroundHit> {
+            libsms::Host::ground(&libsms::FlatHost::default(), p)
+        }
+        fn event(&mut self, e: Event) {
+            self.0.push(e);
+        }
+    }
+
+    /// The Rocket's exhaust is bound to the muzzle's position only (`emitAndBindToPosPtr`), so it
+    /// comes out of the nozzle on his back and trails below as he climbs; bound with the muzzle's
+    /// rotation as well it pooled about his middle.
+    #[test]
+    fn the_rockets_exhaust_leaves_the_nozzle_on_his_back_as_he_climbs() {
+        let dir = libsms::assets::find(None).expect("assets not found (set SMS_ASSETS)");
+        let a = libsms::Assets::discover(None).unwrap();
+        for only in ["ms_m_rocket_a", "ms_m_rocket_b", "ms_m_rocket_b2"] {
+            let mut v = View::load(&dir).unwrap();
+            let mut sim = Sim::new(a.params.clone(), a.anim_table.clone(), Vec3::ZERO, 0);
+            sim.mario.give_fludd();
+            {
+                let p = sim.mario.params.clone();
+                let f = sim.mario.fludd.as_mut().unwrap();
+                f.change_nozzle(libsms::NozzleKind::Rocket, false, &p);
+                f.refill(&p);
+            }
+            let mut host = Collect(Vec::new());
+            let pad = libsms::Pad { r: true, r_analog: 255, ..Default::default() };
+            let mut sampled = false;
+            for tick in 0..205 {
+                sim.mario.tick(&mut host, &pad, 0);
+                let events: Vec<Event> = std::mem::take(&mut host.0)
+                    .into_iter()
+                    .filter(|e| matches!(e, Event::Particle(c) if c.name == only))
+                    .collect();
+                v.events(&events, &sim.mario);
+                if tick % 4 == 3 {
+                    v.update(&mut sim, 0.0);
+                    // A moment into the climb.
+                    if tick == 195 {
+                        let m = sim.mario.pos;
+                        let n = v.fx.vertices.len() as f32;
+                        assert!(n > 0.0, "{only} drew nothing");
+                        let z = v.fx.vertices.iter().map(|p| p.pos.z - m.z).sum::<f32>() / n;
+                        assert!(z < -30.0, "{only} is about his middle, not at the nozzle behind him: z {z:.0}");
+                        let high = v.fx.vertices.iter().map(|p| p.pos.y - m.y).fold(f32::MIN, f32::max);
+                        assert!(high < 110.0, "{only} reaches up his body: {high:.0}");
+                        sampled = true;
+                    }
+                }
+            }
+            assert!(sampled);
+        }
     }
 }
