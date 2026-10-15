@@ -513,11 +513,36 @@ fn build(
         let m = &model.bmd.materials[mi];
         let tex = textures.get(&model, index, mi, &inputs);
         let baked = usize::try_from(tex).ok().map(|i| &textures.list[i]);
+        // Where a channel takes its alpha from the vertices (the water-boost cone fades along its
+        // length that way), the batch's vertex alpha: lowest and mean.
+        let (vertex_min, vertex_mean) = {
+            let set = if m.chans[1].mat_from_vertex {
+                Some(0)
+            } else if m.chans[3].mat_from_vertex {
+                Some(1)
+            } else {
+                None
+            };
+            let alphas = set.map(|s| {
+                model.batches[bi]
+                    .vertices
+                    .iter()
+                    .map(|v| v.colors[s][3] as f32 / 255.0)
+                    .collect::<Vec<_>>()
+            });
+            match alphas.filter(|a| !a.is_empty()) {
+                Some(a) => (a.iter().copied().fold(1.0, f32::min), a.iter().sum::<f32>() / a.len() as f32),
+                None => (1.0, 1.0),
+            }
+        };
         let blend = match m.blend() {
             Blend::Opaque => blend::OPAQUE,
             Blend::AlphaTest => blend::CUTOUT,
-            // Nearly opaque blending reads as opaque; the deferred shader can't blend.
-            Blend::AlphaBlend if baked.is_some_and(|b| b.min_alpha() >= 0.7) => blend::OPAQUE,
+            // Nearly opaque blending reads as opaque; the deferred shader can't blend. Both the
+            // texture's alpha and the vertices' have to be.
+            Blend::AlphaBlend if baked.is_some_and(|b| b.min_alpha() >= 0.7) && vertex_min >= 0.7 => {
+                blend::OPAQUE
+            }
             Blend::AlphaBlend => blend::TRANSLUCENT,
             Blend::Additive => blend::ADDITIVE,
         };
@@ -529,7 +554,13 @@ fn build(
         };
         let env = baked.and_then(|b| b.env);
         let color = if tex >= 0 {
-            [1.0; 4]
+            // Hosts get a colour per batch, not per vertex: a translucent batch faded by its
+            // vertices is as translucent as they are on average.
+            if blend == blend::TRANSLUCENT && vertex_mean < 0.999 {
+                [1.0, 1.0, 1.0, vertex_mean]
+            } else {
+                [1.0; 4]
+            }
         } else {
             let c = model.source().flat_color(mi, &inputs);
             textures.shade.map_or(c, |s| s.color(c))
@@ -1707,5 +1738,20 @@ mod tests {
         assert!(boost_cues > 100, "the dash asked for {boost_cues} watboost cues");
         assert_eq!(after_release, 0, "the cone stays after the dash ends");
         assert!(!v.fx.vertices.is_empty() || boost_cues > 0);
+    }
+
+    /// The water-boost cone's layers are alpha blended and fade along its length by their vertex
+    /// alpha (the texture's alpha is solid), so hosts must get them as translucent, through the
+    /// see-through path, not as an opaque shell.
+    #[test]
+    fn the_water_boost_cone_is_translucent_not_an_opaque_shell() {
+        let dir = libsms::assets::find(None).expect("assets not found (set SMS_ASSETS)");
+        let v = View::load(&dir).unwrap();
+        let m = &v.models[models::WATERBOOST as usize];
+        for (i, b) in m.batches.iter().enumerate() {
+            assert_ne!(m.batch_blend[i], blend::OPAQUE, "{} is an opaque shell", m.bmd.materials[b.material].name);
+        }
+        let faded = (0..m.batches.len()).filter(|&i| m.batch_blend[i] == blend::TRANSLUCENT && m.batch_color_of(i)[3] < 1.0).count();
+        assert!(faded >= 2, "the faded layers don't carry their vertex alpha");
     }
 }
