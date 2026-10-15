@@ -22,8 +22,10 @@
 //!
 //! Not ported: child particles (`SSP1`), emitter keyframes other than draw scale, general
 //! indirect texture stages (projected scene refraction is handed to the host), the
-//! fields other than gravity and air, and blending other than additive (drawn as see-through
-//! texture times prm colour).
+//! fields other than gravity and air. Source-alpha blending (the dust, smoke and stars) whose
+//! TEV mixes env in (`d + a (1 - c) + b c` with env as an input) is drawn exactly as a black
+//! coverage draw under the same additive basis images (`Paint::Basis::over`); one without env
+//! is drawn as see-through texture times prm colour.
 
 use std::collections::HashMap;
 use std::f32::consts::TAU;
@@ -341,9 +343,16 @@ struct Emitter {
 /// How an effect is drawn.
 #[derive(Debug, Clone)]
 enum Paint {
-    /// Static basis textures (per main texture: the first of `count`), coefficients per
-    /// particle.
-    Basis { first: HashMap<u8, u32>, count: u32 },
+    /// Static basis textures (per main texture: the first of `count`, then with `over` the
+    /// coverage mask), coefficients per particle. `over`: the game blends by source alpha
+    /// and its TEV mixes env into the colour, which no single texture-times-colour draw can
+    /// show. So a black draw of the coverage (what the particle hides of the scene) goes
+    /// first and the basis images add the colour on top: `C a + dst (1 - a)` exactly.
+    Basis {
+        first: HashMap<u8, u32>,
+        count: u32,
+        over: bool,
+    },
     /// One texture rebaked every frame (stripes with a second texture).
     Baked { texture: u32 },
     /// Projected framebuffer stripes: the disc's indirect map and wave mask, for the host's
@@ -461,6 +470,23 @@ fn tev_coefficients(base: &BaseShape, prm: Vec3, env: Vec3) -> ([Vec3; 3], usize
     }
 }
 
+/// The texture's coverage alone (its alpha; the TEV alpha's texture half), for the black
+/// draw under an `over` effect.
+fn coverage_image(tex: &Texture) -> FxTexture {
+    let img = &tex.image;
+    let mut rgba = Vec::with_capacity(img.rgba.len());
+    for p in img.rgba.chunks_exact(4) {
+        rgba.extend_from_slice(&[255, 255, 255, p[3]]);
+    }
+    FxTexture {
+        width: img.width,
+        height: img.height,
+        rgba,
+        repeat: tex.wrap_s != Wrap::Clamp || tex.wrap_t != Wrap::Clamp,
+        version: 1,
+    }
+}
+
 /// The basis images of `tex`: each texel's `t` turned into the basis polynomial, times the
 /// texture's alpha (the TEV alpha's texture half). Alpha is 1: the vertex colours carry the
 /// rest.
@@ -549,12 +575,9 @@ impl Particles {
                 texture: self.textures.len() as u32 - 1,
             }
         } else {
-            let count = if base.blend_dst == 1 && quadratic(base) {
-                3
-            } else {
-                2
-            };
-            let count = if base.blend_dst == 1 { count } else { 1 };
+            let over = base.blend_dst != 1 && base.tev().contains(&4);
+            let count = if quadratic(base) { 3 } else { 2 };
+            let count = if base.blend_dst == 1 || over { count } else { 1 };
             let mut first = HashMap::new();
             let mut wanted: Vec<u8> = base.tex_keys.clone();
             wanted.push(base.texture);
@@ -577,9 +600,12 @@ impl Particles {
                     });
                 } else {
                     self.textures.extend(basis_images(tex, count));
+                    if over {
+                        self.textures.push(coverage_image(tex));
+                    }
                 }
             }
-            Paint::Basis { first, count }
+            Paint::Basis { first, count, over }
         };
         self.by_name.insert(name.to_owned(), self.effects.len());
         self.effects.push(Effect {
@@ -632,9 +658,9 @@ impl Particles {
             e.world_space
                 && match &e.paint {
                     Paint::Baked { texture: t } | Paint::Refraction { texture: t } => *t == texture,
-                    Paint::Basis { first, count } => {
-                        first.values().any(|&t| texture >= t && texture < t + count)
-                    }
+                    Paint::Basis { first, count, over } => first
+                        .values()
+                        .any(|&t| texture >= t && texture < t + count + *over as u32),
                 }
         })
     }
@@ -914,17 +940,29 @@ impl Particles {
                             blend: blend::ADDITIVE,
                         });
                     }
-                    Paint::Basis { first, count } => {
+                    Paint::Basis { first, count, over } => {
                         let Some(&t0) = first.get(&e.texture) else {
                             continue;
                         };
                         let (prm, env) = registers(e, None, jpa);
                         let colors = paint_colors(base, prm, env, *count);
                         let m = stripe_tex_mtx(base, e.frame as i32);
-                        for (k, c) in colors.iter().enumerate().take(*count as usize) {
-                            if c[0] + c[1] + c[2] <= 1.0 / 512.0 && *count > 1 {
-                                continue;
-                            }
+                        let additive = if *count == 1 {
+                            blend::ALPHA
+                        } else {
+                            blend::ADDITIVE
+                        };
+                        // The coverage goes first: the colour adds to what it leaves.
+                        let coverage = (t0 + *count, [0.0, 0.0, 0.0, prm[3]], blend::ALPHA);
+                        let layers = std::iter::once(coverage).filter(|_| *over).chain(
+                            colors
+                                .iter()
+                                .enumerate()
+                                .take(*count as usize)
+                                .filter(|(_, c)| *count == 1 || c[0] + c[1] + c[2] > 1.0 / 512.0)
+                                .map(|(k, c)| (t0 + k as u32, *c, additive)),
+                        );
+                        for (texture, color, blend) in layers {
                             let first = self.vertices.len() as u32;
                             for q in &quads {
                                 for (p, uv) in q {
@@ -933,26 +971,22 @@ impl Particles {
                                         pos: *p,
                                         u: uv[0],
                                         v: uv[1],
-                                        color: *c,
+                                        color,
                                     });
                                 }
                             }
                             self.batches.push(FxBatch {
-                                texture: t0 + k as u32,
+                                texture,
                                 first_vertex: first,
                                 vertex_count: self.vertices.len() as u32 - first,
-                                blend: if *count == 1 {
-                                    blend::ALPHA
-                                } else {
-                                    blend::ADDITIVE
-                                },
+                                blend,
                             });
                         }
                     }
                 }
                 continue;
             }
-            let Paint::Basis { first, count } = &fx.paint else {
+            let Paint::Basis { first, count, over } = &fx.paint else {
                 continue;
             };
             // Particles that follow the emitter sit where it is now (the host draws between
@@ -968,7 +1002,8 @@ impl Particles {
                 Box::new(e.particles.iter().rev())
             };
             // One batch per (texture, basis image); particles append to theirs.
-            let mut runs: Vec<(u32, Vec<FxVertex>)> = Vec::new();
+            // The coverage draws (`over`) are flagged and go first.
+            let mut runs: Vec<(u32, bool, Vec<FxVertex>)> = Vec::new();
             for p in order {
                 let sampled = sample_particle(p, fraction);
                 let p = &sampled;
@@ -993,37 +1028,44 @@ impl Particles {
                     let Some(corners) = particle_quad(e, p, pos, jpa, right, up, pass) else {
                         continue;
                     };
-                    for (k, c) in colors.iter().enumerate().take(*count as usize) {
-                        if *count > 1 && c[0] + c[1] + c[2] <= 1.0 / 512.0 {
-                            continue;
-                        }
-                        let texture = t0 + k as u32;
+                    let coverage = (t0 + *count, true, [0.0, 0.0, 0.0, prm[3]]);
+                    let layers = std::iter::once(coverage).filter(|_| *over).chain(
+                        colors
+                            .iter()
+                            .enumerate()
+                            .take(*count as usize)
+                            .filter(|(_, c)| *count == 1 || c[0] + c[1] + c[2] > 1.0 / 512.0)
+                            .map(|(k, c)| (t0 + k as u32, false, *c)),
+                    );
+                    for (texture, cover, c) in layers {
                         let run = match runs.iter_mut().find(|r| r.0 == texture) {
                             Some(r) => r,
                             None => {
-                                runs.push((texture, Vec::new()));
+                                runs.push((texture, cover, Vec::new()));
                                 runs.last_mut().unwrap()
                             }
                         };
                         for (pos, uv) in &corners {
-                            run.1.push(FxVertex {
+                            run.2.push(FxVertex {
                                 pos: *pos,
                                 u: uv[0],
                                 v: uv[1],
-                                color: *c,
+                                color: c,
                             });
                         }
                     }
                 }
             }
-            for (texture, verts) in runs {
+            // The colour adds to what the coverage leaves of the scene, so it draws first.
+            runs.sort_by_key(|r| !r.1);
+            for (texture, cover, verts) in runs {
                 let first = self.vertices.len() as u32;
                 self.vertices.extend(verts);
                 self.batches.push(FxBatch {
                     texture,
                     first_vertex: first,
                     vertex_count: self.vertices.len() as u32 - first,
-                    blend: if *count == 1 {
+                    blend: if *count == 1 || cover {
                         blend::ALPHA
                     } else {
                         blend::ADDITIVE
@@ -2679,6 +2721,49 @@ mod tests {
         p.build(Vec3::X, Vec3::Y);
         assert!(p.vertices.is_empty(), "{} corners left", p.vertices.len());
         assert!(!p.active());
+    }
+
+    /// The bump stars (`ms_dmg_c`) mix env into their colour: orange edges (and red, late) with a
+    /// yellow and then pink core, drawn over a black coverage layer, not white texture times prm.
+    #[test]
+    fn bump_stars_are_orange_then_pink() {
+        let Some(dir) = libsms::assets::find(None) else {
+            return;
+        };
+        let mut p = Particles::load(&dir, &["ms_dmg_c"]);
+        if p.effects.is_empty() {
+            return;
+        }
+        p.emit("ms_dmg_c", Mat4::IDENTITY, 1.0);
+        // Particles start at random places in the colour table, so both show at once.
+        let (mut orange, mut pink) = (false, false);
+        for tick in (0..120).step_by(4) {
+            p.advance(tick);
+            p.build(Vec3::X, Vec3::Y);
+            let mut colour_seen = false;
+            for b in &p.batches {
+                let verts = &p.vertices[b.first_vertex as usize..][..b.vertex_count as usize];
+                if b.blend == blend::ALPHA {
+                    // Coverage: black, and under (before) every colour layer.
+                    assert!(!colour_seen, "coverage after colour");
+                    assert!(verts.iter().all(|v| v.color[..3] == [0.0; 3]));
+                    continue;
+                }
+                assert_eq!(b.blend, blend::ADDITIVE);
+                colour_seen = true;
+                for v in verts {
+                    let [r, g, bl, _] = v.color;
+                    if r < 0.05 {
+                        continue;
+                    }
+                    let (g, bl) = (g / r, bl / r);
+                    orange |= (0.45..0.56).contains(&g) && bl < 0.05;
+                    pink |= bl > g && bl > 0.4;
+                }
+            }
+        }
+        assert!(orange, "no orange");
+        assert!(pink, "no pink");
     }
 
     #[test]
