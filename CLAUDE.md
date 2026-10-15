@@ -56,7 +56,8 @@ Workspace:
   space), `particles` (the disc's `.jpa` effects run as JParticle runs them and handed out as
   quads: Mario's movement dust, stars, smears, slide spray, stomp bursts and super pound flames;
   hosts pass each tick's events to `View::events`, which the FFI does even without sound),
-  `hud` (FLUDD's water gauge drawn as `TGCConsole2`
+  `coins` (the yellow and blue coin counters, icon, "x" and digit pictures as the HUD lays them out, up to
+  seven digits; `sms_view_coins_*`; `--example coins` draws them), `hud` (FLUDD's water gauge drawn as `TGCConsole2`
   draws it into one RGBA image), `life` (Mario's life meter, the Shine Sprite sun: a hub and eight
   rays in two layers, lit by health share, a cyan shield after them; `LifeMeter::load(dir, 10, false)`
   fills the empty arc on top with two more rays for a sun alone; `sms_view_life_*`; `--example life`

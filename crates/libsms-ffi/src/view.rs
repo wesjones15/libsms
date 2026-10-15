@@ -1167,6 +1167,91 @@ pub unsafe extern "C" fn sms_view_life_pixels(
     }
 }
 
+/// Sets the number coin counter `which` (0 the yellow coin's, 1 the blue coin's) shows, as the
+/// HUD draws it, and redraws it if that changed the picture. Up to seven digits are shown
+/// (the game shows three); more is clamped. Then read it with [`sms_view_coins_info`] and
+/// [`sms_view_coins_pixels`]. Returns 0 without the HUD's files.
+///
+/// # Safety
+/// `view` from [`sms_view_new`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_coins_set(view: *mut SmsView, which: u8, value: u32) -> u8 {
+    // SAFETY: as documented.
+    unsafe {
+        with_view(view, 0, |v| {
+            let Some(m) = v.view.coins.get_mut(which as usize).and_then(|m| m.as_mut()) else {
+                return 0;
+            };
+            m.update(value);
+            1
+        })
+    }
+}
+
+/// Coin counter `which`'s place and size (the same struct as the water gauge's: its top-left on
+/// the game's 600x480 screen, `shown` always 1 here). Returns 0 without the HUD's files.
+///
+/// # Safety
+/// `view` from [`sms_view_new`]; `out` writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_coins_info(
+    view: *mut SmsView,
+    which: u8,
+    out: *mut SmsHudInfo,
+) -> u8 {
+    // SAFETY: as documented.
+    unsafe {
+        with_view(view, 0, |v| {
+            let (Some(out), Some(m)) = (
+                out.as_mut(),
+                v.view.coins.get(which as usize).and_then(|m| m.as_ref()),
+            ) else {
+                return 0;
+            };
+            *out = SmsHudInfo {
+                x: m.origin[0],
+                y: m.origin[1],
+                width: m.image.width,
+                height: m.image.height,
+                screen_w: libsms_present::hud::SCREEN[0] as u32,
+                screen_h: libsms_present::hud::SCREEN[1] as u32,
+                version: m.version,
+                shown: 1,
+                _pad: [0; 3],
+            };
+            1
+        })
+    }
+}
+
+/// Copies coin counter `which`'s pixels (RGBA, straight alpha, top row first) to `rgba`.
+/// Returns 0 if `len` is short or there is no such counter.
+///
+/// # Safety
+/// `view` from [`sms_view_new`]; `rgba` writable for `len` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_coins_pixels(
+    view: *mut SmsView,
+    which: u8,
+    rgba: *mut u8,
+    len: u32,
+) -> u8 {
+    // SAFETY: as documented.
+    unsafe {
+        with_view(view, 0, |v| {
+            let Some(m) = v.view.coins.get(which as usize).and_then(|m| m.as_ref()) else {
+                return 0;
+            };
+            let px = &m.image.rgba;
+            if rgba.is_null() || px.len() > len as usize {
+                return 0;
+            }
+            std::ptr::copy_nonoverlapping(px.as_ptr(), rgba, px.len());
+            1
+        })
+    }
+}
+
 /// Copies the gauge's pixels (RGBA, straight alpha, top row first, `width * height * 4`
 /// bytes) to `rgba`. Returns 0 if `len` is short or there is no gauge.
 ///

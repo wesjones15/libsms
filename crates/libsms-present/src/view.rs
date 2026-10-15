@@ -23,6 +23,7 @@ use libsms_assets::mario::{BODY_HAND_SHAPES, HIDDEN_SHAPE, Hands, SHIRT_SHAPE, h
 use libsms_assets::{Batch, Bmd, Pose, paths};
 
 use crate::hud::{Gauge, Hud};
+use crate::coins::{CoinMeter, Kind as CoinKind};
 use crate::life::LifeMeter;
 use crate::particles::Particles;
 use crate::tev::{Baked, C4, Inputs, Source, Tex, env_uv};
@@ -258,6 +259,8 @@ pub struct View {
     /// game's eight rays), `[1]` the sun alone with its ring filled to ten rays, for a host's
     /// lock-on marker. None without the HUD's files.
     pub life: [Option<LifeMeter>; 2],
+    /// The HUD's coin counters, `[0]` yellow, `[1]` blue; None without the HUD's files.
+    pub coins: [Option<CoinMeter>; 2],
     /// The sim tick the gauge last stepped at, for its 30 Hz flash.
     hud_tick: u64,
     /// Wearing the Shine Shirt (off at the start of the game).
@@ -787,6 +790,10 @@ impl View {
                 LifeMeter::load(dir, 8, true).ok(),
                 LifeMeter::load(dir, 10, false).ok(),
             ],
+            coins: [
+                CoinMeter::load(dir, CoinKind::Yellow).ok(),
+                CoinMeter::load(dir, CoinKind::Blue).ok(),
+            ],
             hud_tick: 0,
             models: list,
             textures,
@@ -857,6 +864,7 @@ impl View {
             hud: None,
             hud_shown: false,
             life: [None, None],
+            coins: [None, None],
             hud_tick: 0,
             shirt: false,
             time: 0.0,

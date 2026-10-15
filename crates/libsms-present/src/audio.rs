@@ -29,9 +29,13 @@ const COIN: u64 = 0x434F_494E;
 /// cached WAVs need neither sound-bank loading nor the original disc.
 pub fn render_stings(dir: &Path) -> Result<(), String> {
     let out = dir.join("ror2_audio");
+    // `death.wav` is the miss jingle ("Too Bad!"); the game-over song and the blue coin's
+    // pickup sound are cached beside it.
     let stings = [
         ("spawn.wav", "MSD_BGM_DOLPIC", 75),
         ("death.wav", "MSD_BGM_MISS", 138),
+        ("gameover.wav", "MSD_BGM_GAMEOVER", 250),
+        ("bluecoin.wav", "MSD_SE_SY_BLUE_COIN_GET", 36),
     ];
     if stings.iter().all(|(file, _, _)| out.join(file).is_file()) {
         return Ok(());
@@ -54,8 +58,9 @@ pub fn render_stings(dir: &Path) -> Result<(), String> {
 
 fn sting_wav(data: Arc<SoundData>, cue: &str, frames: usize) -> Result<Vec<u8>, String> {
     let mut sys = SoundSystem::new(data.clone());
-    sys.play(cue, None, 0);
-    if sys.bgm_playing().is_none() {
+    let started = sys.play(cue, None, 0);
+    // Music is a sequence of its own; a sound effect hands back its handle.
+    if started.is_none() && sys.bgm_playing().is_none() {
         return Err(format!("could not start {cue}"));
     }
     // Match the existing offline `play` tool: JAI at 30 Hz, stereo PCM16 at 32 kHz.

@@ -98,7 +98,7 @@ pub unsafe extern "C" fn sms_render_stings(dir: *const c_char, msg: *mut u8, msg
         libsms_present::audio::render_stings(&dir)
     });
     let (ok, text) = match result {
-        Ok(Ok(())) => (1, "arrival/death stings cached".into()),
+        Ok(Ok(())) => (1, "arrival/death/game over/blue coin stings cached".into()),
         Ok(Err(text)) => (0, text),
         Err(_) => (0, "sting rendering panicked".into()),
     };
@@ -290,12 +290,12 @@ mod tests {
                 "{}",
                 CStr::from_bytes_until_nul(&msg).unwrap().to_string_lossy()
             );
-            for name in ["spawn.wav", "death.wav"] {
+            for name in ["spawn.wav", "death.wav", "gameover.wav", "bluecoin.wav"] {
                 let wav = std::fs::read(cache.join("ror2_audio").join(name)).unwrap();
                 assert_eq!(&wav[..4], b"RIFF");
                 assert_eq!(&wav[8..16], b"WAVEfmt ");
                 assert_eq!(&wav[20..24], &[1, 0, 2, 0]);
-                assert!(wav.len() > 32000 * 4 * 2);
+                assert!(wav.len() > 32000 * 4);
             }
             // Cached jingles do not reload the source banks.
             std::fs::remove_dir_all(cache.join("AudioRes")).unwrap();
