@@ -28,7 +28,7 @@ use libsms::{
 use view::SmsView;
 
 /// ABI version, bumped when the C interface changes.
-pub const SMS_ABI_VERSION: u32 = 22;
+pub const SMS_ABI_VERSION: u32 = 23;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sms_abi_version() -> u32 {
@@ -1044,7 +1044,7 @@ pub unsafe extern "C" fn sms_sim_set_tuning(sim: *mut SmsSim, tuning: *const Sms
 /// `SmsGroundHit`, `SmsRoofHit`, `SmsWallHit`, `SmsEvent`, `SmsHost`, `SmsPad`, `SmsState`,
 /// `SmsModelInfo`, `SmsBatch`, `SmsTexture`, `SmsDraw`, `SmsViewFrame`, `SmsTuning`,
 /// `SmsWaterVertex`, `SmsWaterInfo`, `SmsEnemy`, `SmsFxVertex`, `SmsFxBatch`, `SmsFxInfo`,
-/// `SmsHudInfo`, `SmsLimits`. Writes up to `max`;
+/// `SmsHudInfo`, `SmsLimits`, `SmsScreenFx`, `SmsScreenSprite`. Writes up to `max`;
 /// returns how many there are.
 ///
 /// # Safety
@@ -1075,6 +1075,8 @@ pub unsafe extern "C" fn sms_struct_sizes(out: *mut u32, max: u32) -> u32 {
         size_of::<view::SmsFxInfo>(),
         size_of::<view::SmsHudInfo>(),
         size_of::<SmsLimits>(),
+        size_of::<view::SmsScreenFx>(),
+        size_of::<view::SmsScreenSprite>(),
     ];
     if !out.is_null() {
         for (i, s) in sizes.iter().take(max as usize).enumerate() {
@@ -1332,14 +1334,14 @@ mod tests {
 
     #[test]
     fn struct_sizes_are_what_hosts_mirror() {
-        let mut sizes = [0u32; 22];
-        let n = unsafe { sms_struct_sizes(sizes.as_mut_ptr(), 22) } as usize;
+        let mut sizes = [0u32; 24];
+        let n = unsafe { sms_struct_sizes(sizes.as_mut_ptr(), 24) } as usize;
         // ror2-mario's Native.cs and ror2-common's view structs check these at load.
         assert_eq!(
             &sizes[..n],
             &[
                 12, 20, 8, 16, 32, 56, 24, 52, 40, 24, 12, 64, 48, 52, 24, 28, 24, 36, 16, 12, 32,
-                36
+                36, 40, 40
             ]
         );
     }

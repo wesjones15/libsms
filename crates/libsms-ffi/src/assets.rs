@@ -85,6 +85,46 @@ pub unsafe extern "C" fn sms_extract(
     ok
 }
 
+/// Fills in the optional pieces of an otherwise complete asset folder (the screen wipes' pictures)
+/// from the user's disc: `msg` says what was written. Returns 1 if the folder has them all after.
+///
+/// # Safety
+/// `disc` and `out_dir` must be null or nul-terminated strings; `msg` null or writable for
+/// `msg_len` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_extract_extras(
+    disc: *const c_char,
+    out_dir: *const c_char,
+    msg: *mut u8,
+    msg_len: u32,
+) -> u8 {
+    let result = catch_unwind(|| -> Result<String, String> {
+        // SAFETY: as documented.
+        let out = unsafe { path_arg(out_dir) }.ok_or("missing asset directory")?;
+        if libsms::extract::has_extras(&out) {
+            return Ok("wipe pictures already there".into());
+        }
+        // SAFETY: as documented.
+        let disc = unsafe { path_arg(disc) }.ok_or("missing disc path")?;
+        let mut notes = Vec::new();
+        libsms::extract::extract_extras(&disc, &out, &mut |m| notes.push(m.to_owned()))
+            .map_err(|e| e.to_string())?;
+        if libsms::extract::has_extras(&out) {
+            Ok(notes.join("; "))
+        } else {
+            Err(notes.join("; "))
+        }
+    });
+    let (ok, text) = match result {
+        Ok(Ok(text)) => (1, text),
+        Ok(Err(text)) => (0, text),
+        Err(_) => (0, "the extractor panicked".into()),
+    };
+    // SAFETY: as documented.
+    unsafe { write_str(&text, msg, msg_len) };
+    ok
+}
+
 /// Cache RoR2's arrival/death jingles in `dir/ror2_audio` from the extracted banks. No device
 /// is opened. Existing complete files are reused. Returns 1 on success, with a UTF-8 message.
 ///

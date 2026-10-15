@@ -99,6 +99,25 @@ pub const EXTRACTS: [(&str, &str, &str); 8] = [
     ("game_6_en.szs|game_6.szs", "", "game_6"),
 ];
 
+/// Pieces a folder works without (not in [`REQUIRED`]): a host that finds them draws more.
+/// The screen wipes' pictures (`TSMSFader::getGameOverBtiResource`, `getMmarkBtiResource`,
+/// ScrnFader.cpp): the GAME OVER wipe's text and the circle wipe's Mario mark. The archives and
+/// the paths in them are alternatives in the same order (`|`): a USA disc keeps them in
+/// `common.szs` and `subtitle.szs`, a European one in a pair per language (`cmn2d_en.szs`,
+/// `subtitle_en.szs`).
+pub const OPTIONAL_EXTRACTS: [(&str, &str, &str); 2] = [
+    (
+        "common.szs|cmn2d_en.szs",
+        "2d/wipe_gameover.bti|wipe_gameover.bti",
+        "wipe/wipe_gameover.bti",
+    ),
+    (
+        "subtitle.szs|subtitle_en.szs",
+        "timg/wipe_m_mark.bti|timg/wipe_m_mark.bti",
+        "wipe/wipe_m_mark.bti",
+    ),
+];
+
 /// Folders gathered from every stage archive (`data/scene/*.szs`) into one folder under `out`:
 /// `(path prefix inside the archives, destination)`. Each stage carries only the NPC kinds it
 /// uses, so the union over all stages is the full set. `monte*` are the Piantas: each
@@ -197,6 +216,58 @@ fn safe_join(base: &Path, rel: &str) -> Result<PathBuf, ExtractError> {
     Ok(base.join(p))
 }
 
+/// Whether the optional pieces ([`OPTIONAL_EXTRACTS`]) are all in `dir`.
+pub fn has_extras(dir: &Path) -> bool {
+    OPTIONAL_EXTRACTS.iter().all(|e| dir.join(e.2).is_file())
+}
+
+/// Extracts the optional pieces ([`OPTIONAL_EXTRACTS`]) from the disc at `iso` into `out`, for a
+/// folder that is complete without them. Returns how many it wrote; one the disc lacks is
+/// skipped (and logged), never an error.
+pub fn extract_extras(
+    iso: &Path,
+    out: &Path,
+    log: &mut dyn FnMut(&str),
+) -> Result<usize, ExtractError> {
+    let mut disc = Disc::open(iso)?;
+    let mut wrote = 0;
+    for (archive, inner, dest) in OPTIONAL_EXTRACTS {
+        let target = safe_join(out, dest)?;
+        if target.is_file() {
+            continue;
+        }
+        let mut found = Err(ExtractError::Missing(format!("{archive}:{inner}")));
+        for (arc_name, path) in archive.split('|').zip(inner.split('|')) {
+            found = disc.read_file(&format!("data/{arc_name}")).and_then(|raw| {
+                let bytes = if yaz0::is_yaz0(&raw) {
+                    yaz0::decompress(&raw)?
+                } else {
+                    raw
+                };
+                let arc = rarc::Archive::parse(bytes)?;
+                arc.file(path)
+                    .map(|d| d.to_vec())
+                    .ok_or_else(|| ExtractError::Missing(format!("{arc_name}:{path}")))
+            });
+            if found.is_ok() {
+                break;
+            }
+        }
+        match found {
+            Ok(data) => {
+                if let Some(parent) = target.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::write(target, data)?;
+                log(&format!("{archive}:{inner} -> {dest}"));
+                wrote += 1;
+            }
+            Err(e) => log(&format!("skipped {archive}:{inner}: {e}")),
+        }
+    }
+    Ok(wrote)
+}
+
 /// Extracts everything libsms needs from the disc at `iso` into `out`. Skips the work if `out`
 /// is already complete. `log` receives short progress messages.
 pub fn extract_assets(
@@ -289,6 +360,9 @@ pub fn extract_assets(
             log(&format!("{archive}:{inner} -> {dest}"));
         }
     }
+
+    // The wipes' pictures, if this disc has them.
+    extract_extras(iso, out, log)?;
 
     for folder in DISC_FOLDERS {
         let mut n = 0;

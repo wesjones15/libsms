@@ -25,6 +25,7 @@ use libsms_assets::{Batch, Bmd, Pose, paths};
 use crate::hud::{Gauge, Hud};
 use crate::coins::{CoinMeter, Kind as CoinKind};
 use crate::life::LifeMeter;
+use crate::screenfx::ScreenFx;
 use crate::particles::Particles;
 use crate::tev::{Baked, C4, Inputs, Source, Tex, env_uv};
 
@@ -261,6 +262,8 @@ pub struct View {
     pub life: [Option<LifeMeter>; 2],
     /// The HUD's coin counters, `[0]` yellow, `[1]` blue; None without the HUD's files.
     pub coins: [Option<CoinMeter>; 2],
+    /// The losing screens ("TOO BAD!", GAME OVER); None without their pictures.
+    pub screenfx: Option<ScreenFx>,
     /// The sim tick the gauge last stepped at, for its 30 Hz flash.
     hud_tick: u64,
     /// Wearing the Shine Shirt (off at the start of the game).
@@ -794,6 +797,7 @@ impl View {
                 CoinMeter::load(dir, CoinKind::Yellow).ok(),
                 CoinMeter::load(dir, CoinKind::Blue).ok(),
             ],
+            screenfx: ScreenFx::load(dir).ok(),
             hud_tick: 0,
             models: list,
             textures,
@@ -865,6 +869,7 @@ impl View {
             hud_shown: false,
             life: [None, None],
             coins: [None, None],
+            screenfx: ScreenFx::load(dir).ok(),
             hud_tick: 0,
             shirt: false,
             time: 0.0,

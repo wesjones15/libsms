@@ -30,6 +30,9 @@ pub struct Pane {
     /// A picture's colours (`mBlack`/`mWhite`, RGBA): the texture's 0 and 1 map to these.
     pub black: u32,
     pub white: u32,
+    /// A picture's corner colours (RGBA), top left, top right, bottom left, bottom right: what its
+    /// texture is multiplied by (`J2DPicture::mCornerColor`), all white when it has none.
+    pub corners: [u32; 4],
     /// Index of the parent pane.
     pub parent: Option<usize>,
 }
@@ -147,6 +150,7 @@ impl Screen {
             texture: None,
             black: 0,
             white: 0xFFFF_FFFF,
+            corners: [0xFFFF_FFFF; 4],
             parent,
         };
         if &kind == b"PIC1" {
@@ -177,6 +181,15 @@ impl Screen {
             }
             if left > 0 {
                 pane.white = r.u32(p)?;
+                p += 4;
+                left -= 1;
+            }
+            for k in 0..4 {
+                if left > 0 {
+                    pane.corners[k] = r.u32(p)?;
+                    p += 4;
+                    left -= 1;
+                }
             }
             pane.texture = (!timg.is_empty()).then_some(timg);
         }

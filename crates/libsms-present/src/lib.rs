@@ -9,6 +9,7 @@ pub mod coins;
 pub mod hud;
 pub mod life;
 pub mod particles;
+pub mod screenfx;
 pub mod tev;
 pub mod view;
 pub mod water;

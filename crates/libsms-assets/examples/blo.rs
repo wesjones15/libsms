@@ -15,7 +15,7 @@ fn main() {
             .map(|&b| if b.is_ascii_graphic() { b as char } else { '.' })
             .collect();
         println!(
-            "{i:3} {} tag {tag:4} (0x{:08X}) parent {:?} vis {} rect {:?} at {:?} a {} tex {:?} black {:08X} white {:08X}",
+            "{i:3} {} tag {tag:4} (0x{:08X}) parent {:?} vis {} rect {:?} at {:?} a {} tex {:?} black {:08X} white {:08X} corners {:08X?}",
             String::from_utf8_lossy(&p.kind),
             p.tag,
             p.parent,
@@ -25,7 +25,8 @@ fn main() {
             p.alpha,
             p.texture,
             p.black,
-            p.white
+            p.white,
+            p.corners
         );
     }
 }

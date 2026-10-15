@@ -1167,6 +1167,225 @@ pub unsafe extern "C" fn sms_view_life_pixels(
     }
 }
 
+/// The losing screens' state ([`sms_view_screenfx_info`]).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SmsScreenFx {
+    /// 0 nothing running, 1 "TOO BAD!", 2 GAME OVER.
+    pub kind: u32,
+    /// 1 once the running one has played out.
+    pub finished: u32,
+    /// Changes whenever anything below does.
+    pub version: u32,
+    /// Black over the whole screen, alpha 0..1.
+    pub fill: f32,
+    /// Black past the overlay's edges (a wider screen than 4:3), alpha 0..1.
+    pub edge: f32,
+    pub sprites: u32,
+    /// The overlay's pixels, over the middle 4:3 of the screen: size, 0 without one.
+    pub overlay_w: u32,
+    pub overlay_h: u32,
+    /// The screen its sprites are placed on.
+    pub screen_w: f32,
+    pub screen_h: f32,
+}
+
+/// One picture of a losing screen: which, where its middle is on `screen_w` by `screen_h`, its size
+/// there, turned `rotation` radians clockwise about it, drawn in `color` (RGBA, times its pixels).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SmsScreenSprite {
+    pub picture: u32,
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+    pub rotation: f32,
+    pub color: [f32; 4],
+}
+
+/// Starts losing screen `which` (0 "TOO BAD!", 1 GAME OVER) from its first frame; it plays as the
+/// host steps it ([`sms_view_screenfx_step`]). Returns 0 without its pictures (the disc's wipe
+/// pictures are an optional part of the assets).
+///
+/// # Safety
+/// `view` from [`sms_view_new`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_screenfx_start(view: *mut SmsView, which: u8) -> u8 {
+    // SAFETY: as documented.
+    unsafe {
+        with_view(view, 0, |v| {
+            let kind = match which {
+                0 => libsms_present::screenfx::Kind::TooBad,
+                _ => libsms_present::screenfx::Kind::GameOver,
+            };
+            v.view.screenfx.as_mut().is_some_and(|f| f.start(kind)) as u8
+        })
+    }
+}
+
+/// Runs the losing screen `seconds` on (in whole game frames, 30 a second).
+///
+/// # Safety
+/// `view` from [`sms_view_new`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_screenfx_step(view: *mut SmsView, seconds: f32) {
+    // SAFETY: as documented.
+    unsafe {
+        with_view(view, (), |v| {
+            if let Some(f) = v.view.screenfx.as_mut() {
+                f.step(if seconds.is_finite() { seconds } else { 0.0 });
+            }
+        })
+    }
+}
+
+/// Stops the losing screen.
+///
+/// # Safety
+/// `view` from [`sms_view_new`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_screenfx_stop(view: *mut SmsView) {
+    // SAFETY: as documented.
+    unsafe {
+        with_view(view, (), |v| {
+            if let Some(f) = v.view.screenfx.as_mut() {
+                f.stop();
+            }
+        })
+    }
+}
+
+/// What the losing screen shows now. Returns 0 without the pictures.
+///
+/// # Safety
+/// `view` from [`sms_view_new`]; `out` writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_screenfx_info(view: *mut SmsView, out: *mut SmsScreenFx) -> u8 {
+    // SAFETY: as documented.
+    unsafe {
+        with_view(view, 0, |v| {
+            let (Some(out), Some(f)) = (out.as_mut(), v.view.screenfx.as_ref()) else {
+                return 0;
+            };
+            let frame = f.frame();
+            *out = SmsScreenFx {
+                kind: match f.kind() {
+                    None => 0,
+                    Some(libsms_present::screenfx::Kind::TooBad) => 1,
+                    Some(libsms_present::screenfx::Kind::GameOver) => 2,
+                },
+                finished: f.finished() as u32,
+                version: f.version,
+                fill: frame.fill,
+                edge: frame.edge,
+                sprites: frame.sprites.len() as u32,
+                overlay_w: frame.overlay.as_ref().map_or(0, |o| o.width),
+                overlay_h: frame.overlay.as_ref().map_or(0, |o| o.height),
+                screen_w: libsms_present::screenfx::SCREEN[0],
+                screen_h: libsms_present::screenfx::SCREEN[1],
+            };
+            1
+        })
+    }
+}
+
+/// Writes up to `max` of the losing screen's sprites, back to front; returns how many there are.
+///
+/// # Safety
+/// `view` from [`sms_view_new`]; `out` null or writable for `max`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_screenfx_sprites(
+    view: *mut SmsView,
+    out: *mut SmsScreenSprite,
+    max: u32,
+) -> u32 {
+    // SAFETY: as documented.
+    unsafe {
+        with_view(view, 0, |v| {
+            let Some(f) = v.view.screenfx.as_ref() else {
+                return 0;
+            };
+            let sprites = &f.frame().sprites;
+            if !out.is_null() {
+                for (i, s) in sprites.iter().take(max as usize).enumerate() {
+                    out.add(i).write(SmsScreenSprite {
+                        picture: s.picture,
+                        x: s.center[0],
+                        y: s.center[1],
+                        w: s.size[0],
+                        h: s.size[1],
+                        rotation: s.rotation,
+                        color: s.color,
+                    });
+                }
+            }
+            sprites.len() as u32
+        })
+    }
+}
+
+/// Picture `which` of the losing screens (a letter, the GAME OVER text): its size in `out`
+/// (`width`, `height`) and, when `rgba` isn't null and `len` is enough, its pixels (RGBA,
+/// straight alpha, top row first). Returns 0 for a picture there isn't.
+///
+/// # Safety
+/// `view` from [`sms_view_new`]; `out` writable; `rgba` null or writable for `len` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_screenfx_picture(
+    view: *mut SmsView,
+    which: u32,
+    out: *mut SmsHudInfo,
+    rgba: *mut u8,
+    len: u32,
+) -> u8 {
+    // SAFETY: as documented.
+    unsafe {
+        with_view(view, 0, |v| {
+            let Some(img) = v.view.screenfx.as_ref().and_then(|f| f.picture(which)) else {
+                return 0;
+            };
+            if let Some(out) = out.as_mut() {
+                *out = SmsHudInfo {
+                    width: img.width,
+                    height: img.height,
+                    version: 1,
+                    ..SmsHudInfo::default()
+                };
+            }
+            if !rgba.is_null() {
+                if img.rgba.len() > len as usize {
+                    return 0;
+                }
+                std::ptr::copy_nonoverlapping(img.rgba.as_ptr(), rgba, img.rgba.len());
+            }
+            1
+        })
+    }
+}
+
+/// Copies the losing screen's overlay (RGBA, black with alpha, top row first,
+/// `overlay_w * overlay_h * 4` bytes) to `rgba`. Returns 0 if `len` is short or there is none.
+///
+/// # Safety
+/// `view` from [`sms_view_new`]; `rgba` writable for `len` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_screenfx_overlay(view: *mut SmsView, rgba: *mut u8, len: u32) -> u8 {
+    // SAFETY: as documented.
+    unsafe {
+        with_view(view, 0, |v| {
+            let Some(o) = v.view.screenfx.as_ref().and_then(|f| f.frame().overlay.as_ref()) else {
+                return 0;
+            };
+            if rgba.is_null() || o.rgba.len() > len as usize {
+                return 0;
+            }
+            std::ptr::copy_nonoverlapping(o.rgba.as_ptr(), rgba, o.rgba.len());
+            1
+        })
+    }
+}
+
 /// Sets the number coin counter `which` (0 the yellow coin's, 1 the blue coin's) shows, as the
 /// HUD draws it, and redraws it if that changed the picture. Up to seven digits are shown
 /// (the game shows three); more is clamped. Then read it with [`sms_view_coins_info`] and
