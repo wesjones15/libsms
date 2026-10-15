@@ -1188,6 +1188,10 @@ pub struct SmsScreenFx {
     /// The screen its sprites are placed on.
     pub screen_w: f32,
     pub screen_h: f32,
+    /// A flat box behind the overlay (GAME OVER's red one): left, top, width, height on that screen,
+    /// and its colour, alpha 0 when there is none.
+    pub card: [f32; 4],
+    pub card_color: [f32; 4],
 }
 
 /// One picture of a losing screen: which, where its middle is on `screen_w` by `screen_h`, its size
@@ -1284,6 +1288,8 @@ pub unsafe extern "C" fn sms_view_screenfx_info(view: *mut SmsView, out: *mut Sm
                 overlay_h: frame.overlay.as_ref().map_or(0, |o| o.height),
                 screen_w: libsms_present::screenfx::SCREEN[0],
                 screen_h: libsms_present::screenfx::SCREEN[1],
+                card: frame.card.rect,
+                card_color: frame.card.color,
             };
             1
         })
@@ -1386,9 +1392,9 @@ pub unsafe extern "C" fn sms_view_screenfx_overlay(view: *mut SmsView, rgba: *mu
     }
 }
 
-/// Sets the number coin counter `which` (0 the yellow coin's, 1 the blue coin's) shows, as the
-/// HUD draws it, and redraws it if that changed the picture. Up to seven digits are shown
-/// (the game shows three); more is clamped. Then read it with [`sms_view_coins_info`] and
+/// Sets the number counter `which` (0 the yellow coin's, 1 the blue coin's, 2 Mario's lives, two
+/// digits with "MARIO" over them) shows, as the HUD draws it, and redraws it if that changed the
+/// picture. A coin counter shows up to seven digits (the game shows three); more is clamped. Then read it with [`sms_view_coins_info`] and
 /// [`sms_view_coins_pixels`]. Returns 0 without the HUD's files.
 ///
 /// # Safety

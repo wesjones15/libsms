@@ -1,13 +1,14 @@
-//! The coin counters of Sunshine's HUD, the yellow coin's (`c_*` panes) and the blue coin's
-//! (`d_*`), drawn as `TGCConsole2` lays them out (GC2D/GCConsole2.cpp, `standard_1.blo`) into one
+//! The counters of Sunshine's HUD, the yellow coin's (`c_*` panes), the blue coin's (`d_*`) and
+//! Mario's lives (`m_*`, with the word "MARIO" over them), drawn as `TGCConsole2` lays them out (GC2D/GCConsole2.cpp, `standard_1.blo`) into one
 //! small RGBA image each, for a host to put on screen: the coin's icon, the "x", and the number
 //! in the HUD's own digit pictures (`game_6/timg/coin_number_<n>.bti`).
 //!
-//! The game counts to 999: two digits (with a leading zero) below 100, three from there, set
+//! The game counts coins to 999: two digits (with a leading zero) below 100, three from there, set
 //! left to right on a line that climbs five pixels a digit (`setCounterDigits`,
-//! `setBlueCoinDigits`). A host with bigger counts (a roguelike's gold) gets more digits on the
-//! same line, up to [`MAX_DIGITS`]; the image is always wide enough for all of them, with the
-//! number set from the left, so a host can pin its left edge. Not drawn: the strip behind the
+//! `setBlueCoinDigits`); lives go to 99 (`setTwoDigits`). A host with bigger coin counts (a
+//! roguelike's gold) gets more digits on the same line, up to [`MAX_DIGITS`]; the image is
+//! always wide enough for all of them, with the number set from the left, so a host can pin its
+//! left edge. Not drawn: the strip behind the
 //! panes (`c_ba`, which the game slides in and out) and the counters' pulse as they change.
 
 use std::path::Path;
@@ -27,6 +28,8 @@ const MIN_DIGITS: usize = 2;
 pub enum Kind {
     Yellow,
     Blue,
+    /// Mario's lives: two digits, with "MARIO" over them.
+    Mario,
 }
 
 impl Kind {
@@ -34,6 +37,14 @@ impl Kind {
         match self {
             Kind::Yellow => "c",
             Kind::Blue => "d",
+            Kind::Mario => "m",
+        }
+    }
+
+    fn digits(self) -> usize {
+        match self {
+            Kind::Mario => 2,
+            _ => MAX_DIGITS,
         }
     }
 }
@@ -50,6 +61,9 @@ struct Pic {
 pub struct CoinMeter {
     icon: Pic,
     x: Pic,
+    /// The lives banner's "MARIO".
+    text: Option<Pic>,
+    digit_count: usize,
     digits: Vec<Image>,
     /// The first digit's top-left, and how far each next one sits from the one before.
     first: [i32; 2],
@@ -97,6 +111,12 @@ impl CoinMeter {
                 pane.at,
             ))
         };
+        let text = if kind == Kind::Mario {
+            Some(pic("m_tx".to_owned())?.0)
+        } else {
+            None
+        };
+        let digit_count = kind.digits();
         let (icon, _) = pic(format!("{p}_ic"))?;
         let (x, _) = pic(format!("\0{p}_x"))?;
         let (_, first) = pic(format!("{p}_n1"))?;
@@ -118,14 +138,19 @@ impl CoinMeter {
         };
         cover(icon.at, icon.image.width as i32, icon.image.height as i32);
         cover(x.at, x.image.width as i32, x.image.height as i32);
-        for i in 0..MAX_DIGITS as i32 {
+        for i in 0..digit_count as i32 {
             cover([first[0] + step[0] * i, first[1] + step[1] * i], dw, dh);
+        }
+        if let Some(t) = &text {
+            cover(t.at, t.image.width as i32, t.image.height as i32);
         }
         let origin = [lo[0] - 1, lo[1] - 1];
         let (w, h) = ((hi[0] + 1 - origin[0]) as u32, (hi[1] + 1 - origin[1]) as u32);
         Ok(CoinMeter {
             icon,
             x,
+            text,
+            digit_count,
             digits,
             first,
             step,
@@ -144,7 +169,7 @@ impl CoinMeter {
     /// Redraws the counter for `value` (the most it can show clamped) if it shows something
     /// else now; true when it did.
     pub fn update(&mut self, value: u32) -> bool {
-        let value = value.min(10u32.pow(MAX_DIGITS as u32) - 1);
+        let value = value.min(10u32.pow(self.digit_count as u32) - 1);
         if self.shown == Some(value) {
             return false;
         }
@@ -156,6 +181,9 @@ impl CoinMeter {
 
     fn draw(&mut self, value: u32) {
         self.accum.fill([0.0; 4]);
+        if let Some(t) = self.text.clone() {
+            self.put(&t.image, t.at, t.black, t.white);
+        }
         let icon = self.icon.clone();
         self.put(&icon.image, icon.at, icon.black, icon.white);
         let x = self.x.clone();
@@ -243,6 +271,25 @@ mod tests {
             m.update(u32::MAX);
             assert!(m.image.rgba == most, "not clamped");
         }
+    }
+
+    #[test]
+    fn lives_show_two_digits_and_the_word() {
+        let (Some(mut lives), Some(mut yellow)) = (meter(Kind::Mario), meter(Kind::Yellow)) else {
+            return;
+        };
+        assert!(lives.update(3));
+        let three = lives.image.rgba.clone();
+        lives.update(2);
+        assert!(lives.image.rgba != three, "the number didn't change the picture");
+        // Past 99 it holds 99.
+        lives.update(99);
+        let most = lives.image.rgba.clone();
+        lives.update(1000);
+        assert!(lives.image.rgba == most);
+        // The word makes it wider than a yellow counter's icon and digits alone would be.
+        yellow.update(3);
+        assert_ne!((lives.image.width, lives.image.height), (0, 0));
     }
 
     #[test]

@@ -59,7 +59,7 @@ Workspace:
   `screenfx` (the losing screens: the "TOO BAD!" letters of a miss and the GAME OVER wipe, from
   `ConsoleStr.cpp` processMiss and `hx_wiper.c` Hx_GameOver, as sprites and a per-pixel overlay for a host to
   draw; their pictures are the optional `assets/wipe/` and the HUD's `big_tx_*`, `sms_view_screenfx_*`;
-  `--example screenfx` draws them), `coins` (the yellow and blue coin counters, icon, "x" and digit pictures as the HUD lays them out, up to
+  `--example screenfx` draws them), `coins` (the yellow and blue coin counters and Mario's lives banner, icon, "x" and digit pictures as the HUD lays them out, up to
   seven digits; `sms_view_coins_*`; `--example coins` draws them), `hud` (FLUDD's water gauge drawn as `TGCConsole2`
   draws it into one RGBA image), `life` (Mario's life meter, the Shine Sprite sun: a hub and eight
   rays in two layers, lit by health share, a cyan shield after them; `LifeMeter::load(dir, 10, false)`

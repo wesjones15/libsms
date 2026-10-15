@@ -13,7 +13,7 @@ fn main() {
     let (w, h) = (SCREEN[0] as usize / 2, SCREEN[1] as usize / 2);
     for (kind, frames) in [
         (Kind::TooBad, vec![25u32, 40, 70, 110, 200]),
-        (Kind::GameOver, vec![20, 40, 60, 75, 90, 130]),
+        (Kind::GameOver, vec![20, 40, 60, 85, 110, 180]),
     ] {
         fx.start(kind);
         let mut at = 0;
@@ -56,6 +56,15 @@ fn render(fx: &ScreenFx, f: &Frame, w: usize, h: usize) -> Vec<u8> {
     };
     for i in 0..w * h {
         blend(&mut px, i, [0.0; 3], f.fill);
+    }
+    if f.card.color[3] > 0.0 {
+        let sx = w as f32 / SCREEN[0];
+        let r = f.card.rect;
+        for y in (r[1] * sx) as usize..((r[1] + r[3]) * sx) as usize {
+            for x in (r[0] * sx) as usize..((r[0] + r[2]) * sx) as usize {
+                blend(&mut px, y * w + x, [f.card.color[0], f.card.color[1], f.card.color[2]], f.card.color[3]);
+            }
+        }
     }
     if let Some(o) = &f.overlay {
         for y in 0..h {

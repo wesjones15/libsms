@@ -15,21 +15,25 @@ fn main() {
         (Kind::Yellow, 54_321),
         (Kind::Blue, 3),
         (Kind::Blue, 1_234_567),
+        (Kind::Mario, 3),
     ] {
         let mut m = CoinMeter::load(&dir, kind).expect("the HUD's files");
         m.update(value);
         shots.push(m);
     }
     const S: usize = 3;
-    let w = shots[0].image.width as usize;
-    let h = shots[0].image.height as usize;
+    let w = shots.iter().map(|m| m.image.width as usize).max().unwrap();
+    let h = shots.iter().map(|m| m.image.height as usize).max().unwrap();
     let (cw, ch) = (w * S, h * S * shots.len());
     let mut canvas = vec![0u8; cw * ch * 4];
     for (i, meter) in shots.iter().enumerate() {
         for y in 0..h * S {
             for x in 0..w * S {
                 let d = &mut canvas[((i * h * S + y) * cw + x) * 4..][..4];
-                let s = &meter.image.rgba[((y / S) * w + x / S) * 4..][..4];
+                let (mw, mh) = (meter.image.width as usize, meter.image.height as usize);
+                let (sx, sy) = (x / S, y / S);
+                let blank = [0u8; 4];
+                let s = if sx < mw && sy < mh { &meter.image.rgba[(sy * mw + sx) * 4..][..4] } else { &blank[..] };
                 let a = s[3] as f32 / 255.0;
                 for c in 0..3 {
                     d[c] = (s[c] as f32 * a + 96.0 * (1.0 - a)) as u8;

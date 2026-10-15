@@ -14,8 +14,9 @@
 //! it, the scene showing through them. Its texture coordinates are zoomed and turned: it spins
 //! in from huge (`mag` growing by 0.074 a frame while `Hx_Motion` turns it two circles), pulls
 //! back, and bounces. The black is one image per frame ([`Frame::overlay`]), worked out per pixel
-//! as the GPU would with the texture clamped. (The decomp also draws a red box behind it
-//! (`Hx_GameOver` states 4 and 5); the game's screen has none, so it is left out.)
+//! as the GPU would with the texture clamped. At the end a red box (`Hx_GameOver` states 4 and 5:
+//! inset 100 pixels, fading in over 32 frames, then solid for 100) comes in behind it, so the
+//! cut-out letters fill with red ([`Frame::card`]).
 //!
 //! Both run at the game's 30 frames a second: [`ScreenFx::step`] takes seconds and runs the whole
 //! frames that makes. Positions are on a 640 by 480 screen (the wipe's `hx.width` by
@@ -50,12 +51,21 @@ pub struct Sprite {
     pub color: [f32; 4],
 }
 
+/// A flat rectangle on the screen: left, top, width, height, and its colour with alpha.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Card {
+    pub rect: [f32; 4],
+    pub color: [f32; 4],
+}
+
 /// What to draw this frame, back to front: the whole screen covered by black at `fill` (alpha),
-/// the `overlay` (black pixels with their alpha, over the middle 640 by 480 of the screen, and
-/// black at `edge` alpha where the screen goes past it), then the sprites.
+/// the `card` (alpha 0 when there is none), the `overlay` (black pixels with their alpha, over the
+/// middle 640 by 480 of the screen, and black at `edge` alpha where the screen goes past it),
+/// then the sprites.
 #[derive(Debug, Clone, Default)]
 pub struct Frame {
     pub fill: f32,
+    pub card: Card,
     pub overlay: Option<Image>,
     pub edge: f32,
     pub sprites: Vec<Sprite>,
@@ -251,7 +261,7 @@ const TOO_BAD_OPEN: u32 = 66;
 /// fading over the last second.
 const TOO_BAD_LENGTH: u32 = 215;
 /// GAME OVER's black is held this long after its wipe ends, then fades.
-const GAME_OVER_HOLD: u32 = 30;
+const GAME_OVER_HOLD: u32 = 15;
 const GAME_OVER_FADE: u32 = 20;
 
 impl ScreenFx {
@@ -462,6 +472,7 @@ impl ScreenFx {
         }
         Frame {
             fill,
+            card: Card::default(),
             overlay: None,
             edge: 0.0,
             sprites,
@@ -501,8 +512,22 @@ impl ScreenFx {
                 rgba[(y * w + x) * 4 + 3] = (a * 255.0).round().clamp(0.0, 255.0) as u8;
             }
         }
+        // The red box: 7, 15, ... 255 over state 4's 32 frames, then solid.
+        let card = match g.state {
+            4 | 5 | 6 => Card {
+                rect: [100.0, 100.0, SCREEN[0] - 200.0, SCREEN[1] - 200.0],
+                color: [
+                    1.0,
+                    0.0,
+                    0.0,
+                    if g.state == 4 { g.alpha as f32 / 255.0 } else { 1.0 } * out,
+                ],
+            },
+            _ => Card::default(),
+        };
         Frame {
             fill: 0.0,
+            card,
             overlay: Some(Image {
                 width: w as u32,
                 height: h as u32,
@@ -595,7 +620,7 @@ mod tests {
             return;
         }
         // Through the spin, the pull back and the bounce.
-        run(&mut fx, 50 + 10 + 20);
+        run(&mut fx, 50 + 10 + 10);
         let f = fx.frame();
         let o = f.overlay.as_ref().expect("overlay");
         assert!(o.rgba.chunks_exact(4).all(|p| p[..3] == [0, 0, 0]));
@@ -605,6 +630,15 @@ mod tests {
         assert!(solid > alphas.len() / 2, "{solid} solid");
         assert!(holes > alphas.len() / 100, "{holes} holes");
         assert!(f.edge > 0.9);
+        // The red box comes at the end, fading in and then solid, and goes with the rest.
+        assert_eq!(f.card.color[3], 0.0);
+        run(&mut fx, 20 + 16);
+        let half = fx.frame().card.color[3];
+        assert!(half > 0.0 && half < 1.0, "{half}");
+        run(&mut fx, 60);
+        let card = fx.frame().card;
+        assert_eq!(card.color, [1.0, 0.0, 0.0, 1.0]);
+        assert_eq!(card.rect, [100.0, 100.0, 440.0, 280.0]);
         run(&mut fx, 400);
         assert!(fx.finished());
         assert_eq!(fx.frame().edge, 0.0);

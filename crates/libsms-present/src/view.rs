@@ -260,8 +260,9 @@ pub struct View {
     /// game's eight rays), `[1]` the sun alone with its ring filled to ten rays, for a host's
     /// lock-on marker. None without the HUD's files.
     pub life: [Option<LifeMeter>; 2],
-    /// The HUD's coin counters, `[0]` yellow, `[1]` blue; None without the HUD's files.
-    pub coins: [Option<CoinMeter>; 2],
+    /// The HUD's counters, `[0]` the yellow coin's, `[1]` the blue coin's, `[2]` Mario's lives; None
+    /// without the HUD's files.
+    pub coins: [Option<CoinMeter>; 3],
     /// The losing screens ("TOO BAD!", GAME OVER); None without their pictures.
     pub screenfx: Option<ScreenFx>,
     /// The sim tick the gauge last stepped at, for its 30 Hz flash.
@@ -796,6 +797,7 @@ impl View {
             coins: [
                 CoinMeter::load(dir, CoinKind::Yellow).ok(),
                 CoinMeter::load(dir, CoinKind::Blue).ok(),
+                CoinMeter::load(dir, CoinKind::Mario).ok(),
             ],
             screenfx: ScreenFx::load(dir).ok(),
             hud_tick: 0,
@@ -868,7 +870,7 @@ impl View {
             hud: None,
             hud_shown: false,
             life: [None, None],
-            coins: [None, None],
+            coins: [None, None, None],
             screenfx: ScreenFx::load(dir).ok(),
             hud_tick: 0,
             shirt: false,

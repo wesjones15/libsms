@@ -28,7 +28,7 @@ use libsms::{
 use view::SmsView;
 
 /// ABI version, bumped when the C interface changes.
-pub const SMS_ABI_VERSION: u32 = 23;
+pub const SMS_ABI_VERSION: u32 = 24;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sms_abi_version() -> u32 {
@@ -1341,7 +1341,7 @@ mod tests {
             &sizes[..n],
             &[
                 12, 20, 8, 16, 32, 56, 24, 52, 40, 24, 12, 64, 48, 52, 24, 28, 24, 36, 16, 12, 32,
-                36, 40, 40
+                36, 72, 40
             ]
         );
     }
