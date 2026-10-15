@@ -288,8 +288,9 @@ impl Engine {
             f.pos = (f.pos + SUBFRAME) % n;
         }
         for k in 0..SUBFRAME {
-            out[k * 2] = (bufs[0][k] * OUTPUT_LEVEL / 32768.0).clamp(-1.0, 1.0);
-            out[k * 2 + 1] = (bufs[1][k] * OUTPUT_LEVEL / 32768.0).clamp(-1.0, 1.0);
+            out[k * 2] = (bufs[0][k] * OUTPUT_LEVEL / 32768.0 * self.output_gain).clamp(-1.0, 1.0);
+            out[k * 2 + 1] =
+                (bufs[1][k] * OUTPUT_LEVEL / 32768.0 * self.output_gain).clamp(-1.0, 1.0);
         }
     }
 

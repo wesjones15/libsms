@@ -523,6 +523,8 @@ impl SyncHandler for NoSync {
 }
 
 pub struct Engine {
+    /// Host output gain, applied to the float mix before its PCM saturation.
+    pub output_gain: f32,
     pub data: Arc<SoundData>,
     pub banks: Vec<BankRt>,
     /// The scene wave group currently loaded in the scene wave bank (`MSound::loadWave`).
@@ -570,6 +572,7 @@ impl Engine {
             })
             .collect();
         let mut e = Engine {
+            output_gain: 1.0,
             data,
             banks,
             scene_group: None,

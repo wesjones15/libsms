@@ -1429,7 +1429,7 @@ impl SoundSystem {
                 }
             }
             let i = s.pos as usize;
-            let v = s.volume * self.music * self.master / 32768.0;
+            let v = s.volume * self.music * self.master * self.engine.output_gain / 32768.0;
             buf[k * 2] = (buf[k * 2] + s.pcm[i * 2] as f32 * v).clamp(-1.0, 1.0);
             buf[k * 2 + 1] = (buf[k * 2 + 1] + s.pcm[i * 2 + 1] as f32 * v).clamp(-1.0, 1.0);
             s.pos += step;

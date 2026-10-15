@@ -435,24 +435,8 @@ impl Audio {
     /// `TModelWaterManager`'s sounds for one frame of water: splashes on the ground
     /// (`splashSound`, `MSD_SE_WT_GND`), drops into water, and stuck water drying up.
     pub fn water(&mut self, events: &[libsms::water::WaterEvent]) {
-        use libsms::water::WaterEvent;
         let mut sys = self.sys.lock().unwrap();
-        let mut dried = false;
-        for e in events {
-            match *e {
-                WaterEvent::SplashSound { pos, .. } => {
-                    sys.play("MSD_SE_WT_GND", Some(pos), WATER);
-                }
-                WaterEvent::IntoWater(pos) => {
-                    sys.play("MSD_SE_WT_INTO_WATER", Some(pos), WATER);
-                }
-                WaterEvent::DryUp(pos) if !dried => {
-                    dried = true;
-                    sys.play("MSD_SE_PO_WT_DRY_UP", Some(pos), WATER);
-                }
-                _ => {}
-            }
-        }
+        water_sounds(&mut sys, events);
     }
 
     pub fn listener(&self, eye: Vec3, target: Vec3) {
@@ -477,6 +461,30 @@ impl Audio {
     }
 }
 
+fn water_sounds(sys: &mut SoundSystem, events: &[libsms::water::WaterEvent]) {
+    use libsms::water::WaterEvent;
+    let mut dried = false;
+    let mut splashed = false;
+    for e in events {
+        match *e {
+            // MSSetSoundTL::startSoundSetDyna's frame gate allows one start per set
+            // per 30 Hz frame, not a restart for every water particle that lands.
+            WaterEvent::SplashSound { pos, .. } if !splashed => {
+                splashed = true;
+                sys.play("MSD_SE_WT_GND", Some(pos), WATER);
+            }
+            WaterEvent::IntoWater(pos) => {
+                sys.play("MSD_SE_WT_INTO_WATER", Some(pos), WATER);
+            }
+            WaterEvent::DryUp(pos) if !dried => {
+                dried = true;
+                sys.play("MSD_SE_PO_WT_DRY_UP", Some(pos), WATER);
+            }
+            _ => {}
+        }
+    }
+}
+
 fn output<T: cpal::SizedSample + cpal::FromSample<f32>>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
@@ -491,10 +499,13 @@ fn output<T: cpal::SizedSample + cpal::FromSample<f32>>(
         move |out: &mut [T], _| {
             scratch.resize(out.len() / channels * 2, 0.0);
             scratch.fill(0.0);
+            let gain = f32::from_bits(volume.load(Ordering::Relaxed));
             if let Ok(mut sys) = sys.lock() {
+                // Turning down already saturated PCM only makes the distortion quieter.
+                // Apply the host's master/SFX gain to the mix before that saturation.
+                sys.engine.output_gain = gain;
                 sys.render(&mut scratch, rate);
             }
-            let gain = f32::from_bits(volume.load(Ordering::Relaxed));
             for (stereo, frame) in scratch
                 .as_chunks::<2>()
                 .0
@@ -509,7 +520,7 @@ fn output<T: cpal::SizedSample + cpal::FromSample<f32>>(
                     } else {
                         0.0
                     };
-                    *sample = T::from_sample((value * gain).clamp(-1.0, 1.0));
+                    *sample = T::from_sample(value.clamp(-1.0, 1.0));
                 }
             }
         },
@@ -719,6 +730,82 @@ mod tests {
             eprintln!("hover {rate} Hz: peak {peak}, clipped {clipped}");
             assert!(peak > 0.001, "silent hover loop");
             assert_eq!(clipped, 0, "hover loop clips before host volume is applied");
+        }
+    }
+
+    #[test]
+    fn simulated_fludd_mix_has_headroom() {
+        use libsms::{Host, Pad, Sim, water::WaterManager};
+        struct Floor(Vec<Event>);
+        impl Host for Floor {
+            fn ground(&self, p: Vec3) -> Option<libsms::GroundHit> {
+                Host::ground(&libsms::FlatHost::default(), p)
+            }
+            fn event(&mut self, e: Event) {
+                self.0.push(e);
+            }
+        }
+        let Some((assets, _)) = fixture() else {
+            return;
+        };
+        let data = Arc::new(SoundData::load(&assets.dir).unwrap());
+        for nozzle in [NozzleKind::Spray, NozzleKind::Hover] {
+            let mut sys = SoundSystem::new(data.clone());
+            let mut scene = SceneAudio::load(&assets.dir, &sys);
+            let mut sim = Sim::new(
+                assets.params.clone(),
+                assets.anim_table.clone(),
+                Vec3::ZERO,
+                0,
+            );
+            // Match the restored RoR2 master/SFX levels. At unity the jump/hover mix
+            // saturates before the old callback could turn it down (39 samples).
+            sys.engine.output_gain = 0.4463511 * 0.4815751;
+            sim.mario.give_fludd();
+            let params = sim.mario.params.clone();
+            let fludd = sim.mario.fludd.as_mut().unwrap();
+            fludd.change_nozzle(nozzle, false, &params);
+            fludd.refill(&params);
+            let mut water = WaterManager::new(&params);
+            let mut host = Floor(Vec::new());
+            let mut peak = 0.0f32;
+            let mut clipped = 0;
+            let mut emits = 0;
+            let mut buffer = [0.0; 3200];
+            for frame in 0..180 {
+                let pad = Pad {
+                    r_analog: 200,
+                    a: nozzle == NozzleKind::Hover && frame < 5,
+                    ..Pad::default()
+                };
+                sim.advance_observed(&mut host, &pad, 0, 1.0 / 30.0, |mario, host| {
+                    let events = std::mem::take(&mut host.0);
+                    for e in &events {
+                        if let Event::WaterEmit(w) = e {
+                            water.emit(w);
+                            emits += 1;
+                        }
+                    }
+                    scene.events(&mut sys, &events, mario);
+                    scene.tick(&mut sys, mario);
+                });
+                water.step(&host, sim.mario.pos);
+                water_sounds(&mut sys, &water.events);
+                water.events.clear();
+                sys.render(&mut buffer, 48000.0);
+                assert!(buffer.iter().all(|v| v.is_finite()));
+                peak = peak.max(buffer.iter().map(|v| v.abs()).fold(0.0, f32::max));
+                clipped += buffer.iter().filter(|v| v.abs() >= 0.999).count();
+            }
+            eprintln!("full {nozzle:?}: emits {emits}, peak {peak}, clipped {clipped}");
+            assert!(emits > 0 && peak > 0.001, "no audible nozzle activity");
+            assert_eq!(clipped, 0, "full {nozzle:?} mix clips before host gain");
+            if nozzle == NozzleKind::Hover {
+                assert!(
+                    peak > sys.engine.output_gain,
+                    "host gain was applied after saturation, flattening the hover/jump peaks"
+                );
+            }
         }
     }
 
