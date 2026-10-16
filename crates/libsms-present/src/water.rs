@@ -171,17 +171,28 @@ impl WaterLook {
                     if !water.drawn(p) {
                         continue;
                     }
-                    let c = p.pos + p.vel * frac;
+                    let mut c = p.pos + p.vel * frac;
+                    // A drop is never drawn behind where it left the nozzle: the host draws a little
+                    // behind the sim (negative `frac`), which would put a young drop inside FLUDD, and
+                    // the tail of its stretched quad reaches back too. How far it has come bounds both.
+                    let heading = p.vel.normalize_or_zero();
+                    let mut came = (c - p.spawn).dot(heading);
+                    if came < 0.0 {
+                        c -= heading * came;
+                        came = 0.0;
+                    }
                     let at = |x: f32, y: f32| c + right * x + up * y;
                     let v = p.vel * water.extension(p);
                     let (vx, vy) = (v.dot(right), v.dot(up));
                     let len = (vx * vx + vy * vy).sqrt();
                     if len > 1.0 {
                         let (nx, ny) = (vx / len * half, vy / len * half);
+                        let tail = (v.length() * STRETCH + half).max(1.0);
+                        let back = (came / tail).min(1.0);
                         [
                             at(nx + vx * STRETCH, ny + vy * STRETCH),
                             at(ny, -nx),
-                            at(-nx - vx * STRETCH, -ny - vy * STRETCH),
+                            at((-nx - vx * STRETCH) * back, (-ny - vy * STRETCH) * back),
                             at(-ny, nx),
                         ]
                     } else {
@@ -263,6 +274,43 @@ impl WaterLook {
 mod tests {
     use super::*;
     use libsms::{FlatHost, NozzleKind, Params, WaterEmit};
+
+    #[test]
+    fn a_drop_is_never_drawn_behind_where_it_left_the_nozzle() {
+        let mut water = WaterManager::new(&Params::default());
+        let muzzle = Vec3::new(0.0, 150.0, 40.0);
+        water.emit(&WaterEmit {
+            nozzle: NozzleKind::Spray,
+            pos: muzzle,
+            dir: Vec3::Z,
+            power: 40.0,
+            count: 6,
+            attack: 1,
+            hit_radius: 50.0,
+            hit_height: 80.0,
+            inherit: Vec3::ZERO,
+            size: 50.0,
+            size_tremble: 0.0,
+            dir_tremble: 0.0,
+            pow_tremble: 0.0,
+            particle_type: 0,
+            burst: false,
+        });
+        let mut look = WaterLook::default();
+        // A camera to the side, so the spray runs across the screen; the display a frame behind.
+        let (eye, right, up) = (Vec3::new(500.0, 150.0, 40.0), Vec3::Z, Vec3::Y);
+        let host = FlatHost::default();
+        let mut drawn = false;
+        for _ in 0..12 {
+            water.step(&host, Vec3::ZERO);
+            look.build(&water, -1.0, eye, right, up, 0);
+            for v in &look.vertices[..4 * look.drop_quads as usize] {
+                assert!(v.pos.z >= muzzle.z - 0.01, "drawn {} units behind the nozzle", muzzle.z - v.pos.z);
+                drawn = true;
+            }
+        }
+        assert!(drawn, "no drop was ever drawn");
+    }
 
     #[test]
     fn a_spray_is_drawn_then_splashes() {

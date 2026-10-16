@@ -72,6 +72,8 @@ pub enum State {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Particle {
     pub pos: Vec3,
+    /// Where it left the nozzle: a host drawing it never shows any of it behind this.
+    pub spawn: Vec3,
     /// Units per frame.
     pub vel: Vec3,
     pub size: f32,
@@ -216,6 +218,7 @@ impl WaterManager {
             let size = self.rand11() * w.size_tremble + w.size;
             self.particles.push(Particle {
                 pos: w.pos,
+                spawn: w.pos,
                 vel,
                 size,
                 life: self.types[kind].alive,
