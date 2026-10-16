@@ -28,7 +28,7 @@ use libsms::{
 use view::SmsView;
 
 /// ABI version, bumped when the C interface changes.
-pub const SMS_ABI_VERSION: u32 = 25;
+pub const SMS_ABI_VERSION: u32 = 26;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sms_abi_version() -> u32 {
@@ -322,6 +322,9 @@ pub struct SmsTuning {
     pub short_hop: f32,
     /// The belly slide's spray is this many times as big (0 or 1: the game's).
     pub slide_fx_scale: f32,
+    /// Running speeds up and brakes this many times as quickly (a host's acceleration stat;
+    /// below 1 the ground is slippery; 0 or 1: the game's).
+    pub traction: f32,
     /// 1: enemies are solid to Mario (`keepDistance`); 0: the game's (most aren't).
     pub enemy_push: u8,
     /// 1: X steps through Spray, Hover, Rocket and Turbo; 0: the game's (Spray and one).
@@ -1055,6 +1058,7 @@ pub unsafe extern "C" fn sms_sim_set_tuning(sim: *mut SmsSim, tuning: *const Sms
             }
         };
         o.move_speed = factor(t.move_speed);
+        o.traction = if t.traction > 0.0 { factor(t.traction) } else { 1.0 };
         o.enemy_push = t.enemy_push != 0;
         o.cycle_nozzles = t.cycle_nozzles != 0;
         o.unlimited_water = t.unlimited_water != 0;
@@ -1393,7 +1397,7 @@ mod tests {
         assert_eq!(
             &sizes[..n],
             &[
-                12, 20, 8, 16, 32, 56, 24, 52, 40, 24, 12, 64, 48, 52, 24, 28, 24, 36, 16, 12, 32,
+                12, 20, 8, 16, 32, 56, 24, 52, 40, 24, 12, 64, 48, 56, 24, 28, 24, 36, 16, 12, 32,
                 36, 72, 40, 52, 16, 40
             ]
         );

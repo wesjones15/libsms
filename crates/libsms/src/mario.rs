@@ -204,6 +204,9 @@ pub struct Options {
     /// Ground covered per tick, walking and in the air, times this (a host's speed buffs).
     /// Speeds, and so animation, stay the game's. 1: the game's.
     pub move_speed: f32,
+    /// How quickly running speeds up and brakes, times this (a host's acceleration stat:
+    /// below 1 the ground is slippery). 1: the game's.
+    pub traction: f32,
     /// Stomp bounces (`mTramplePowStep1..3`) times this high, on top of `jump_height`, for a
     /// bouncier feel. 1: the game's.
     pub stomp_bounce: f32,
@@ -243,6 +246,7 @@ impl Default for Options {
             enemy_push: false,
             cycle_nozzles: false,
             move_speed: 1.0,
+            traction: 1.0,
             stomp_bounce: 1.0,
             rocket_thrust: 1.0,
             pound_jump: 0.0,

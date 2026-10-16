@@ -520,14 +520,16 @@ impl Mario {
             sp *= y.run_yoshi_mult;
         }
 
+        // Host extension: `Options::traction` scales each change (1 is the game's).
+        let t = self.options.traction;
         if self.forward_vel <= 0.0 {
-            self.forward_vel += r.vel_minus_brake;
+            self.forward_vel += r.vel_minus_brake * t;
         } else if self.forward_vel <= sp {
-            self.forward_vel += r.add_base - self.forward_vel * r.add_vel_div;
+            self.forward_vel += (r.add_base - self.forward_vel * r.add_vel_div) * t;
         } else if self.ground.normal.y >= r.dec_start_nrm_y {
             // Both brakes apply, riding or not (`doRunning`, MarioRun.cpp, matching).
-            self.forward_vel -= r.dec_brake;
-            self.forward_vel -= y.dec_brake;
+            self.forward_vel -= r.dec_brake * t;
+            self.forward_vel -= y.dec_brake * t;
         }
         if self.forward_vel < 0.0 {
             self.forward_vel = 0.0;
