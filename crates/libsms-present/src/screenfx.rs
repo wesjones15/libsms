@@ -24,6 +24,8 @@
 //! as the GPU would with the texture clamped. At the end a red box (`Hx_GameOver` states 4 and 5:
 //! inset 100 pixels, fading in over 32 frames, then solid for 100) comes in behind it, so the
 //! cut-out letters fill with red ([`Frame::card`]).
+//! At the end the red box fades first (the first half of the fade), then the black, so a bright box never
+//! outlasts the black it shows through.
 //!
 //! The two play together on a real game over: the letters come first and settle, and a moment
 //! later ([`GAME_OVER_DELAY`] frames) the wipe starts over them, so they dim and then vanish as
@@ -573,12 +575,14 @@ impl ScreenFx {
                 ..Frame::default()
             };
         }
-        // Let go at the end.
-        let out = if g.state == 6 {
+        // Let go at the end: the black over the whole fade, and the red box in the first half of it, so
+        // the red is gone before the black is and never shows alone (not in the game, where they go
+        // together, which leaves a bright box standing out against the thinning black).
+        let (out, red_out) = if g.state == 6 {
             let t = (g.after.saturating_sub(GAME_OVER_HOLD) as f32 + frac) / GAME_OVER_FADE as f32;
-            (1.0 - t).clamp(0.0, 1.0)
+            ((1.0 - t).clamp(0.0, 1.0), (1.0 - 2.0 * t).clamp(0.0, 1.0))
         } else {
-            1.0
+            (1.0, 1.0)
         };
         let lerp = |a: f32, b: f32| a + (b - a) * frac;
         let (mag, rot, fade) = (lerp(before.mag, g.mag), lerp(before.rot, g.rot), lerp(before.fade, g.fade));
@@ -610,7 +614,7 @@ impl ScreenFx {
                     1.0,
                     0.0,
                     0.0,
-                    if g.state == 4 { g.alpha as f32 / 255.0 } else { 1.0 } * out,
+                    if g.state == 4 { g.alpha as f32 / 255.0 } else { 1.0 } * red_out,
                 ],
             },
             _ => Card::default(),
@@ -757,6 +761,34 @@ mod tests {
         run(&mut fx, 400);
         assert!(fx.finished());
         assert_eq!(fx.frame().edge, 0.0);
+    }
+
+    #[test]
+    fn the_red_box_is_gone_before_the_black_is() {
+        let Some(mut fx) = fx() else { return };
+        if !fx.start(Kind::GameOver) {
+            return;
+        }
+        run(&mut fx, GAME_OVER_DELAY + 50 + 10 + 10 + 20 + 16 + 60);
+        assert_eq!(fx.frame().card.color[3], 1.0);
+        let (mut red_gone, mut black_left) = (false, false);
+        let mut last_red = 1.0f32;
+        for _ in 0..80 {
+            run(&mut fx, 1);
+            let f = fx.frame();
+            let red = f.card.color[3];
+            assert!(red <= last_red + 1e-6, "the red came back: {last_red} then {red}");
+            last_red = red;
+            // The red never outlasts the black.
+            assert!(red <= f.edge + 1e-6, "red {red} still showing with the black at {}", f.edge);
+            red_gone |= red == 0.0;
+            // While the black is still going, the red is already gone.
+            black_left |= red == 0.0 && f.edge > 0.0;
+            if fx.finished() {
+                break;
+            }
+        }
+        assert!(red_gone && black_left, "red gone {red_gone}, black left after it {black_left}");
     }
 
     #[test]
