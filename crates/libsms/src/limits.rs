@@ -23,8 +23,9 @@ pub struct WetSlide {
     pub ready: bool,
     /// Any belly slide may turn wet, not only one over FLUDD's water on the ground.
     pub anywhere: bool,
-    /// Ticks a wet slide glides before it turns back into a plain one, unless it is still over
-    /// wet ground or water then: it glides on for as long as that lasts. 0: as long as it lasts.
+    /// Ticks a wet slide keeps gliding after it last touched wet ground or water, before it turns
+    /// back into a plain one: every wet tick starts the count again, so it glides on for as long
+    /// as the wet lasts. 0: as long as it lasts.
     pub max_ticks: u32,
     /// A slide over FLUDD's water glides for free, as in the game (to the slide's end, with no
     /// cap): the charge is only for slides without water under them.
@@ -101,7 +102,8 @@ mod tests {
             // RoR2 always refreshes availability, even after the duration has run out.
             m.limits.wet_slide = Some(WetSlide::timed(3, true));
             let wet = m.limit_wet_slide();
-            assert_eq!(wet, tick < 3, "wet slide at tick {tick}");
+            // Wet at the start, dry from then on: it glides 3 ticks past that last wet contact.
+            assert_eq!(wet, tick < 4, "wet slide at tick {tick}");
             m.status_state = wet as u32;
             m.wet_ground = false; // it may carry on from the wet approach onto dry ground
         }
@@ -121,7 +123,7 @@ mod tests {
     }
 
     #[test]
-    fn a_slide_glides_on_past_its_cap_while_the_ground_stays_wet_and_ends_when_it_dries() {
+    fn a_slide_glides_until_its_time_after_the_last_wet_contact_runs_out() {
         for max_ticks in [60, 120, 240] {
             // Wet all the way: the cap never ends it.
             let mut m = Sim::new(Params::default(), AnimTable::default(), Vec3::ZERO, 0).mario;
@@ -134,20 +136,21 @@ mod tests {
                 m.status_state = wet as u32;
                 active += u32::from(wet);
             }
-            assert_eq!(active, max_ticks + 200, "the cap ended a slide still over wet ground");
+            assert_eq!(active, max_ticks + 200, "the time ended a slide still over wet ground");
 
-            // Wet to a point past the cap, then dry: it ends there, and doesn't start again.
+            // Wet to a point well past the first cap, then dry: it ends `max_ticks` after the last
+            // wet tick, and doesn't start again.
             let mut m = Sim::new(Params::default(), AnimTable::default(), Vec3::ZERO, 0).mario;
             m.status = Status::Catch;
             let (mut active, wet_until) = (0, max_ticks + 25);
-            for tick in 0..max_ticks + 200 {
+            for tick in 0..wet_until + max_ticks + 50 {
                 m.wet_ground = tick < wet_until;
                 m.limits.wet_slide = Some(WetSlide::timed(max_ticks, true));
                 let wet = m.limit_wet_slide();
                 m.status_state = wet as u32;
                 active += u32::from(wet);
             }
-            assert_eq!(active, wet_until, "the slide didn't end where the wet did");
+            assert_eq!(active, wet_until + max_ticks, "the slide didn't end `max_ticks` after the wet did");
         }
     }
 }
@@ -383,9 +386,17 @@ impl Mario {
         if w.max_ticks == 0 {
             return true;
         }
-        self.lim.wet_left = self.lim.wet_left.saturating_sub(1);
-        // The cap is for a slide that has left the wet behind: over wet ground or water it glides on.
-        self.lim.wet_left > 0 || self.wet_ground
+        // Over wet ground or water the count starts again; off it, it runs down, and the slide ends
+        // `max_ticks` after its last wet contact.
+        if self.wet_ground {
+            self.lim.wet_left = w.max_ticks;
+            return true;
+        }
+        if self.lim.wet_left == 0 {
+            return false;
+        }
+        self.lim.wet_left -= 1;
+        true
     }
 
     /// `doSliding`'s stick term for a wet slide under [`WetSlide::glide`]: full ahead unless
