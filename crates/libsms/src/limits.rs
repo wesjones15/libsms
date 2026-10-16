@@ -23,7 +23,8 @@ pub struct WetSlide {
     pub ready: bool,
     /// Any belly slide may turn wet, not only one over FLUDD's water on the ground.
     pub anywhere: bool,
-    /// Ticks a wet slide glides before it turns back into a plain one. 0: as long as it lasts.
+    /// Ticks a wet slide glides before it turns back into a plain one, unless it is still over
+    /// wet ground or water then: it glides on for as long as that lasts. 0: as long as it lasts.
     pub max_ticks: u32,
     /// A slide over FLUDD's water glides for free, as in the game (to the slide's end, with no
     /// cap): the charge is only for slides without water under them.
@@ -120,19 +121,33 @@ mod tests {
     }
 
     #[test]
-    fn a_longer_timed_limit_extends_the_glide_even_on_continuously_wet_ground() {
-        for max_ticks in [60, 120, 180] {
+    fn a_slide_glides_on_past_its_cap_while_the_ground_stays_wet_and_ends_when_it_dries() {
+        for max_ticks in [60, 120, 240] {
+            // Wet all the way: the cap never ends it.
             let mut m = Sim::new(Params::default(), AnimTable::default(), Vec3::ZERO, 0).mario;
             m.status = Status::Catch;
             m.wet_ground = true;
             let mut active = 0;
-            for _ in 0..max_ticks + 20 {
+            for _ in 0..max_ticks + 200 {
                 m.limits.wet_slide = Some(WetSlide::timed(max_ticks, true));
                 let wet = m.limit_wet_slide();
                 m.status_state = wet as u32;
                 active += u32::from(wet);
             }
-            assert_eq!(active, max_ticks, "wet ground bypassed the duration cap");
+            assert_eq!(active, max_ticks + 200, "the cap ended a slide still over wet ground");
+
+            // Wet to a point past the cap, then dry: it ends there, and doesn't start again.
+            let mut m = Sim::new(Params::default(), AnimTable::default(), Vec3::ZERO, 0).mario;
+            m.status = Status::Catch;
+            let (mut active, wet_until) = (0, max_ticks + 25);
+            for tick in 0..max_ticks + 200 {
+                m.wet_ground = tick < wet_until;
+                m.limits.wet_slide = Some(WetSlide::timed(max_ticks, true));
+                let wet = m.limit_wet_slide();
+                m.status_state = wet as u32;
+                active += u32::from(wet);
+            }
+            assert_eq!(active, wet_until, "the slide didn't end where the wet did");
         }
     }
 }
@@ -369,7 +384,8 @@ impl Mario {
             return true;
         }
         self.lim.wet_left = self.lim.wet_left.saturating_sub(1);
-        self.lim.wet_left > 0
+        // The cap is for a slide that has left the wet behind: over wet ground or water it glides on.
+        self.lim.wet_left > 0 || self.wet_ground
     }
 
     /// `doSliding`'s stick term for a wet slide under [`WetSlide::glide`]: full ahead unless

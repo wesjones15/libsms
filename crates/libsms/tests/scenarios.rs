@@ -2573,7 +2573,7 @@ fn a_wet_slide_charge_makes_any_slide_glide_once() {
 }
 
 #[test]
-fn timed_wet_slides_use_actual_surface_wetness_and_return_to_normal_at_the_cap() {
+fn timed_wet_slides_use_actual_surface_wetness_and_go_on_past_the_cap_only_over_wet_ground() {
     struct Floor(bool);
     impl Host for Floor {
         fn ground(&self, pos: Vec3) -> Option<libsms::GroundHit> {
@@ -2598,16 +2598,18 @@ fn timed_wet_slides_use_actual_surface_wetness_and_return_to_normal_at_the_cap()
         s.step(1);
         assert_eq!(s.mario().wet_sliding(), wet);
         if wet {
-            for _ in 0..59 {
+            // Over wet terrain the cap doesn't end it: well past 60 ticks he is still gliding, wet.
+            for tick in 0..150 {
                 s.sim.mario.limits.wet_slide = Some(libsms::WetSlide::timed(60, true));
                 s.step(1);
-                assert!(s.mario().wet_sliding());
+                if s.mario().status != Status::Catch {
+                    assert!(tick > 60, "the slide ended at {tick}, inside the cap");
+                    break;
+                }
+                assert!(s.mario().wet_sliding(), "a slide over wet terrain turned plain at {tick}");
             }
-            s.step(1);
-            assert!(
-                !s.mario().wet_sliding(),
-                "naturally wet terrain bypassed the cap"
-            );
+        } else {
+            // Dry ground: it never turned wet in the first place (the assert above).
         }
     }
 }
