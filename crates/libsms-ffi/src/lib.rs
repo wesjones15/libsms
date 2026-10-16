@@ -289,7 +289,8 @@ pub struct SmsState {
     pub in_water: u8,
     /// 1 in the Shine Get pose and still falling to the floor, 2 holding the Shine up, else 0.
     pub win_demo: u8,
-    pub _pad: u8,
+    /// The fitted nozzle: 0 without FLUDD, else `NozzleKind` + 1 (1 Spray, 2 Rocket, 5 Hover, 6 Turbo).
+    pub nozzle: u8,
 }
 
 /// Host tuning that departs from the game on purpose ([`libsms::Options`]); zeroes and ones
@@ -802,7 +803,7 @@ pub unsafe extern "C" fn sms_sim_state(sim: *const SmsSim, out: *mut SmsState) -
         } else {
             m.is_win_demo() as u8
         },
-        _pad: 0,
+        nozzle: m.fludd.as_ref().map_or(0, |f| f.nozzle as u8 + 1),
     };
     1
 }
