@@ -287,7 +287,11 @@ impl Engine {
         ch.countdown = 0;
         ch.source = Source::None;
         ch.orphan = false;
-        ch.bus = m.bus;
+        // A track that pans through the Dolby auto-mixer (bus 0xFFFF) gets the stereo mixer's buses
+        // now, not at its first mixer update: `playLogicalChannel` connects the voice's buses from
+        // these, and left unreplaced the first bus (the left output) connected to nothing, so
+        // Mario's voices, footsteps and FLUDD came out of the right ear only.
+        ch.bus = if m.bus[0] == 0xFFFF { STEREO_BUS } else { m.bus };
         ch.priority = m.priority;
         ch.priority_time = m.priority_time;
         ch.calc = m.calc;
@@ -557,7 +561,7 @@ impl Engine {
         ch.dsp_pitch = pitch.clamp(0.0, 65535.0) as u16;
         if ch.bus[0] == 0xFFFF {
             // The Dolby auto-mixer: no surround here, so the stereo mixer's curve.
-            ch.bus = [0x150, 0x210, 0x352, 0x412, 0, 0];
+            ch.bus = STEREO_BUS;
         }
         // `updateMixer`
         let inv = |v: f32| 1.0 - v;
@@ -989,6 +993,10 @@ impl Engine {
         ch.volume = ch.inst_volume * (v * v);
     }
 }
+
+/// The buses a voice mixes into with the stereo mixer: the left and right outputs scaled by the pan's
+/// inverse and the pan, and the two echo sends.
+const STEREO_BUS: [u16; 6] = [0x150, 0x210, 0x352, 0x412, 0, 0];
 
 /// `setBusConnect`'s `connect_table`: bus number to DSP buffer id.
 fn bus_id(hi: u8) -> u16 {

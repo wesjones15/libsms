@@ -41,14 +41,17 @@ pub fn render_stings(dir: &Path) -> Result<(), String> {
         ("shineget.wav", "MSD_BGM_GET_SHINE", 150),
         ("secret.wav", "MSD_SE_SY_PROBLEM_SOLVED", 66),
     ];
-    if stings.iter().all(|(file, _, _)| out.join(file).is_file()) {
+    // A cache from before the left ear was connected (right channel only) is rendered again.
+    let marker = out.join(STINGS_MARKER);
+    let current = std::fs::read_to_string(&marker).is_ok_and(|v| v.trim() == STINGS_VERSION);
+    if current && stings.iter().all(|(file, _, _)| out.join(file).is_file()) {
         return Ok(());
     }
     let data = Arc::new(SoundData::load(dir).map_err(|e| e.to_string())?);
     std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;
     for (file, cue, frames) in stings {
         let path = out.join(file);
-        if path.is_file() {
+        if current && path.is_file() {
             continue;
         }
         let wav = sting_wav(data.clone(), cue, frames)?;
@@ -57,8 +60,14 @@ pub fn render_stings(dir: &Path) -> Result<(), String> {
         std::fs::write(&temp, wav).map_err(|e| e.to_string())?;
         std::fs::rename(temp, path).map_err(|e| e.to_string())?;
     }
+    std::fs::write(&marker, STINGS_VERSION).map_err(|e| e.to_string())?;
     Ok(())
 }
+
+/// The cached stings' marker file, and its content: bumped when they must be rendered again
+/// (2: both ears; 1 was right only). Hosts that decide whether to render check it too.
+pub const STINGS_MARKER: &str = "stings.version";
+pub const STINGS_VERSION: &str = "2";
 
 fn sting_wav(data: Arc<SoundData>, cue: &str, frames: usize) -> Result<Vec<u8>, String> {
     let mut sys = SoundSystem::new(data.clone());
