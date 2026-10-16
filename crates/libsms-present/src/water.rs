@@ -295,6 +295,7 @@ mod tests {
             pow_tremble: 0.0,
             particle_type: 0,
             burst: false,
+            spin: false,
         });
         let mut look = WaterLook::default();
         // A camera to the side, so the spray runs across the screen; the display a frame behind.
@@ -332,6 +333,7 @@ mod tests {
             pow_tremble: 0.0,
             particle_type: 0,
             burst: false,
+            spin: false,
         });
         let mut look = WaterLook::default();
         let (eye, right, up) = (Vec3::new(500.0, 150.0, 0.0), Vec3::Z, Vec3::Y);
@@ -372,6 +374,7 @@ mod tests {
             pow_tremble: 0.0,
             particle_type: 0,
             burst: false,
+            spin: false,
         });
         water.step(&FlatHost::default(), Vec3::ZERO);
         water.particles.clear();

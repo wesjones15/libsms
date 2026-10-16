@@ -405,6 +405,16 @@ impl Mario {
         }
     }
 
+    /// Whether he is in a spin jump: FLUDD's water flies in every direction as he turns.
+    pub(crate) fn spinning(&self) -> bool {
+        matches!(self.status, crate::mario::Status::LeftRotateJump | crate::mario::Status::RightRotateJump)
+    }
+
+    /// The host's aim, except in a spin jump, where the nozzle turns with him and sprays all round.
+    pub(crate) fn aim_now(&self) -> Option<crate::Aim> {
+        if self.spinning() { None } else { self.aim }
+    }
+
     /// What to draw for FLUDD now, if Mario has it.
     pub fn fludd_look(&self) -> Option<FluddLook> {
         let f = self.fludd.as_ref()?;
@@ -416,9 +426,9 @@ impl Mario {
             nozzle_clip: a.clip.and_then(|i| nozzle_clips(f.nozzle).get(i).copied()),
             nozzle_frame: a.ctrl.frame,
             gun_angle: f.gun_angle(),
-            aimed: self.aim.is_some(),
+            aimed: self.aim_now().is_some(),
             aim_turn: self
-                .aim
+                .aim_now()
                 .map_or(0, |a| crate::math::diff(a.yaw, self.model_yaw)),
             tilt: f.tilt,
             prop_angle: f.prop_angle,

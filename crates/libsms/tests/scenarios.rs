@@ -2100,6 +2100,57 @@ fn a_spin_jump_calls_out_and_whooshes() {
 }
 
 #[test]
+fn a_spin_jumps_spray_ignores_the_hosts_aim_and_is_tagged() {
+    let mut s = Scene::flat();
+    s.sim.mario.give_fludd();
+    // The host's aim (the crosshair), a quarter turn off to the side of where he faces.
+    let aim_yaw = s.sim.mario.model_yaw.wrapping_add(0x4000);
+    s.sim.mario.aim = Some(libsms::Aim { yaw: aim_yaw, pitch: 0 });
+    let aim_heading = aim_yaw as f32 * std::f32::consts::PI / 32768.0;
+    let off = |a: f32, b: f32| (a - b + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+    let waters = |s: &Scene<FlatHost>| -> Vec<libsms::WaterEmit> {
+        s.host
+            .events
+            .iter()
+            .filter_map(|e| if let Event::WaterEmit(w) = e { Some(*w) } else { None })
+            .collect()
+    };
+    // Spraying standing: it goes where the aim says, and isn't a spin's.
+    s.pad.r_analog = 200;
+    s.step(30);
+    let flat = waters(&s);
+    assert!(!flat.is_empty() && flat.iter().all(|w| !w.spin));
+    assert!(
+        flat.iter().all(|w| off(w.dir.x.atan2(w.dir.z), aim_heading).abs() < 0.4),
+        "the standing spray didn't go where the host aimed"
+    );
+    // The same spray in a spin jump: tagged, and fanning out all round as he turns.
+    s.host.events.clear();
+    s.pad.r_analog = 0;
+    s.step(2);
+    for i in 0..24 {
+        let a = i as f32 * std::f32::consts::TAU / 12.0;
+        s.pad.stick = Vec2::new(a.cos(), a.sin());
+        s.step(1);
+    }
+    s.press_a();
+    assert!(matches!(s.mario().status, Status::LeftRotateJump | Status::RightRotateJump));
+    s.host.events.clear();
+    s.pad.stick = Vec2::ZERO;
+    s.pad.r_analog = 200;
+    s.step(40);
+    let spun = waters(&s);
+    assert!(!spun.is_empty());
+    assert!(spun.iter().all(|w| w.spin), "a spin jump's water wasn't tagged");
+    // Not the host's aim: in a spin the nozzle goes with him (the view's posed muzzle turns with the
+    // spin; see libsms-present's test).
+    assert!(
+        spun.iter().all(|w| off(w.dir.x.atan2(w.dir.z), aim_heading).abs() > 0.8),
+        "a spin jump's spray was bent to the host's aim"
+    );
+}
+
+#[test]
 fn a_wet_belly_slide_holds_the_slide_pose() {
     if need_disc() {
         return;

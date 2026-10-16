@@ -86,6 +86,8 @@ pub struct Particle {
     pub reach: f32,
     /// From a light press's burst ([`WaterEmit::burst`]).
     pub burst: bool,
+    /// From a spin jump's spray ([`WaterEmit::spin`]).
+    pub spin: bool,
     /// The surface it sticks to: normal and whether it is wet (`isWaterSlip`).
     surface: Option<(Vec3, bool)>,
 }
@@ -110,6 +112,8 @@ pub enum WaterEvent {
         attack: i16,
         /// The particle came from a light press's burst ([`WaterEmit::burst`]).
         burst: bool,
+        /// The particle came from a spin jump's spray ([`WaterEmit::spin`]).
+        spin: bool,
     },
 }
 
@@ -227,6 +231,7 @@ impl WaterManager {
                 attack: w.attack,
                 reach,
                 burst: w.burst,
+                spin: w.spin,
                 surface: None,
             });
             n += 1;
@@ -279,6 +284,7 @@ impl WaterManager {
                 pos: p.pos,
                 attack: p.attack,
                 burst: p.burst,
+                spin: p.spin,
             });
             self.events.push(WaterEvent::SplashSound {
                 pos: p.pos,
@@ -591,6 +597,7 @@ mod tests {
             pow_tremble: 0.0,
             particle_type: 0,
             burst: false,
+            spin: false,
         }
     }
 

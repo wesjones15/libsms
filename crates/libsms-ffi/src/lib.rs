@@ -154,6 +154,9 @@ pub enum SmsEventKind {
     /// The Shine Get demo began: he has landed with the Shine over his head. `pos` is where he
     /// stands, `arg` his yaw: the host starts the camera, letters and fanfare.
     ShineDemo = 21,
+    /// As `WaterHit`, by a particle from a spin jump's spray ([`libsms::WaterEmit::spin`]), which
+    /// flies in every direction: a host may make it count for more.
+    SpinHit = 22,
 }
 
 /// An enemy the host reports ([`libsms::Enemy`]): a standing cylinder.
@@ -594,10 +597,13 @@ fn water_hits(host: &SmsHost, events: &[WaterEvent]) {
             pos,
             attack,
             burst,
+            spin,
         } = *ev
         {
             let kind = if burst {
                 SmsEventKind::BurstHit
+            } else if spin {
+                SmsEventKind::SpinHit
             } else {
                 SmsEventKind::WaterHit
             };

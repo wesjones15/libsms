@@ -618,7 +618,7 @@ impl Mario {
         let fades = self.options.spray_pressure_fades;
         let hover_time = self.limits.hover_time;
         let spray_fade = self.limits.spray_fade;
-        let aim = self.aim;
+        let aim = self.aim_now();
         let upper = self.upper;
         let in_water = self.in_water;
         let p = self.params.clone();
@@ -821,7 +821,7 @@ impl Mario {
         // A host aim (the lock-on) sends the water where it points, whichever way Mario faces
         // or runs; not in the game, where the camera turns Mario instead. Its heading and
         // pitch, whether or not the drawn head has swung that far yet.
-        let dir = match self.aim {
+        let dir = match self.aim_now() {
             Some(a) if !self.on_yoshi() => {
                 let pitch = a.pitch as f32 * (std::f32::consts::PI / 32768.0);
                 Vec3::new(
@@ -937,6 +937,7 @@ impl Mario {
             pow_tremble: np.pow_tremble,
             particle_type: np.particle_type,
             burst,
+            spin: self.spinning(),
         }));
 
         // Recoil: `addVelocity(reaction * -(dir . forward) * power)`; vertical reaction pushes

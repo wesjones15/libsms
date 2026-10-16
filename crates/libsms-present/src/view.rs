@@ -2085,4 +2085,68 @@ mod tests {
         }
         assert_eq!(steps, 11, "the cone fades out over {steps} game frames");
     }
+
+    #[test]
+    fn a_spin_jumps_nozzle_turns_with_him_whatever_the_host_aims() {
+        let Some(mut v) = view() else {
+            return;
+        };
+        let a = libsms::Assets::discover(None).unwrap();
+        let mut sim = Sim::new(a.params, a.anim_table, Vec3::ZERO, 0);
+        sim.mario.give_fludd();
+        // A flat floor that keeps the events it is told.
+        #[derive(Default)]
+        struct Rec {
+            flat: libsms::FlatHost,
+            events: Vec<libsms::Event>,
+        }
+        impl libsms::Host for Rec {
+            fn ground(&self, pos: Vec3) -> Option<libsms::host::GroundHit> {
+                self.flat.ground(pos)
+            }
+            fn event(&mut self, e: libsms::Event) {
+                self.events.push(e);
+            }
+        }
+        let mut host = Rec::default();
+        let mut stick_turn = 0.0f32;
+        let mut pad = libsms::Pad::default();
+        // Two quick turns of the stick, then A: a spin jump.
+        for _ in 0..24 {
+            stick_turn += std::f32::consts::TAU / 12.0;
+            pad.stick = glam::Vec2::new(stick_turn.cos(), stick_turn.sin());
+            sim.advance(&mut host, &pad, i16::MIN, 1.0 / 60.0);
+            v.update(&mut sim, 1.0 / 60.0);
+        }
+        pad.a = true;
+        sim.advance(&mut host, &pad, i16::MIN, 1.0 / 60.0);
+        pad.a = false;
+        assert!(matches!(
+            sim.mario.status,
+            libsms::Status::LeftRotateJump | libsms::Status::RightRotateJump
+        ));
+        // The host aims dead ahead the whole time, as the crosshair does.
+        let yaw = sim.mario.model_yaw;
+        sim.mario.aim = Some(libsms::Aim { yaw, pitch: 0 });
+        pad.stick = glam::Vec2::ZERO;
+        pad.r_analog = 140;
+        host.events.clear();
+        let mut headings = Vec::new();
+        for _ in 0..40 {
+            sim.advance(&mut host, &pad, i16::MIN, 1.0 / 60.0);
+            v.update(&mut sim, 1.0 / 60.0);
+            for e in host.events.drain(..) {
+                if let libsms::Event::WaterEmit(w) = e {
+                    headings.push(w.dir.x.atan2(w.dir.z));
+                }
+            }
+        }
+        // The water leaves in the world along the posed nozzle, which turns with the spin: not all
+        // along the host's fixed aim.
+        let (lo, hi) = (
+            headings.iter().cloned().fold(f32::MAX, f32::min),
+            headings.iter().cloned().fold(f32::MIN, f32::max),
+        );
+        assert!(headings.len() > 10 && hi - lo > 1.5, "the spin's water only covered {:.2} rad", hi - lo);
+    }
 }
