@@ -123,6 +123,8 @@ pub enum Look {
     Shadow,
     /// The disc's yellow coin, a static model for hosts to instance and spin themselves.
     Coin,
+    /// The disc's blue coin (`coin_blue.bmd`), drawn like [`Look::Coin`].
+    BlueCoin,
     /// The Shine Sprite (`TShine`): its model, animations and glow effects, and the Shine Get
     /// demo's camera path, for a host to place and drive with [`View::update_shine`].
     Shine,
@@ -671,7 +673,10 @@ impl View {
     /// [`View::load`] drawing `look`.
     pub fn load_look(dir: &Path, look: Look) -> Result<View, String> {
         if look == Look::Coin {
-            return Self::load_coin(dir);
+            return Self::load_coin(dir, "coin.bmd");
+        }
+        if look == Look::BlueCoin {
+            return Self::load_coin(dir, "coin_blue.bmd");
         }
         if look == Look::Shine {
             return Self::load_shine(dir);
@@ -856,8 +861,8 @@ impl View {
 
     /// TCoin's original model and materials, through the same model ABI as Mario. Hosts
     /// instance this bind pose; they do not call Mario's animation update on this view.
-    fn load_coin(dir: &Path) -> Result<View, String> {
-        let data = std::fs::read(dir.join("scene/mapobj/coin.bmd")).map_err(|e| e.to_string())?;
+    fn load_coin(dir: &Path, file: &str) -> Result<View, String> {
+        let data = std::fs::read(dir.join("scene/mapobj").join(file)).map_err(|e| e.to_string())?;
         let skeleton = Skeleton::from_bmd(&data).ok_or("coin has no rig")?;
         let mut textures = Textures::default();
         let model = build(
@@ -1556,6 +1561,24 @@ mod tests {
         // Every vertex is in the world, around where it's placed.
         let far = v.fx.vertices.iter().any(|f| f.pos.distance(Vec3::new(0.0, 170.0, 0.0)) > 3000.0);
         assert!(!far);
+    }
+
+    #[test]
+    fn blue_coin_loads_its_disc_mesh_in_blue() {
+        let Some(dir) = libsms::assets::find(None) else {
+            return;
+        };
+        let v = View::load_look(&dir, Look::BlueCoin).unwrap();
+        assert_eq!(v.models.len(), 1);
+        assert!(!v.positions.is_empty() && v.positions.iter().all(|p| p.is_finite()));
+        assert!(v.models[0].hi.y - v.models[0].lo.y > 90.0);
+        assert!(
+            (0..v.models[0].batches.len()).any(|b| {
+                let c = shown(&v, 0, b);
+                c[2] > 0.3 && c[2] > c[0] * 1.5
+            }),
+            "blue coin baked without its blue colour"
+        );
     }
 
     #[test]

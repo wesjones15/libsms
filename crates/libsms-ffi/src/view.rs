@@ -251,6 +251,7 @@ pub unsafe extern "C" fn sms_view_new_look(
             1 => libsms_present::Look::Shadow,
             2 => libsms_present::Look::Coin,
             3 => libsms_present::Look::Shine,
+            4 => libsms_present::Look::BlueCoin,
             _ => libsms_present::Look::Mario,
         };
         let view = View::load_look(&dir, look).ok()?;
