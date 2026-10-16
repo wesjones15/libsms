@@ -405,6 +405,13 @@ impl Mario {
         }
     }
 
+    /// Where the fitted nozzle's muzzle `index` is in the world as the sim has it (the host's
+    /// posed muzzle, once it has reported one).
+    pub fn muzzle_world(&self, index: usize) -> Option<Vec3> {
+        let (p, _) = self.fludd.as_ref()?.emitter(index)?;
+        Some(self.model_to_world(p))
+    }
+
     /// Whether he is spinning, in a spin jump or on the ground (a stick circle while spraying):
     /// FLUDD's water flies in every direction as he turns.
     pub(crate) fn spinning(&self) -> bool {

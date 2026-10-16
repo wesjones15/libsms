@@ -352,6 +352,9 @@ pub const MARIO_EFFECTS: &[&str] = &[
     "ms_m_sphipd_hit_d",
     "ms_m_blur2",
     "ms_m_blur2sp",
+    // The ground spin's water shot (`emitRotateShootEffect`).
+    "ms_m_spinshot_a",
+    "ms_m_spinshot_b",
     "ms_m_slipsmoke",
     "ms_m_watslide_a",
     "ms_m_watslide_b",
@@ -2199,5 +2202,103 @@ mod tests {
             headings.iter().cloned().fold(f32::MIN, f32::max),
         );
         assert!(headings.len() > 10 && hi - lo > 1.5, "the ground spin's water only covered {:.2} rad", hi - lo);
+    }
+
+    #[test]
+    fn a_running_marios_stream_starts_at_his_nozzle_not_behind_it() {
+        let Some(mut v) = view() else {
+            return;
+        };
+        let a = libsms::Assets::discover(None).unwrap();
+        let params = a.params.clone();
+        #[derive(Default)]
+        struct Rec {
+            flat: libsms::FlatHost,
+            events: Vec<libsms::Event>,
+        }
+        impl libsms::Host for Rec {
+            fn ground(&self, pos: Vec3) -> Option<libsms::host::GroundHit> {
+                self.flat.ground(pos)
+            }
+            fn event(&mut self, e: libsms::Event) {
+                self.events.push(e);
+            }
+        }
+        // Standing or running forward while spraying, the display `lag` ticks behind the sim, with
+        // the host telling WaterLook where the nozzle is drawn (`with_nozzle`) or not.
+        for (label, stick, lag, with_nozzle) in [
+            ("standing", 0.0f32, 1.0f32, true),
+            ("running", 1.0, 1.0, true),
+            ("running, nozzle known, lag 2", 1.0, 2.0, true),
+            ("running, nozzle unknown", 1.0, 1.0, false),
+        ] {
+            let mut sim = Sim::new(a.params.clone(), a.anim_table.clone(), Vec3::ZERO, 0);
+            sim.mario.give_fludd();
+            let mut host = Rec::default();
+            let mut water = libsms::water::WaterManager::new(&params);
+            let mut look = crate::water::WaterLook::default();
+            let mut ticks = 0u32;
+            let pad = libsms::Pad { stick: glam::Vec2::new(0.0, stick), r_analog: 140, ..Default::default() };
+            let (mut behind, mut n_frames) = (0.0f32, 0u32);
+            let mut worst = 0.0f32;
+            let mut speed = 0.0f32;
+            for frame in 0..200 {
+                let n = sim.advance(&mut host, &pad, i16::MIN, 1.0 / 60.0);
+                let mut muzzle = None;
+                for e in host.events.drain(..) {
+                    if let libsms::Event::WaterEmit(w) = e {
+                        muzzle = Some((w.pos, w.dir));
+                        water.emit(&w);
+                    }
+                }
+                ticks += n;
+                while ticks >= 4 {
+                    ticks -= 4;
+                    water.step(&host, sim.mario.pos);
+                    water.events.clear();
+                }
+                v.update(&mut sim, 1.0 / 60.0);
+                let Some((m, d)) = muzzle else { continue };
+                if frame < 60 {
+                    continue;
+                }
+                let vel = Vec3::new(sim.mario.vel.x, 0.0, sim.mario.vel.z);
+                speed = vel.length();
+                // Mario and his nozzle are drawn `lag` ticks behind the sim.
+                let drawn = m - vel * lag * 0.25;
+                let frac = (ticks as f32 + sim.alpha() - lag) / 4.0;
+                let eye = sim.mario.pos + Vec3::new(500.0, 150.0, 0.0);
+                look.nozzle = if with_nozzle { Some(drawn) } else { None };
+                look.build(&water, frac, eye, Vec3::Z, Vec3::Y, 0);
+                let d = d.normalize();
+                let mut least = f32::MAX;
+                // Only the newest drops: those still within 6 frames of the full lifetime.
+                let alive = water.particles.iter().map(|p| p.life).fold(0.0f32, f32::max);
+                let mut quad = 0usize;
+                for p in water.particles.iter().take(libsms::water::SLOTS) {
+                    if p.state != libsms::water::State::Flying || !water.drawn(p) { continue; }
+                    if p.life >= alive - 6.0 {
+                        for q in &look.vertices[quad * 4..quad * 4 + 4] {
+                            least = least.min((q.pos - drawn).dot(d));
+                        }
+                    }
+                    quad += 1;
+                }
+                if least != f32::MAX {
+                    behind += least;
+                    worst = worst.min(least);
+                    n_frames += 1;
+                }
+            }
+            let _ = (behind, speed);
+            assert!(n_frames > 50, "{label}: no stream was drawn");
+            if with_nozzle {
+                // No part of the newest drops' streaks reaches back behind the nozzle as drawn.
+                assert!(worst > -20.0, "{label}: the stream starts {:.0} units behind the nozzle", -worst);
+            } else {
+                // Without it, a runner leaves the water behind: the streaks reach well back.
+                assert!(label != "running, nozzle unknown" || worst < -50.0, "{label}: {worst}");
+            }
+        }
     }
 }

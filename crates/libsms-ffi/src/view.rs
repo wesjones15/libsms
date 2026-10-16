@@ -814,6 +814,11 @@ pub unsafe extern "C" fn sms_view_update(
             v.view.update(&mut s.sim, f.dt.clamp(0.0, 0.25));
             let frac = (s.water_ticks as f32 + s.sim.alpha() - f.lag) / 4.0;
             let juice = s.sim.mario.juice_color();
+            // FLUDD's muzzle as drawn: Mario is drawn `lag` ticks behind the sim.
+            v.water.nozzle = s.sim.mario.muzzle_world(0).map(|m| {
+                let ticks = s.sim.alpha() - f.lag.clamp(0.0, 16.0);
+                m + Vec3::new(s.sim.mario.vel.x, 0.0, s.sim.mario.vel.z) * (0.25 * ticks)
+            });
             v.water
                 .build(&s.water, frac, f.eye.into(), right, up, juice);
             if let Some(a) = &v.audio {

@@ -654,6 +654,9 @@ impl Mario {
             return self.change_status(to, 0, false);
         }
         self.set_anim(clip::SPIN, 1.0);
+        // `rotating`: the water-shot effects and the swirl, every tick of the spin.
+        self.emit_rotate_shoot_effect();
+        self.emit_blur_spin_jump();
         self.status_timer += 1;
         if self.status_timer > 0x78 {
             return self.change_status(Status::Wait, 0, false);

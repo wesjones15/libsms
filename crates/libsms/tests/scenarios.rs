@@ -2176,6 +2176,22 @@ fn a_ground_spin_sprays_all_round_whatever_the_hosts_aim() {
 }
 
 #[test]
+fn the_ground_spin_has_its_water_shot_and_swirl_effects() {
+    let mut s = Scene::flat();
+    s.sim.mario.give_fludd();
+    s.pad.r_analog = 200;
+    s.step(10);
+    s.sim.mario.status = Status::RotateL;
+    s.host.events.clear();
+    s.step(8);
+    let named = |name: &str| s.event_count(|e| matches!(e, Event::Particle(c) if c.name == name));
+    // `rotating`: emitRotateShootEffect (spinshot a and b) and emitBlurSpinJump, every tick.
+    assert!(named("ms_m_spinshot_a") >= 8, "{}", named("ms_m_spinshot_a"));
+    assert!(named("ms_m_spinshot_b") >= 8);
+    assert!(named("ms_m_blur2") >= 8 && named("ms_m_blur2sp") >= 8);
+}
+
+#[test]
 fn a_wet_belly_slide_holds_the_slide_pose() {
     if need_disc() {
         return;

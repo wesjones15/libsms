@@ -2630,6 +2630,8 @@ mod tests {
                 name,
                 "ms_m_blur2"
                     | "ms_m_blur2sp"
+                    | "ms_m_spinshot_a"
+                    | "ms_m_spinshot_b"
                     | "ms_m_blur3"
                     | "ms_m_slipsmoke"
                     | "ms_mariwallsl1"

@@ -695,6 +695,14 @@ impl Mario {
         }
     }
 
+    /// `emitRotateShootEffect` (MarioParticle.cpp): the ground spin's water-shot effects
+    /// (`PARTICLE_MS_M_SPINSHOT_A` and `B`), bound to his centre while it lasts.
+    pub(crate) fn emit_rotate_shoot_effect(&mut self) {
+        use crate::event::FxAt;
+        self.fx("ms_m_spinshot_a", FxAt::Center);
+        self.fx("ms_m_spinshot_b", FxAt::Center);
+    }
+
     /// `emitBlurSpinJump`: the spin jump's swirl.
     pub(crate) fn emit_blur_spin_jump(&mut self) {
         use crate::event::FxAt;

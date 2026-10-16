@@ -58,6 +58,10 @@ pub struct WaterLook {
     /// Colour and opacity to draw the drops in (`gModelWaterManagerWaterColor`; juice when
     /// Yoshi spits it).
     pub tint: [f32; 4],
+    /// Where FLUDD's muzzle is drawn now, if the host sets it before [`WaterLook::build`]: no
+    /// drop's tail is drawn behind it, so a stream never seems to start where the nozzle was a
+    /// moment ago (running, he leaves the water he threw behind him).
+    pub nozzle: Option<Vec3>,
 }
 
 fn bti(dir: &Path, rel: &str) -> Option<libsms_assets::texture::Texture> {
@@ -180,6 +184,10 @@ impl WaterLook {
                     if came < 0.0 {
                         c -= heading * came;
                         came = 0.0;
+                    }
+                    // Nor behind the nozzle as it is drawn now.
+                    if let Some(n) = self.nozzle {
+                        came = came.min((c - n).dot(heading).max(0.0));
                     }
                     let at = |x: f32, y: f32| c + right * x + up * y;
                     let v = p.vel * water.extension(p);
