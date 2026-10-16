@@ -2225,6 +2225,9 @@ fn limited_air_uses_spend_the_free_one_then_extras_then_refuse() {
     s.sim.mario.limits.air_uses = true;
     s.sim.mario.limits.air_extra = 1;
     airborne_with_fludd(&mut s);
+    // The Hover: the Spray's starts aren't counted (see the next test).
+    let params = s.sim.mario.params.clone();
+    s.sim.mario.fludd.as_mut().unwrap().change_nozzle(libsms::params::NozzleKind::Hover, false, &params);
     tap_r(&mut s);
     assert_eq!((air_uses(&s, false), air_uses(&s, true)), (1, 0));
     tap_r(&mut s);
@@ -2245,6 +2248,31 @@ fn limited_air_uses_spend_the_free_one_then_extras_then_refuse() {
     s.step(10);
     tap_r(&mut s);
     assert_eq!(air_uses(&s, false), 2);
+}
+
+#[test]
+fn the_sprays_air_starts_are_free_but_other_nozzles_are_counted() {
+    let mut s = Scene::flat();
+    s.sim.mario.limits.air_uses = true;
+    s.sim.mario.limits.air_extra = 0;
+    airborne_with_fludd(&mut s);
+    // The Spray as often as he likes in one jump: nothing is spent, and it always fires.
+    for _ in 0..3 {
+        let before = emits(&s);
+        s.pad.r_analog = 200;
+        s.step(15);
+        assert!(emits(&s) > before, "the Spray was refused");
+        s.pad.r_analog = 0;
+        s.step(4);
+    }
+    assert_eq!(s.event_count(|e| matches!(e, Event::AirNozzle { .. })), 0);
+    // Another nozzle in the same jump still takes the free use, and then none.
+    let params = s.sim.mario.params.clone();
+    s.sim.mario.fludd.as_mut().unwrap().change_nozzle(libsms::params::NozzleKind::Hover, false, &params);
+    tap_r(&mut s);
+    assert_eq!(air_uses(&s, false), 1);
+    tap_r(&mut s);
+    assert_eq!(air_uses(&s, false), 1, "a second Hover start had no use to spend");
 }
 
 #[test]
@@ -2551,8 +2579,8 @@ fn host_jump_pad_preserves_ballistics_without_sunshine_speed_caps() {
     let velocity = Vec3::new(160.0, 100.0, 0.0);
     let gravity = 0.5;
     s.sim.mario.launch_pad(velocity, gravity);
+    // The stick steers nothing in a pad flight (a move breaks it, see the tests below).
     s.pad.stick = Vec2::new(-1.0, 0.0);
-    s.pad.b = true; // Air actions must not divert a pad flight before collision.
     for tick in 1..=300 {
         s.step(1);
         let n = tick as f32;
@@ -2575,6 +2603,86 @@ fn host_jump_pad_preserves_ballistics_without_sunshine_speed_caps() {
         s.mario().vel.z > 0.0,
         "normal control returns after landing"
     );
+}
+
+/// How far (flat) a dive from a pad flight carries him before he lands, the pad throwing him with
+/// `velocity`; B is pressed `after` ticks into the flight.
+fn pad_dive_distance(velocity: Vec3, after: u32) -> (f32, Status) {
+    let mut s = Scene::flat();
+    s.sim.mario.launch_pad(velocity, 0.5);
+    s.step(after);
+    let from = s.mario().pos;
+    press_b(&mut s);
+    let status = s.mario().status;
+    assert!(s.until(900, |m| !m.status.is_jumping()));
+    let d = s.mario().pos - from;
+    (Vec3::new(d.x, 0.0, d.z).length(), status)
+}
+
+#[test]
+fn a_dive_breaks_a_jump_pad_flight_and_keeps_its_sideways_speed() {
+    // The same height, thrown straight up or across: the dive out of the second goes further by
+    // the pad's own momentum.
+    let (up, status) = pad_dive_distance(Vec3::new(0.0, 100.0, 0.0), 30);
+    assert_eq!(status, Status::JumpCatch);
+    let (across, status) = pad_dive_distance(Vec3::new(60.0, 100.0, 0.0), 30);
+    assert_eq!(status, Status::JumpCatch);
+    assert!(across > up + 150.0, "straight up {up}, across {across}");
+}
+
+#[test]
+fn a_move_waits_for_the_pad_to_throw_him_before_it_breaks_the_flight() {
+    let mut s = Scene::flat();
+    s.sim.mario.launch_pad(Vec3::new(60.0, 100.0, 0.0), 0.5);
+    // B pressed in the launch's first moments doesn't break the flight...
+    press_b(&mut s);
+    s.step(4);
+    assert_eq!(s.mario().status, Status::ForceJump);
+    // ...but a press once it has got going does.
+    s.step(14);
+    press_b(&mut s);
+    assert_eq!(s.mario().status, Status::JumpCatch);
+}
+
+#[test]
+fn the_rocket_and_the_turbo_break_a_pad_flight() {
+    let rocket = |nozzle: libsms::params::NozzleKind| {
+        let mut s = Scene::flat();
+        s.sim.mario.give_fludd();
+        let params = s.sim.mario.params.clone();
+        s.sim.mario.fludd.as_mut().unwrap().change_nozzle(nozzle, false, &params);
+        s.sim.mario.fludd.as_mut().unwrap().refill(&params);
+        s.sim.mario.launch_pad(Vec3::new(60.0, 100.0, 0.0), 0.5);
+        s.step(30);
+        // Steering does nothing in the flight; it does once a move has broken it.
+        s.pad.stick = Vec2::new(0.0, 1.0);
+        s.pad.r = true;
+        s.pad.r_analog = 255;
+        // The Rocket takes its charge time in the air too; the Turbo goes at once.
+        if nozzle == libsms::params::NozzleKind::Rocket {
+            s.until(300, |m| m.status == Status::Rocket);
+        } else {
+            s.step(10);
+        }
+        (s.mario().status, s.mario().vel.z)
+    };
+    let (status, _) = rocket(libsms::params::NozzleKind::Rocket);
+    assert_eq!(status, Status::Rocket);
+    let (status, sideways) = rocket(libsms::params::NozzleKind::Turbo);
+    assert_eq!(status, Status::ForceJump);
+    assert!(sideways.abs() > 0.5, "the Turbo left the flight unsteered: {sideways}");
+}
+
+#[test]
+fn a_ground_pound_breaks_a_pad_flight_too() {
+    let mut s = Scene::flat();
+    s.sim.mario.launch_pad(Vec3::new(60.0, 100.0, 0.0), 0.5);
+    s.step(30);
+    s.pad.l = true;
+    s.pad.l_analog = 255;
+    s.pad.b = true;
+    s.step(2);
+    assert_eq!(s.mario().status, Status::HipDrop);
 }
 
 #[test]

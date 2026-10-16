@@ -9,6 +9,9 @@ use crate::mario::{HEIGHT, Mario, Status};
 use crate::math::diff;
 use crate::params::NozzleKind;
 
+/// 120 Hz ticks after a jump pad throws him before a move can break the flight, so a button held through the launch (a B or R from before) doesn't.
+pub(crate) const PAD_ACTION_GRACE: u32 = 12;
+
 impl Mario {
     pub(crate) fn jump_main(&mut self, host: &mut dyn Host) -> bool {
         use Status::*;
@@ -20,8 +23,14 @@ impl Mario {
                 false
             }
             ForceJump | Jump => {
-                if self.pad_gravity.is_none() && self.jumping_common_events() {
-                    return true;
+                // A jump pad's flight can be broken by any move once it has got going (a dive, a
+                // rocket or hover, the Turbo, a ground pound, a spin jump); the pad's sideways speed
+                // then carries on beside the move (`pad_carry`).
+                if self.pad_gravity.is_none() || self.pad_age >= PAD_ACTION_GRACE {
+                    self.pad_turbo_break();
+                    if self.jumping_common_events() {
+                        return true;
+                    }
                 }
                 let anim = if self.status == ForceJump {
                     if self.vel.y >= 0.0 {
@@ -252,14 +261,32 @@ impl Mario {
         r
     }
 
+    /// A move breaks a jump pad's flight: normal air control and gravity are back, and the pad's
+    /// sideways speed carries on (`pad_carry`) beside whatever the move does.
+    pub(crate) fn break_pad_flight(&mut self) {
+        if self.pad_gravity.take().is_some() {
+            self.pad_carry = Vec3::new(self.pad_vel.x, 0.0, self.pad_vel.z);
+        }
+    }
+
+    /// The Turbo held in a pad flight breaks it. The Turbo has no thrust of its own in the air and
+    /// no status change, so this hands his air control back and keeps the pad's momentum.
+    fn pad_turbo_break(&mut self) {
+        if self.pad_gravity.is_some() && self.turbo_held {
+            self.break_pad_flight();
+        }
+    }
+
     /// `considerJumpRotate`: switches straight to a spin jump mid-air (no take-off boost).
     fn consider_jump_rotate(&mut self) -> bool {
         match self.check_stick_rotate() {
             Some(2) => {
+                self.break_pad_flight();
                 self.status = Status::RightRotateJump;
                 true
             }
             Some(3) => {
+                self.break_pad_flight();
                 self.status = Status::LeftRotateJump;
                 true
             }

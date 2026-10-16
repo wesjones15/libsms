@@ -30,6 +30,9 @@ pub(crate) enum SlipSet {
     WaterSlope,
 }
 
+/// How much of a broken jump pad flight's sideways speed is left each 120 Hz tick (about a second's half-life).
+pub(crate) const PAD_CARRY_BRAKE: f32 = 0.996;
+
 impl Mario {
     pub(crate) fn set_player_velocity(&mut self, v: f32) {
         self.forward_vel = v;
@@ -306,6 +309,7 @@ impl Mario {
     pub(crate) fn fall_process(&mut self) {
         if let Some(gravity) = self.pad_gravity {
             self.vel.y -= gravity;
+            self.pad_age = self.pad_age.saturating_add(1);
             return;
         }
         let j = &self.params.jump;
@@ -339,9 +343,16 @@ impl Mario {
 
         let k = if self.pad_gravity.is_some() { 1.0 } else { self.limit_air_speed() };
         self.fall_peak_y = self.fall_peak_y.max(self.pos.y);
-        let next = self.pos + Vec3::new(self.vel.x * k, self.vel.y, self.vel.z * k) * 0.25;
+        let carry = self.pad_carry;
+        let next = self.pos
+            + Vec3::new(self.vel.x * k + carry.x, self.vel.y, self.vel.z * k + carry.z) * 0.25;
         let ret = self.check_ground_at_jumping(host, next, arg);
-        if ret != 0 { self.pad_gravity = None; }
+        if ret != 0 {
+            self.pad_gravity = None;
+            self.pad_carry = Vec3::ZERO;
+        } else {
+            self.pad_carry *= PAD_CARRY_BRAKE;
+        }
         self.fall_peak_y = self.fall_peak_y.max(self.pos.y);
         if ret == 1 {
             // MarioJump.cpp jumpProcess/askStrongGroundTouch: sample contact before

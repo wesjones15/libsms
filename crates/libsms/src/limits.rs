@@ -52,7 +52,8 @@ impl WetSlide {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Limits {
     /// Count FLUDD's uses in the air: each start of a nozzle (R pressed, or a different nozzle
-    /// fitted while it's held) while airborne spends one. One is free each time Mario leaves
+    /// fitted while it's held) while airborne spends one, except the Spray's, which are free
+    /// and as many as he likes. One is free each time Mario leaves
     /// the ground; after that each takes one of `air_extra`, and with none left R does
     /// nothing until it's let go and Mario lands or is handed more. A use lasts as long as R
     /// stays down. Uses started on the ground cost nothing. false: the game's (the tank is
@@ -254,7 +255,13 @@ impl Mario {
         if starts {
             self.lim.r_nozzle = nozzle;
             self.lim.spray_ticks = 0;
-            if l.air_uses && airborne && nozzle.is_some() && !self.lim.r_refused {
+            // The Spray costs nothing to start again in the air: only the other nozzles are counted.
+            if l.air_uses
+                && airborne
+                && nozzle.is_some()
+                && nozzle != Some(NozzleKind::Spray)
+                && !self.lim.r_refused
+            {
                 if !self.lim.free_spent {
                     self.lim.free_spent = true;
                     self.events.push(Event::AirNozzle { extra: false });
@@ -283,6 +290,10 @@ impl Mario {
     /// else wants A. Runs after the input is read, before the state machine.
     pub(crate) fn limit_air_jump(&mut self) -> bool {
         if !self.input.jump || self.lim.air_jumps >= self.limits.air_jumps || self.on_yoshi() {
+            return false;
+        }
+        // A pad's flight isn't broken by an A held through the launch.
+        if self.pad_gravity.is_some() && self.pad_age < crate::air::PAD_ACTION_GRACE {
             return false;
         }
         use Status::*;
