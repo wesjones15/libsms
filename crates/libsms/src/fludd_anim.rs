@@ -405,12 +405,14 @@ impl Mario {
         }
     }
 
-    /// Whether he is in a spin jump: FLUDD's water flies in every direction as he turns.
+    /// Whether he is spinning, in a spin jump or on the ground (a stick circle while spraying):
+    /// FLUDD's water flies in every direction as he turns.
     pub(crate) fn spinning(&self) -> bool {
-        matches!(self.status, crate::mario::Status::LeftRotateJump | crate::mario::Status::RightRotateJump)
+        use crate::mario::Status::*;
+        matches!(self.status, LeftRotateJump | RightRotateJump | RotateL | RotateR)
     }
 
-    /// The host's aim, except in a spin jump, where the nozzle turns with him and sprays all round.
+    /// The host's aim, except in a spin, where the nozzle turns with him and sprays all round.
     pub(crate) fn aim_now(&self) -> Option<crate::Aim> {
         if self.spinning() { None } else { self.aim }
     }

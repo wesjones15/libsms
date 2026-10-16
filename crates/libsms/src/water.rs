@@ -86,7 +86,7 @@ pub struct Particle {
     pub reach: f32,
     /// From a light press's burst ([`WaterEmit::burst`]).
     pub burst: bool,
-    /// From a spin jump's spray ([`WaterEmit::spin`]).
+    /// From a spin's spray ([`WaterEmit::spin`]).
     pub spin: bool,
     /// The surface it sticks to: normal and whether it is wet (`isWaterSlip`).
     surface: Option<(Vec3, bool)>,

@@ -186,7 +186,7 @@ pub struct WaterEmit {
     /// A light press of the Spray, under pressure fades: a short burst. Not the game's; its
     /// hits say so ([`crate::WaterEvent::Hit`]) so a host can make them count for more.
     pub burst: bool,
-    /// Sprayed in a spin jump, which flies in every direction: a host's aim never bends it, and its
+    /// Sprayed in a spin (a spin jump, or on the ground), which flies in every direction: a host's aim never bends it, and its
     /// hits say so ([`crate::WaterEvent::Hit`]) so a host can count them for more.
     pub spin: bool,
 }

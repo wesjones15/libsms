@@ -2151,6 +2151,31 @@ fn a_spin_jumps_spray_ignores_the_hosts_aim_and_is_tagged() {
 }
 
 #[test]
+fn a_ground_spin_sprays_all_round_whatever_the_hosts_aim() {
+    let mut s = Scene::flat();
+    s.sim.mario.give_fludd();
+    let aim_yaw = s.sim.mario.model_yaw.wrapping_add(0x4000);
+    s.sim.mario.aim = Some(libsms::Aim { yaw: aim_yaw, pitch: 0 });
+    // Spraying in the ground spin (a stick circle starts it from a turn or a stop; here he is put in it).
+    s.pad.r_analog = 200;
+    s.step(10);
+    s.sim.mario.status = Status::RotateL;
+    s.host.events.clear();
+    s.step(20);
+    assert!(matches!(s.mario().status, Status::RotateL), "{:?}", s.mario().status);
+    let spun: Vec<libsms::WaterEmit> = s
+        .host
+        .events
+        .iter()
+        .filter_map(|e| if let Event::WaterEmit(w) = e { Some(*w) } else { None })
+        .collect();
+    assert!(!spun.is_empty(), "the ground spin didn't spray");
+    assert!(spun.iter().all(|w| w.spin), "a ground spin's water wasn't tagged");
+    // Where it flies is the view's posed muzzle turning with the spin, not the host's aim: see
+    // libsms-present's `a_ground_spins_water_turns_round_in_the_world_whatever_the_host_aims`.
+}
+
+#[test]
 fn a_wet_belly_slide_holds_the_slide_pose() {
     if need_disc() {
         return;

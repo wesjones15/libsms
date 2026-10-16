@@ -154,7 +154,7 @@ pub enum SmsEventKind {
     /// The Shine Get demo began: he has landed with the Shine over his head. `pos` is where he
     /// stands, `arg` his yaw: the host starts the camera, letters and fanfare.
     ShineDemo = 21,
-    /// As `WaterHit`, by a particle from a spin jump's spray ([`libsms::WaterEmit::spin`]), which
+    /// As `WaterHit`, by a particle from a spin's spray ([`libsms::WaterEmit::spin`]), which
     /// flies in every direction: a host may make it count for more.
     SpinHit = 22,
 }
