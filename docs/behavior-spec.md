@@ -696,3 +696,12 @@ while surviving the shader's normal test. Water drops retain their existing sett
 Tests check visible coverage through the actual cutoff and reconstruct every texel
 against the disc-derived displacement to bound packing error below 0.0015. The
 headless preview now applies the cutoff too; the game logs the eligible wave texels.
+
+### HUD counter paint backplates
+
+`TGCConsole2::load` (GC2D/GCConsole2.cpp) binds the `c_ba`, `d_ba` and `m_ba`
+panes behind the yellow coin, blue coin and lives counters. CoinMeter now draws their
+disc-derived `coin_back.bti` before the icons and digits, using each pane's rectangle,
+green black/white tint and 180/255 alpha. The strip stretches to cover host counts
+beyond the original three digits. Image bounds include the backdrop; slide and pulse
+animations remain omitted. The headless coins example previews all three counters.

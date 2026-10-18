@@ -8,8 +8,8 @@
 //! `setBlueCoinDigits`); lives go to 99 (`setTwoDigits`). A host with bigger coin counts (a
 //! roguelike's gold) gets more digits on the same line, up to [`MAX_DIGITS`]; the image is
 //! always wide enough for all of them, with the number set from the left, so a host can pin its
-//! left edge. Not drawn: the strip behind the
-//! panes (`c_ba`, which the game slides in and out) and the counters' pulse as they change.
+//! left edge. The green paint strip (`c_ba`/`d_ba`/`m_ba`) stays behind each counter,
+//! using the pane's tint, alpha and rectangle. Only its slide and the counters' pulse are omitted.
 
 use std::path::Path;
 
@@ -59,6 +59,8 @@ struct Pic {
 }
 
 pub struct CoinMeter {
+    back: Pic,
+    back_size: [i32; 2],
     icon: Pic,
     x: Pic,
     /// The lives banner's "MARIO".
@@ -126,6 +128,18 @@ impl CoinMeter {
             .map(|n| image(&format!("coin_number_{n}.bti")))
             .collect::<Result<Vec<_>, _>>()?;
         let (dw, dh) = (digits[0].width as i32, digits[0].height as i32);
+        let back_pane = screen
+            .find(tag(&format!("{p}_ba")))
+            .ok_or("no counter backdrop")?;
+        let (mut back, _) = pic(format!("{p}_ba"))?;
+        // J2DPicture multiplies the pane alpha after mapping the texture's black/white.
+        let alpha = |c: u32| (c & 0xFFFF_FF00) | ((c & 255) * back_pane.alpha as u32 / 255);
+        back.black = alpha(back.black);
+        back.white = alpha(back.white);
+        let back_size = [back_pane.rect[2], back_pane.rect[3]];
+        let back_width = |count: usize| {
+            back_size[0].max(first[0] + step[0] * (count as i32 - 1) + dw + 8 - back.at[0])
+        };
 
         // Every place a picture can land.
         let mut lo = [i32::MAX; 2];
@@ -138,6 +152,7 @@ impl CoinMeter {
         };
         cover(icon.at, icon.image.width as i32, icon.image.height as i32);
         cover(x.at, x.image.width as i32, x.image.height as i32);
+        cover(back.at, back_width(digit_count), back_size[1]);
         for i in 0..digit_count as i32 {
             cover([first[0] + step[0] * i, first[1] + step[1] * i], dw, dh);
         }
@@ -145,8 +160,13 @@ impl CoinMeter {
             cover(t.at, t.image.width as i32, t.image.height as i32);
         }
         let origin = [lo[0] - 1, lo[1] - 1];
-        let (w, h) = ((hi[0] + 1 - origin[0]) as u32, (hi[1] + 1 - origin[1]) as u32);
+        let (w, h) = (
+            (hi[0] + 1 - origin[0]) as u32,
+            (hi[1] + 1 - origin[1]) as u32,
+        );
         Ok(CoinMeter {
+            back,
+            back_size,
             icon,
             x,
             text,
@@ -181,6 +201,20 @@ impl CoinMeter {
 
     fn draw(&mut self, value: u32) {
         self.accum.fill([0.0; 4]);
+        let text = value.to_string();
+        let count = text.len().max(MIN_DIGITS);
+        let back = self.back.clone();
+        let width = self.back_size[0].max(
+            self.first[0] + self.step[0] * (count as i32 - 1) + self.digits[0].width as i32 + 8
+                - back.at[0],
+        );
+        self.put_scaled(
+            &back.image,
+            back.at,
+            [width, self.back_size[1]],
+            back.black,
+            back.white,
+        );
         if let Some(t) = self.text.clone() {
             self.put(&t.image, t.at, t.black, t.white);
         }
@@ -188,8 +222,6 @@ impl CoinMeter {
         self.put(&icon.image, icon.at, icon.black, icon.white);
         let x = self.x.clone();
         self.put(&x.image, x.at, x.black, x.white);
-        let text = value.to_string();
-        let count = text.len().max(MIN_DIGITS);
         let text = format!("{text:0>count$}");
         for (i, c) in text.bytes().enumerate() {
             let at = [
@@ -214,13 +246,24 @@ impl CoinMeter {
 
     /// `J2DPicture::draw`: the texture between `black` and `white`, over what is there.
     fn put(&mut self, img: &Image, at: [i32; 2], black: u32, white: u32) {
+        self.put_scaled(img, at, [img.width as i32, img.height as i32], black, white);
+    }
+
+    fn put_scaled(&mut self, img: &Image, at: [i32; 2], size: [i32; 2], black: u32, white: u32) {
         let (b, w) = (rgba(black), rgba(white));
         let (iw, ih) = (self.image.width as i32, self.image.height as i32);
-        for y in 0..img.height {
-            for x in 0..img.width {
-                let t = texel(img, x, y);
+        for y in 0..size[1] {
+            for x in 0..size[0] {
+                let t = texel(
+                    img,
+                    (x as u32 * img.width) / size[0] as u32,
+                    (y as u32 * img.height) / size[1] as u32,
+                );
                 let a = b[3] + (w[3] - b[3]) * t[3];
-                let (px, py) = (at[0] + x as i32 - self.origin[0], at[1] + y as i32 - self.origin[1]);
+                let (px, py) = (
+                    at[0] + x as i32 - self.origin[0],
+                    at[1] + y as i32 - self.origin[1],
+                );
                 if a <= 0.0 || px < 0 || py < 0 || px >= iw || py >= ih {
                     continue;
                 }
@@ -281,7 +324,10 @@ mod tests {
         assert!(lives.update(3));
         let three = lives.image.rgba.clone();
         lives.update(2);
-        assert!(lives.image.rgba != three, "the number didn't change the picture");
+        assert!(
+            lives.image.rgba != three,
+            "the number didn't change the picture"
+        );
         // Past 99 it holds 99.
         lives.update(99);
         let most = lives.image.rgba.clone();
