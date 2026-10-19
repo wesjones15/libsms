@@ -302,13 +302,27 @@ impl Skeleton {
 
 /// One animated channel: either a constant or a list of Hermite keys.
 #[derive(Debug, Clone)]
-struct Track {
+pub struct Track {
     /// `(time, value, tangent_in, tangent_out)`; one entry means constant.
     keys: Vec<(f32, f32, f32, f32)>,
 }
 
 impl Track {
-    fn value(&self, t: f32) -> f32 {
+    /// Shared J3D key-table reader for joint BCK and texture BTK channels.
+    pub fn read(count: usize, index: usize, tangent: u16,
+        value: impl Fn(usize) -> Option<f32>, time: impl Fn(usize) -> Option<f32>) -> Option<Self> {
+        if count <= 1 { return Some(Self { keys: vec![(0., value(index)?, 0., 0.)] }); }
+        let stride = if tangent == 0 { 3 } else { 4 };
+        let mut keys = Vec::with_capacity(count);
+        for k in 0..count {
+            let i = index + k * stride;
+            let tin = value(i + 2)?;
+            keys.push((time(i)?, value(i + 1)?, tin, if tangent == 0 { tin } else { value(i + 3)? }));
+        }
+        Some(Self { keys })
+    }
+
+    pub fn value(&self, t: f32) -> f32 {
         let k = &self.keys;
         match k.len() {
             0 => 0.0,
@@ -384,29 +398,16 @@ impl Clip {
                     _ => be_f32(d, trans_at + 4 * i),
                 }
             };
-            if count <= 1 {
-                return Some(Track {
-                    keys: vec![(0.0, value(index)?, 0.0, 0.0)],
-                });
-            }
-            let stride = if tangent == 0 { 3 } else { 4 };
-            let mut keys = Vec::with_capacity(count);
-            for k in 0..count {
-                let i = index + k * stride;
+            Track::read(count, index, tangent, value, |i| {
                 // Key times are stored as floats in the same table as the values; read them
                 // through the f32 table for scale/translation tracks and through the s16 table
                 // for rotation tracks, where time is stored as a raw s16.
-                let t = if kind == 1 {
-                    be_i16(d, rot_at + 2 * i)? as f32
+                if kind == 1 {
+                    Some(be_i16(d, rot_at + 2 * i)? as f32)
                 } else {
-                    be_f32(d, scale_or_trans(kind, scale_at, trans_at) + 4 * i)?
-                };
-                let v = value(i + 1)?;
-                let tin = value(i + 2)?;
-                let tout = if tangent == 0 { tin } else { value(i + 3)? };
-                keys.push((t, v, tin, tout));
-            }
-            Some(Track { keys })
+                    be_f32(d, scale_or_trans(kind, scale_at, trans_at) + 4 * i)
+                }
+            })
         };
 
         let mut joints = Vec::with_capacity(joint_count);

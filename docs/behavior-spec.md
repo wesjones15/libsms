@@ -705,3 +705,6 @@ disc-derived `coin_back.bti` before the icons and digits, using each pane's rect
 green black/white tint and 180/255 alpha. The strip stretches to cover host counts
 beyond the original three digits. Image bounds include the backdrop; slide and pulse
 animations remain omitted. The headless coins example previews all three counters.
+
+### Water-boost texture animation
+The Turbo cone now loads 01_waterboost.btk (MarioEffect.cpp setBtk). TTK1 reuses the BCK Hermite channel reader, applies named material SRT matrices, and advances its separate texture clock at 60 animation frames/second. Independently moving layers rebake into stable texture slots at 30 Hz; shared hosts upload only changed versions. Asset checks verify motion, looping and stable texture storage; in-game visual confirmation remains manual.

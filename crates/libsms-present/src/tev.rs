@@ -329,7 +329,7 @@ impl Source<'_> {
             .map_or([1.0; 4], |t| sample(&t.image, t.wrap, ch[0], ch[1]))
     }
 
-    /// Each stage's read. Texture matrices are taken at rest: a scrolling texture bakes still.
+    /// Each stage's read through the model's current texture matrices, including BTK updates.
     fn reads(&self, mi: usize, inputs: &Inputs) -> Vec<Read> {
         let m = &self.bmd.materials[mi];
         m.stages

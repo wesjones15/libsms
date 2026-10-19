@@ -109,6 +109,7 @@ pub struct Textures {
     by_key: HashMap<(u32, usize, Inputs), i32>,
     /// Every bake and plain colour recoloured ([`Look::Shadow`]).
     shade: Option<Shade>,
+    versions: HashMap<i32, u32>,
 }
 
 /// Which Mario a view draws.
@@ -204,6 +205,8 @@ struct Boost {
     frame: f32,
     /// The game frame (a quarter of the 120 Hz ticks) it last stepped at.
     game_frame: u64,
+    texture: Option<libsms_assets::btk::TexSrt>,
+    texture_frame: f32,
 }
 
 impl Boost {
@@ -213,6 +216,8 @@ impl Boost {
 
     /// One game frame of the cone's state machine; `dashing` is `MARIO_FLAG_FLUDD_EMITTING`.
     fn step(&mut self, dashing: bool) {
+        if self.state == 0 && dashing { self.texture_frame = 0.; }
+        else if self.state != 0 { self.texture_frame += Self::RATE; }
         match self.state {
             0 => {
                 if dashing {
@@ -235,6 +240,31 @@ impl Boost {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod texture_motion_tests {
+    use super::*;
+    #[test]
+    fn turbo_texture_animation_moves_and_reuses_its_texture_slots() {
+        let Some(dir) = libsms::assets::find(None) else { eprintln!("SKIP: Sunshine assets absent"); return };
+        let mut view = View::load(&dir).unwrap();
+        let boost = view.boost.as_ref().unwrap();
+        let texture = boost.texture.as_ref().expect("water boost BTK must load").clone();
+        let model = &mut view.models[models::WATERBOOST as usize];
+        let ids = model.batch_texture.clone();
+        let before: Vec<_> = ids.iter().map(|&id| view.textures.list[id as usize].rgba.clone()).collect();
+        let count = view.textures.list.len();
+        texture.apply(&mut model.bmd, 12.);
+        view.textures.animate(model, 2);
+        assert!(ids.iter().enumerate().any(|(i, &id)| before[i] != view.textures.list[id as usize].rgba), "BTK did not move the cone's texture layers");
+        for frame in [24., 48., 96.] { texture.apply(&mut model.bmd, frame); view.textures.animate(model, frame as u32 + 2); }
+        assert_eq!(count, view.textures.list.len(), "animation allocated texture variants");
+        texture.apply(&mut model.bmd, 0.);
+        let start: Vec<_> = model.bmd.materials.iter().map(|m| m.tex_mtx.clone()).collect();
+        texture.apply(&mut model.bmd, texture.frames);
+        assert_eq!(start, model.bmd.materials.iter().map(|m| m.tex_mtx.clone()).collect::<Vec<_>>(), "BTK does not wrap");
     }
 }
 
@@ -636,6 +666,19 @@ fn base_inputs(model: u32) -> Inputs {
 }
 
 impl Textures {
+    pub fn version(&self, id: u32) -> u32 { self.versions.get(&(id as i32)).copied().unwrap_or(0) }
+
+    fn animate(&mut self, model: &Model, version: u32) {
+        for (bi, batch) in model.batches.iter().enumerate() {
+            let id = model.batch_texture[bi];
+            if id < 0 || self.version(id as u32) == version { continue; }
+            if let Some(mut baked) = model.source().bake(batch.material, &base_inputs(models::WATERBOOST), MAX_BAKE) {
+                if let Some(shade) = self.shade { shade.apply(&mut baked.rgba); }
+                self.list[id as usize] = baked;
+                self.versions.insert(id, version);
+            }
+        }
+    }
     /// The texture for material `mi` of `model` with `inputs`, baking it the first time; -1
     /// for an untextured material. Past [`MAX_TEXTURES`], new variants fall back to the plain
     /// one.
@@ -655,7 +698,9 @@ impl Textures {
                         s.apply(&mut b.rgba);
                     }
                     self.list.push(b);
-                    self.list.len() as i32 - 1
+                    let id = self.list.len() as i32 - 1;
+                    if index == models::WATERBOOST { self.versions.insert(id, 1); }
+                    id
                 }
                 None => -1,
             }
@@ -765,6 +810,8 @@ impl View {
                     state: 0,
                     frame: 0.0,
                     game_frame: 0,
+                    texture: std::fs::read(dir.join("01_waterboost/01_waterboost.btk")).ok().and_then(|data| libsms_assets::btk::TexSrt::parse(&data).ok()),
+                    texture_frame: 0.,
                 });
             }
         }
@@ -1406,7 +1453,12 @@ impl View {
                 return None;
             }
             let at = *muzzle_mtx.first()?;
-            let bmd = &self.models.get(models::WATERBOOST as usize)?.bmd;
+            let model = self.models.get_mut(models::WATERBOOST as usize)?;
+            if let Some(texture) = &b.texture {
+                texture.apply(&mut model.bmd, b.texture_frame);
+                self.textures.animate(model, game_frame as u32 + 2);
+            }
+            let bmd = &model.bmd;
             let clip = &b.clips[(b.state == 2) as usize];
             let js = bmd.pose(|j| clip.sample(j, b.frame), |_| None);
             Some((models::WATERBOOST, at, js))
