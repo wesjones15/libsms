@@ -9,7 +9,8 @@
 //! roguelike's gold) gets more digits on the same line, up to [`MAX_DIGITS`]; the image is
 //! always wide enough for all of them, with the number set from the left, so a host can pin its
 //! left edge. The green paint strip (`c_ba`/`d_ba`/`m_ba`) stays behind each counter,
-//! using the pane's tint, alpha and rectangle. Only its slide and the counters' pulse are omitted.
+//! using the pane's tint and alpha. It rises at the same angle as the digits instead of
+//! staying horizontal when a host extends the counter. Only its slide and the counters' pulse are omitted.
 
 use std::path::Path;
 
@@ -152,7 +153,13 @@ impl CoinMeter {
         };
         cover(icon.at, icon.image.width as i32, icon.image.height as i32);
         cover(x.at, x.image.width as i32, x.image.height as i32);
-        cover(back.at, back_width(digit_count), back_size[1]);
+        let back_rise =
+            ((back_width(digit_count) - 1) as f32 * step[1] as f32 / step[0] as f32).round() as i32;
+        cover(
+            [back.at[0], back.at[1] + back_rise.min(0)],
+            back_width(digit_count),
+            back_size[1] + back_rise.abs(),
+        );
         for i in 0..digit_count as i32 {
             cover([first[0] + step[0] * i, first[1] + step[1] * i], dw, dh);
         }
@@ -214,6 +221,7 @@ impl CoinMeter {
             [width, self.back_size[1]],
             back.black,
             back.white,
+            self.step,
         );
         if let Some(t) = self.text.clone() {
             self.put(&t.image, t.at, t.black, t.white);
@@ -246,10 +254,25 @@ impl CoinMeter {
 
     /// `J2DPicture::draw`: the texture between `black` and `white`, over what is there.
     fn put(&mut self, img: &Image, at: [i32; 2], black: u32, white: u32) {
-        self.put_scaled(img, at, [img.width as i32, img.height as i32], black, white);
+        self.put_scaled(
+            img,
+            at,
+            [img.width as i32, img.height as i32],
+            black,
+            white,
+            [1, 0],
+        );
     }
 
-    fn put_scaled(&mut self, img: &Image, at: [i32; 2], size: [i32; 2], black: u32, white: u32) {
+    fn put_scaled(
+        &mut self,
+        img: &Image,
+        at: [i32; 2],
+        size: [i32; 2],
+        black: u32,
+        white: u32,
+        rise: [i32; 2],
+    ) {
         let (b, w) = (rgba(black), rgba(white));
         let (iw, ih) = (self.image.width as i32, self.image.height as i32);
         for y in 0..size[1] {
@@ -262,7 +285,7 @@ impl CoinMeter {
                 let a = b[3] + (w[3] - b[3]) * t[3];
                 let (px, py) = (
                     at[0] + x as i32 - self.origin[0],
-                    at[1] + y as i32 - self.origin[1],
+                    at[1] + y as i32 - self.origin[1] + (x * rise[1] / rise[0]),
                 );
                 if a <= 0.0 || px < 0 || py < 0 || px >= iw || py >= ih {
                     continue;
