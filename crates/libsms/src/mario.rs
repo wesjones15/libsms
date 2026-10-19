@@ -321,6 +321,10 @@ pub struct Mario {
     /// A spin jump started out of a rocket nozzle's thrust: the still-held spray must not fling him
     /// back into the rocket until that spin is over (cleared by any real status change).
     pub(crate) rocket_spin: bool,
+    /// Ticks left of the Turbo corkscrew dive's roll (host extension), and how far it has rolled about
+    /// the dive's own axis (a 16-bit angle) for a view to draw.
+    pub(crate) corkscrew: u16,
+    pub model_roll: Angle,
     pub(crate) short_hop: bool,
     /// Host extension: gravity per 120 Hz tick during an unsteered jump-pad flight.
     pub(crate) pad_gravity: Option<f32>,
@@ -452,6 +456,8 @@ impl Mario {
             spin_voice_due: true,
             spin_ticks: 0,
             rocket_spin: false,
+            corkscrew: 0,
+            model_roll: 0,
             short_hop: false,
             pad_gravity: None,
             pad_vel: Vec3::ZERO,
@@ -1051,6 +1057,8 @@ impl Mario {
             return false;
         }
         self.rocket_spin = false;
+        self.corkscrew = 0;
+        self.model_roll = 0;
         let to = match to.kind() {
             Kind::Running => self.set_status_to_running(to),
             Kind::Jumping => self.set_status_to_jumping(to, arg),

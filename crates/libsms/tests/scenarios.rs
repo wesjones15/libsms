@@ -3374,3 +3374,72 @@ fn letting_go_of_the_turbo_in_a_dash_jump_ends_the_dash_and_allows_a_dive() {
     s.step(2);
     assert_eq!(s.sim.mario.status, Status::JumpCatch, "he can't dive after letting go of the Turbo");
 }
+
+/// A full stick circle out of a Turbo dash jump is the corkscrew dive: head first, forward, rolling about
+/// its own length and then upright in the plain dive (host extension).
+#[test]
+fn a_stick_circle_in_a_turbo_dash_jump_is_a_corkscrew_dive() {
+    let mut s = Scene::flat();
+    s.sim.mario.give_fludd();
+    {
+        let p = s.sim.mario.params.clone();
+        let f = s.sim.mario.fludd.as_mut().unwrap();
+        f.change_nozzle(NozzleKind::Turbo, false, &p);
+        f.refill(&p);
+    }
+    s.pad.stick = Vec2::new(0.0, 1.0);
+    s.pad.r_analog = 255;
+    s.secs(6.0);
+    s.pad.a = true;
+    s.step(30);
+    assert_eq!(s.sim.mario.status, Status::BroadJump, "the dash didn't jump");
+    for i in 0..24 {
+        let a = i as f32 * std::f32::consts::TAU / 12.0;
+        s.pad.stick = Vec2::new(a.cos(), a.sin());
+        s.step(1);
+        if s.sim.mario.status == Status::JumpCatch {
+            break;
+        }
+    }
+    assert_eq!(s.sim.mario.status, Status::JumpCatch, "the circle didn't start the dive");
+    assert!(s.sim.mario.forward_vel > 0.5 * s.sim.mario.params.jump.jump_jump_catch_sp, "no push forward: {}", s.sim.mario.forward_vel);
+    s.pad.stick = Vec2::ZERO;
+    let mut rolled = false;
+    for _ in 0..30 {
+        s.step(1);
+        rolled |= s.sim.mario.model_roll != 0;
+        if s.sim.mario.status != Status::JumpCatch {
+            break;
+        }
+    }
+    assert!(rolled, "it never rolled");
+    if s.sim.mario.status == Status::JumpCatch {
+        assert_eq!(s.sim.mario.model_roll, 0, "it should end upright in the plain dive");
+    }
+}
+
+/// The stick turns Mario in the rocket's thrust and in the climb after it, not only pushes him along.
+#[test]
+fn the_stick_turns_him_after_the_rocket() {
+    if need_disc() {
+        return;
+    }
+    let mut s = Scene::flat();
+    s.sim.mario.give_fludd();
+    {
+        let p = s.sim.mario.params.clone();
+        let f = s.sim.mario.fludd.as_mut().unwrap();
+        f.change_nozzle(NozzleKind::Rocket, false, &p);
+        f.refill(&p);
+    }
+    s.press_a();
+    s.step(6);
+    s.pad.r = true;
+    s.pad.r_analog = 255;
+    s.until(300, |m| m.status == Status::Rocket);
+    let facing = s.sim.mario.face_yaw;
+    // A quarter turn off from where he faces.
+    s.pad.stick = Vec2::new(1.0, 0.0);
+    s.step(20);
+    assert_ne!(s.sim.mario.face_yaw, facing, "the stick didn't turn him in the rocket's flight");
+}

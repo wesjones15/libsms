@@ -12,6 +12,9 @@ use crate::params::NozzleKind;
 /// 120 Hz ticks after a jump pad throws him before a move can break the flight, so a button held through the launch (a B or R from before) doesn't.
 pub(crate) const PAD_ACTION_GRACE: u32 = 12;
 
+/// How long the Turbo corkscrew dive's roll lasts, in ticks (two full turns).
+const CORKSCREW_TICKS: u16 = 24;
+
 impl Mario {
     pub(crate) fn jump_main(&mut self, host: &mut dyn Host) -> bool {
         use Status::*;
@@ -86,6 +89,12 @@ impl Mario {
             }
             Landing | RocketLanding => {
                 let from_rocket = self.status == RocketLanding;
+                // Host extension: out of the rocket's climb the stick turns him as well as pushing him.
+                if from_rocket && self.input.stick {
+                    let rot = self.params.hover.rot_sp as i32;
+                    self.face_yaw = crate::math::turn_toward(self.face_yaw, self.intended_yaw, rot);
+                    self.model_yaw = self.face_yaw;
+                }
                 if self.vel.y < 0.0 {
                     self.status_timer += 1;
                     if self.status_timer > 240 {
@@ -137,6 +146,10 @@ impl Mario {
                 // Host: once the Turbo is let go the dash is over (`broadJumping` keeps its flag
                 // until he lands, which keeps the water-boost cone and sounds going), and he can
                 // dive like out of any other nozzle's jump.
+                // Host extension: a full stick circle out of the Turbo's thrust is the corkscrew dive.
+                if self.turbo_held && self.consider_corkscrew() {
+                    return true;
+                }
                 if !self.turbo_held && (self.check_back_trig() || self.consider_jump_rotate()) {
                     return true;
                 }
@@ -301,6 +314,21 @@ impl Mario {
         }
     }
 
+    /// Host extension: out of the Turbo's thrust a full stick circle throws him forward head first in a
+    /// dive that rolls about its own length (a corkscrew), then carries on as the dive.
+    fn consider_corkscrew(&mut self) -> bool {
+        if self.on_yoshi() || self.check_stick_rotate().is_none() {
+            return false;
+        }
+        self.break_pad_flight();
+        let v = (self.params.jump.jump_jump_catch_sp * 1.25).max(self.forward_vel);
+        self.set_player_velocity(v);
+        self.fludd_emitting = false;
+        self.change_status(Status::JumpCatch, 0, false);
+        self.corkscrew = CORKSCREW_TICKS;
+        true
+    }
+
     /// `checkBackTrig`: B dives, L ground-pounds.
     fn check_back_trig(&mut self) -> bool {
         if self.input.dive {
@@ -389,6 +417,12 @@ impl Mario {
         } else if let Some(f) = self.fludd.as_mut() {
             f.tilt_target = [0, 0];
         }
+        // Host extension: the stick turns him in the rocket's thrust too, as the Hover's does.
+        if nozzle != NozzleKind::Hover && self.input.stick {
+            let rot = self.params.hover.rot_sp as i32;
+            self.face_yaw = crate::math::turn_toward(self.face_yaw, self.intended_yaw, rot);
+            self.model_yaw = self.face_yaw;
+        }
 
         self.slide_x = self.forward_vel * crate::math::sin(self.face_yaw);
         self.slide_z = self.forward_vel * crate::math::cos(self.face_yaw);
@@ -453,6 +487,11 @@ impl Mario {
             return self.change_status(Status::HipDrop, 0, false);
         }
         self.set_anim(clip::DIVE, 1.0);
+        if self.corkscrew > 0 {
+            // Two full turns about the dive's axis, ending upright in the plain dive.
+            self.corkscrew -= 1;
+            self.model_roll = (((CORKSCREW_TICKS - self.corkscrew) as i32 * 0x20000 / CORKSCREW_TICKS as i32) & 0xFFFF) as u16 as i16;
+        }
         self.do_jumping();
         match self.jump_process(host, 0) {
             1 => {
