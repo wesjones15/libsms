@@ -489,12 +489,9 @@ impl Mario {
                 self.vel.y = 0.0;
                 match self.jump_process(host, 0) {
                     1 => return self.change_status(Status::JumpEnd, 0, false),
+                    // Host extension: a wall doesn't bump him out of a ground pound; he stays in it.
                     2 => {
-                        self.set_player_velocity(-16.0);
-                        if self.vel.y > 0.0 {
-                            self.vel.y = 0.0;
-                        }
-                        return self.change_status(Status::JumpShortBackDown, 0, false);
+                        self.set_player_velocity(0.0);
                     }
                     _ => {}
                 }
@@ -539,11 +536,7 @@ impl Mario {
                         self.change_status(Status::HipAttackEnd, 0, false);
                     }
                     2 => {
-                        self.set_player_velocity(-16.0);
-                        if self.vel.y > 0.0 {
-                            self.vel.y = 0.0;
-                        }
-                        self.change_status(Status::JumpShortBackDown, 0, false);
+                        self.set_player_velocity(0.0);
                     }
                     _ => {}
                 }

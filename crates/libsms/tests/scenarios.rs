@@ -1705,7 +1705,7 @@ fn a_host_knock_down_leaves_the_sim_health_alone() {
 }
 
 #[test]
-fn a_host_knock_down_takes_him_out_of_a_ground_pound_as_the_game_does() {
+fn a_hit_does_not_take_him_out_of_a_ground_pound() {
     let mut s = Scene::flat();
     s.pad.a = true;
     s.press_a();
@@ -1719,7 +1719,8 @@ fn a_host_knock_down_takes_him_out_of_a_ground_pound_as_the_game_does() {
             .mario
             .knock_down(Vec3::new(0.0, 0.0, 100.0), libsms::DamageKind::EnemyCommon)
     );
-    assert_eq!(s.mario().status, Status::JumpShortBackDown);
+    // The hit lands (flash, voice) but he carries on with the pound (host extension).
+    assert_eq!(s.mario().status, Status::HipDrop);
 }
 
 #[test]

@@ -157,8 +157,9 @@ impl Mario {
             return true;
         }
         let airborne = self.status.is_jumping() as usize;
-        // `canPlayAnimation`: a dive (`MARIO_STATUS_DIVE`) isn't knocked out of.
-        if p.down_type == 3 || self.status == Status::JumpCatch {
+        // `canPlayAnimation`: a dive (`MARIO_STATUS_DIVE`) isn't knocked out of. Host extension: nor is a
+        // ground pound, from its wind-up to the landing; the hit still counts (health, flash, voice).
+        if p.down_type == 3 || self.status == Status::JumpCatch || self.status == Status::HipDrop {
             // `setUpperDamageRun`: a flinch with no knock-back; not drawn here.
         } else {
             let attack = matan(from.z - self.pos.z, from.x - self.pos.x);
