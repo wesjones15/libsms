@@ -496,6 +496,23 @@ pub unsafe extern "C" fn sms_view_hold_sound(
     unsafe { with_view(view, 0, |v| v.audio.as_mut().is_some_and(|a| a.hold_at(name, pos)) as u8) }
 }
 
+/// Holds this view's sounds still while the host's game is paused (nonzero) and lets them go on
+/// from the same place when it isn't. Call it every frame; a view without sound ignores it.
+///
+/// # Safety
+/// `view` from [`sms_view_new`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_set_paused(view: *mut SmsView, paused: u8) {
+    // SAFETY: as documented.
+    unsafe {
+        with_view(view, (), |v| {
+            if let Some(a) = &v.audio {
+                a.set_paused(paused != 0);
+            }
+        })
+    }
+}
+
 /// # Safety
 /// `view` from [`sms_view_new`] and not used afterwards. Null is ignored.
 #[unsafe(no_mangle)]

@@ -14,7 +14,7 @@ use std::{
     path::Path,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicU32, Ordering},
+        atomic::{AtomicBool, AtomicU32, Ordering},
     },
 };
 
@@ -107,6 +107,8 @@ pub struct Audio {
     sys: Arc<Mutex<SoundSystem>>,
     /// Output gain 0..1, as `f32` bits.
     volume: Arc<AtomicU32>,
+    /// While set the stream outputs silence and the sound system does not advance.
+    paused: Arc<AtomicBool>,
     _stream: cpal::Stream,
     pub rate: u32,
     pub channels: u16,
@@ -413,10 +415,12 @@ impl Audio {
         let config = device.default_output_config()?;
         let (rate, channels) = (config.sample_rate().0, config.channels());
         let v = volume.clone();
+        let paused = Arc::new(AtomicBool::new(false));
+        let p = paused.clone();
         let stream = match config.sample_format() {
-            cpal::SampleFormat::F32 => output::<f32>(&device, &config.into(), sys.clone(), v)?,
-            cpal::SampleFormat::I16 => output::<i16>(&device, &config.into(), sys.clone(), v)?,
-            cpal::SampleFormat::U16 => output::<u16>(&device, &config.into(), sys.clone(), v)?,
+            cpal::SampleFormat::F32 => output::<f32>(&device, &config.into(), sys.clone(), v, p)?,
+            cpal::SampleFormat::I16 => output::<i16>(&device, &config.into(), sys.clone(), v, p)?,
+            cpal::SampleFormat::U16 => output::<u16>(&device, &config.into(), sys.clone(), v, p)?,
             format => return Err(format!("unsupported output sample format {format}").into()),
         };
         stream.play()?;
@@ -424,10 +428,17 @@ impl Audio {
             scene,
             sys,
             volume,
+            paused,
             _stream: stream,
             rate,
             channels,
         })
+    }
+
+    /// Holds every sound where it is (a paused game): silence out, voices and envelopes
+    /// frozen, and they carry on from the same place when unpaused.
+    pub fn set_paused(&self, paused: bool) {
+        self.paused.store(paused, Ordering::Relaxed);
     }
 
     /// Output gain, 0..1.
@@ -545,6 +556,7 @@ fn output<T: cpal::SizedSample + cpal::FromSample<f32>>(
     config: &cpal::StreamConfig,
     sys: Arc<Mutex<SoundSystem>>,
     volume: Arc<AtomicU32>,
+    paused: Arc<AtomicBool>,
 ) -> Result<cpal::Stream, cpal::BuildStreamError> {
     let channels = config.channels as usize;
     let rate = config.sample_rate.0 as f32;
@@ -552,6 +564,10 @@ fn output<T: cpal::SizedSample + cpal::FromSample<f32>>(
     device.build_output_stream(
         config,
         move |out: &mut [T], _| {
+            if paused.load(Ordering::Relaxed) {
+                out.fill(T::from_sample(0.0));
+                return;
+            }
             scratch.resize(out.len() / channels * 2, 0.0);
             scratch.fill(0.0);
             let gain = f32::from_bits(volume.load(Ordering::Relaxed));
