@@ -862,6 +862,14 @@ fn a_stick_circle_spins_him_out_of_the_rockets_thrust_and_the_held_spray_does_no
             s.mario().status
         );
     }
+    // And not once the spin is over either: the rocket is spent until he is back on the ground.
+    for i in 0..400 {
+        s.step(1);
+        if s.mario().on_ground() {
+            break;
+        }
+        assert_ne!(s.mario().status, Status::Rocket, "a second rocket in the same jump (tick {i})");
+    }
 }
 
 fn fall_impact(s: &Scene<FlatHost>) -> (f32, bool, bool, bool) {

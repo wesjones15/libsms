@@ -352,7 +352,7 @@ impl Mario {
 
     /// `rocketCheck`: with FLUDD firing a rocket-type nozzle, start rocketing.
     pub(crate) fn rocket_check(&mut self) -> bool {
-        if matches!(self.status, Status::Rocket | Status::RocketLanding) {
+        if matches!(self.status, Status::Rocket | Status::RocketLanding) || self.air_rocket_used {
             return false;
         }
         let ok = self.fludd.as_ref().is_some_and(|f| {
