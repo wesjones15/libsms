@@ -318,6 +318,9 @@ pub struct Mario {
     /// and ticks spent spinning (`unk22`).
     spin_voice_due: bool,
     spin_ticks: u16,
+    /// A spin jump started out of a rocket nozzle's thrust: the still-held spray must not fling him
+    /// back into the rocket until that spin is over (cleared by any real status change).
+    pub(crate) rocket_spin: bool,
     pub(crate) short_hop: bool,
     /// Host extension: gravity per 120 Hz tick during an unsteered jump-pad flight.
     pub(crate) pad_gravity: Option<f32>,
@@ -448,6 +451,7 @@ impl Mario {
             fall_start_y: pos.y,
             spin_voice_due: true,
             spin_ticks: 0,
+            rocket_spin: false,
             short_hop: false,
             pad_gravity: None,
             pad_vel: Vec3::ZERO,
@@ -1046,6 +1050,7 @@ impl Mario {
         if !force && to == self.status {
             return false;
         }
+        self.rocket_spin = false;
         let to = match to.kind() {
             Kind::Running => self.set_status_to_running(to),
             Kind::Jumping => self.set_status_to_jumping(to, arg),

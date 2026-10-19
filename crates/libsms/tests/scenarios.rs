@@ -824,6 +824,46 @@ fn rocket_nozzle_needs_charge_then_launches() {
     assert!(max_y > 400.0, "rocket apex {max_y}");
 }
 
+#[test]
+fn a_stick_circle_spins_him_out_of_the_rockets_thrust_and_the_held_spray_does_not_pull_him_back() {
+    if need_disc() {
+        return;
+    }
+    let mut s = Scene::flat();
+    s.sim.mario.give_fludd();
+    {
+        let p = s.sim.mario.params.clone();
+        let f = s.sim.mario.fludd.as_mut().unwrap();
+        f.change_nozzle(NozzleKind::Rocket, false, &p);
+        f.refill(&p);
+    }
+    s.press_a();
+    s.step(6);
+    s.pad.r = true;
+    s.pad.r_analog = 255;
+    // The Rocket takes its charge time in the air too.
+    s.until(300, |m| m.status == Status::Rocket);
+    assert_eq!(s.mario().status, Status::Rocket, "the rocket never started");
+    for i in 0..24 {
+        let a = i as f32 * std::f32::consts::TAU / 12.0;
+        s.pad.stick = Vec2::new(a.cos(), a.sin());
+        s.step(1);
+        if matches!(s.mario().status, Status::LeftRotateJump | Status::RightRotateJump) {
+            break;
+        }
+    }
+    assert!(matches!(s.mario().status, Status::LeftRotateJump | Status::RightRotateJump), "{:?}", s.mario().status);
+    s.pad.stick = Vec2::ZERO;
+    for _ in 0..6 {
+        s.step(1);
+        assert!(
+            matches!(s.mario().status, Status::LeftRotateJump | Status::RightRotateJump),
+            "the held spray pulled him back into the rocket: {:?}",
+            s.mario().status
+        );
+    }
+}
+
 fn fall_impact(s: &Scene<FlatHost>) -> (f32, bool, bool, bool) {
     s.host
         .events

@@ -85,6 +85,7 @@ impl Mario {
                 false
             }
             Landing | RocketLanding => {
+                let from_rocket = self.status == RocketLanding;
                 if self.vel.y < 0.0 {
                     self.status_timer += 1;
                     if self.status_timer > 240 {
@@ -99,6 +100,12 @@ impl Mario {
                     }
                 }
                 if self.check_back_trig() || self.rocket_check() {
+                    return true;
+                }
+                // Host extension: a full stick circle spins him in the air from here too, out of the
+                // rocket's climb included (the spray he still holds must not start the rocket again).
+                if self.consider_jump_rotate() {
+                    self.rocket_spin = from_rocket;
                     return true;
                 }
                 let c = match self.status_arg {
@@ -130,7 +137,7 @@ impl Mario {
                 // Host: once the Turbo is let go the dash is over (`broadJumping` keeps its flag
                 // until he lands, which keeps the water-boost cone and sounds going), and he can
                 // dive like out of any other nozzle's jump.
-                if !self.turbo_held && self.check_back_trig() {
+                if !self.turbo_held && (self.check_back_trig() || self.consider_jump_rotate()) {
                     return true;
                 }
                 self.jumping_basic(host, Run, "broad_jump", 1);
@@ -347,6 +354,12 @@ impl Mario {
         if rocket_type != 1 || self.upper != crate::mario::UpperState::Pumping || !can_spray {
             return self.change_status(Status::RocketLanding, 0, false);
         }
+        // Host extension: a full stick circle spins him out of the rocket's thrust, as out of any jump
+        // (not the Hover nozzle, whose steering is the stick).
+        if nozzle != NozzleKind::Hover && self.consider_jump_rotate() {
+            self.rocket_spin = true;
+            return true;
+        }
 
         if self.input.stick && nozzle == NozzleKind::Hover {
             let mag = self.intended_mag;
@@ -418,7 +431,7 @@ impl Mario {
     }
 
     fn rotate_jumping(&mut self, host: &mut dyn Host) -> bool {
-        if self.check_back_trig() || self.rocket_check() {
+        if self.check_back_trig() || (!self.rocket_spin && self.rocket_check()) {
             return true;
         }
         self.set_anim(clip::SPIN, 1.0);
