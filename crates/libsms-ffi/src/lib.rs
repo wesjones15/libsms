@@ -28,7 +28,7 @@ use libsms::{
 use view::SmsView;
 
 /// ABI version, bumped when the C interface changes.
-pub const SMS_ABI_VERSION: u32 = 26;
+pub const SMS_ABI_VERSION: u32 = 27;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sms_abi_version() -> u32 {
@@ -386,6 +386,32 @@ pub struct SmsLimits {
     pub wet_slide_flags: u8,
 }
 
+/// Whether this sim's own FLUDD water has wetted the ground at `pos` (sim units), for another
+/// Mario's sim to glide over: 1 wet, 0 dry or no sim.
+///
+/// # Safety
+/// `sim` from [`sms_sim_new`] or null; `pos` readable or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_sim_wet_at(sim: *const SmsSim, pos: *const SmsVec3) -> u32 {
+    // SAFETY: the caller promised valid pointers.
+    match (unsafe { sim.as_ref() }, unsafe { pos.as_ref() }) {
+        (Some(s), Some(p)) if !s.poisoned => u32::from(s.water.on_ground_near(Vec3::new(p.x, p.y, p.z))),
+        _ => 0,
+    }
+}
+
+/// Tells this sim whether another Mario's wet ground is under it for the next step.
+///
+/// # Safety
+/// `sim` from [`sms_sim_new`] or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_sim_set_foreign_wet(sim: *mut SmsSim, wet: u32) {
+    // SAFETY: the caller promised a valid pointer or null.
+    if let Some(s) = unsafe { sim.as_mut() } {
+        s.foreign_wet = wet != 0;
+    }
+}
+
 /// An opaque sim handle.
 pub struct SmsSim {
     pub(crate) sim: Sim,
@@ -396,6 +422,9 @@ pub struct SmsSim {
     /// Also throw the host stand-in splashes during a wet belly slide
     /// ([`WaterManager::slide_splashes`]), on top of the game's own `ms_m_watslide_*` spray.
     pub(crate) slide_splashes: bool,
+    /// Another Mario's wet ground is under this one (the host says so before each step), so a
+    /// belly slide glides over what a friend's FLUDD wetted as it does over his own.
+    pub(crate) foreign_wet: bool,
     status: CString,
     clip: CString,
     pub(crate) poisoned: bool,
@@ -673,6 +702,7 @@ pub unsafe extern "C" fn sms_sim_new(
             water: WaterManager::new(&sim.mario.params),
             water_ticks: 0,
             slide_splashes: false,
+            foreign_wet: false,
             sim,
             status: CString::default(),
             clip: CString::default(),
@@ -724,7 +754,7 @@ pub unsafe extern "C" fn sms_sim_step(
     let ran = catch_unwind(AssertUnwindSafe(|| {
         let mut h = FfiHost(host, Vec::new());
         // Water on the ground under Mario makes a belly slide glide.
-        s.sim.mario.water_underfoot = s.water.on_ground_near(s.sim.mario.pos);
+        s.sim.mario.water_underfoot = s.foreign_wet || s.water.on_ground_near(s.sim.mario.pos);
         let mut emits: Vec<WaterEmit> = Vec::new();
         let n = s
             .sim
