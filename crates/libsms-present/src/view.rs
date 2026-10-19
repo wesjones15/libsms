@@ -1469,13 +1469,13 @@ impl View {
             Some((models::WATERBOOST, at, js))
         });
 
-        let mut parts: Vec<(u32, Mat4, Vec<Mat4>)> =
-            vec![(models::BODY, Mat4::IDENTITY, joints.clone())];
+        let mut parts: Vec<(u32, Mat4, &[Mat4])> =
+            vec![(models::BODY, Mat4::IDENTITY, &joints)];
         if let Some(h) = self.head.and_then(|h| joints.get(h)) {
             parts.push((
                 models::CAP,
                 *h,
-                self.models[models::CAP as usize].bind.clone(),
+                &self.models[models::CAP as usize].bind,
             ));
         }
         let set = match hands {
@@ -1486,18 +1486,18 @@ impl View {
         if let Some(set) = set {
             for (model, joint) in set.into_iter().zip(self.hand_joints) {
                 if let Some(at) = joint.and_then(|j| joints.get(j)) {
-                    parts.push((model, *at, self.models[model as usize].bind.clone()));
+                    parts.push((model, *at, &self.models[model as usize].bind));
                 }
             }
         }
         if let Some(base) = fludd_base {
-            parts.push((models::FLUDD, base, fludd_joints));
+            parts.push((models::FLUDD, base, &fludd_joints));
         }
-        if let Some((model, at, js)) = nozzle {
-            parts.push((model, at, js));
+        if let Some((model, at, js)) = &nozzle {
+            parts.push((*model, *at, js));
         }
-        if let Some(part) = boost_part {
-            parts.push(part);
+        if let Some((model, at, js)) = &boost_part {
+            parts.push((*model, *at, js));
         }
 
         for (model, root, js) in parts {
@@ -1512,10 +1512,18 @@ impl View {
                     || mdl.bmd.materials[b.material].cull == Cull::All;
                 let env = mdl.batch_env[bi];
                 for v in &b.vertices {
+                    // Hidden shirt/hand shapes collapse to zero; skinning them is wasted work
+                    // on every run/jump pose. Keep vertex offsets and UV layout unchanged.
+                    if hide {
+                        self.positions.push(Vec3::ZERO);
+                        self.normals.push(Vec3::Y);
+                        self.uvs.push([v.uv[0].x, v.uv[0].y]);
+                        continue;
+                    }
                     let (p, n) = pose.skin(v);
                     let n = n.normalize_or_zero();
                     // A hidden shape collapses to a point.
-                    self.positions.push(if hide { Vec3::ZERO } else { p });
+                    self.positions.push(p);
                     self.normals.push(n);
                     self.uvs.push(match env {
                         Some(mtx) => {
