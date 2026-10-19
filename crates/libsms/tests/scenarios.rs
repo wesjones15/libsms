@@ -3393,6 +3393,7 @@ fn a_stick_circle_in_a_turbo_dash_jump_is_a_corkscrew_dive() {
     s.pad.a = true;
     s.step(30);
     assert_eq!(s.sim.mario.status, Status::BroadJump, "the dash didn't jump");
+    let before = s.sim.mario.forward_vel;
     for i in 0..24 {
         let a = i as f32 * std::f32::consts::TAU / 12.0;
         s.pad.stick = Vec2::new(a.cos(), a.sin());
@@ -3402,12 +3403,13 @@ fn a_stick_circle_in_a_turbo_dash_jump_is_a_corkscrew_dive() {
         }
     }
     assert_eq!(s.sim.mario.status, Status::JumpCatch, "the circle didn't start the dive");
-    assert!(s.sim.mario.forward_vel > 0.5 * s.sim.mario.params.jump.jump_jump_catch_sp, "no push forward: {}", s.sim.mario.forward_vel);
+    // On top of the Turbo's own top speed (32), not instead of it.
+    assert!(s.sim.mario.forward_vel > 36.0, "no push forward: {} (was {before})", s.sim.mario.forward_vel);
     s.pad.stick = Vec2::ZERO;
     let mut rolled = false;
-    for _ in 0..30 {
+    for _ in 0..40 {
         s.step(1);
-        rolled |= s.sim.mario.model_roll != 0;
+        rolled |= s.sim.mario.model_roll != 0 && s.sim.mario.model_pitch == 0x4000 && s.sim.mario.anim.clip == libsms::anim::clip::SPIN;
         if s.sim.mario.status != Status::JumpCatch {
             break;
         }
@@ -3415,6 +3417,7 @@ fn a_stick_circle_in_a_turbo_dash_jump_is_a_corkscrew_dive() {
     assert!(rolled, "it never rolled");
     if s.sim.mario.status == Status::JumpCatch {
         assert_eq!(s.sim.mario.model_roll, 0, "it should end upright in the plain dive");
+        assert_eq!(s.sim.mario.model_pitch, 0);
     }
 }
 

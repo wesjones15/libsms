@@ -53,7 +53,12 @@ impl Mario {
         }
         // `MARIO_STATUS_CATCH` / `OIL_SLIP` / `JUMP_CATCH`: PUNCH, then TRAMPLE.
         if matches!(self.status, Status::Catch | Status::JumpCatch) {
-            self.report_hit(host, e.id, EnemyHitKind::Punch);
+            let kind = if self.status == Status::JumpCatch && self.corkscrew > 0 {
+                EnemyHitKind::Corkscrew
+            } else {
+                EnemyHitKind::Punch
+            };
+            self.report_hit(host, e.id, kind);
         }
         false
     }

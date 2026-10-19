@@ -12,8 +12,8 @@ use crate::params::NozzleKind;
 /// 120 Hz ticks after a jump pad throws him before a move can break the flight, so a button held through the launch (a B or R from before) doesn't.
 pub(crate) const PAD_ACTION_GRACE: u32 = 12;
 
-/// How long the Turbo corkscrew dive's roll lasts, in ticks (two full turns).
-const CORKSCREW_TICKS: u16 = 24;
+/// How long the Turbo corkscrew dive's spin lasts, in ticks: two full turns at the spin jump's own rate.
+const CORKSCREW_TICKS: u16 = 32;
 
 impl Mario {
     pub(crate) fn jump_main(&mut self, host: &mut dyn Host) -> bool {
@@ -321,7 +321,8 @@ impl Mario {
             return false;
         }
         self.break_pad_flight();
-        let v = (self.params.jump.jump_jump_catch_sp * 1.25).max(self.forward_vel);
+        // On top of the Turbo's speed, not instead of it: a dive's own launch speed is added to what he has.
+        let v = self.forward_vel + self.params.jump.jump_jump_catch_sp;
         self.set_player_velocity(v);
         self.fludd_emitting = false;
         self.change_status(Status::JumpCatch, 0, false);
@@ -486,11 +487,19 @@ impl Mario {
         if self.input.dive && self.input.l_pressed {
             return self.change_status(Status::HipDrop, 0, false);
         }
-        self.set_anim(clip::DIVE, 1.0);
         if self.corkscrew > 0 {
-            // Two full turns about the dive's axis, ending upright in the plain dive.
+            // The spin jump's own motion laid flat: tipped head first along the dive, spinning about
+            // his length at the spin jump's rate (4096 a tick), then the plain dive.
             self.corkscrew -= 1;
-            self.model_roll = (((CORKSCREW_TICKS - self.corkscrew) as i32 * 0x20000 / CORKSCREW_TICKS as i32) & 0xFFFF) as u16 as i16;
+            self.set_anim(clip::SPIN, 1.0);
+            self.emit_blur_spin_jump();
+            self.model_yaw = self.face_yaw;
+            self.model_pitch = 0x4000;
+            self.model_roll = (((CORKSCREW_TICKS - self.corkscrew) as i32 * 0x1000) & 0xFFFF) as u16 as i16;
+        } else {
+            self.model_pitch = 0;
+            self.model_roll = 0;
+            self.set_anim(clip::DIVE, 1.0);
         }
         self.do_jumping();
         match self.jump_process(host, 0) {

@@ -132,6 +132,8 @@ pub enum EnemyHitKind {
     HipDrop,
     /// Dived or slid into it (`HIT_MESSAGE_PUNCH`, then `HIT_MESSAGE_TRAMPLE`).
     Punch,
+    /// Hit by the Turbo corkscrew dive (host extension): a dive at full tilt that hits harder.
+    Corkscrew,
 }
 
 /// One `startSoundActor` / `startSoundActorWithInfo` call.

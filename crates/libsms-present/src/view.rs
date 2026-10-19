@@ -1354,10 +1354,12 @@ impl View {
             _ => None,
         };
 
-        // The Turbo corkscrew dive rolls about its own length, through about his middle.
-        let roll = Quat::from_rotation_z(m.model_roll as f32 * std::f32::consts::PI / 32768.0);
-        let middle = Vec3::new(0.0, libsms::mario::HEIGHT * 0.25, 0.0);
-        let root = Mat4::from_rotation_translation(rot * roll, pos + rot * (middle - roll * middle));
+        // The Turbo corkscrew dive: the spin jump's motion tipped head first and spun about his own length,
+        // through about his middle.
+        let tilt = Quat::from_rotation_x(m.model_pitch as f32 * std::f32::consts::PI / 32768.0)
+            * Quat::from_rotation_y(m.model_roll as f32 * std::f32::consts::PI / 32768.0);
+        let middle = Vec3::new(0.0, libsms::mario::HEIGHT * 0.35, 0.0);
+        let root = Mat4::from_rotation_translation(rot * tilt, pos + rot * (middle - tilt * middle));
         // Hosts which only pose the view still get the state-driven super pound flames.
         if self.fx_ticks.is_empty() {
             self.fx_ticks.push(FxTick {

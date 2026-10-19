@@ -325,6 +325,8 @@ pub struct Mario {
     /// the dive's own axis (a 16-bit angle) for a view to draw.
     pub(crate) corkscrew: u16,
     pub model_roll: Angle,
+    /// How far the corkscrew dive tips him forward, head first (a 16-bit angle; 0x4000 is flat), for a view.
+    pub model_pitch: Angle,
     pub(crate) short_hop: bool,
     /// Host extension: gravity per 120 Hz tick during an unsteered jump-pad flight.
     pub(crate) pad_gravity: Option<f32>,
@@ -458,6 +460,7 @@ impl Mario {
             rocket_spin: false,
             corkscrew: 0,
             model_roll: 0,
+            model_pitch: 0,
             short_hop: false,
             pad_gravity: None,
             pad_vel: Vec3::ZERO,
@@ -1059,6 +1062,7 @@ impl Mario {
         self.rocket_spin = false;
         self.corkscrew = 0;
         self.model_roll = 0;
+        self.model_pitch = 0;
         let to = match to.kind() {
             Kind::Running => self.set_status_to_running(to),
             Kind::Jumping => self.set_status_to_jumping(to, arg),
