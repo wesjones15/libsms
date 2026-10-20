@@ -326,6 +326,8 @@ pub struct Mario {
     pub(crate) corkscrew: u16,
     /// The speed the corkscrew flies at until it ends (it is held, not braked like a plain dive's).
     pub(crate) corkscrew_speed: f32,
+    /// Ticks the corkscrew has lasted (it has a cap).
+    pub(crate) corkscrew_age: u16,
     /// The dive after a corkscrew throws wet-slide spray as it flies and lands as a wet belly slide
     /// (kept from the corkscrew through the dive and into the slide; any other status change clears it).
     pub(crate) wet_dive: bool,
@@ -468,6 +470,7 @@ impl Mario {
             rocket_spin: false,
             corkscrew: 0,
             corkscrew_speed: 0.0,
+            corkscrew_age: 0,
             wet_dive: false,
             air_rocket_used: false,
             model_roll: 0,

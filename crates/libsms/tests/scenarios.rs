@@ -3413,20 +3413,34 @@ fn a_stick_circle_in_a_turbo_dash_jump_is_a_corkscrew_dive() {
     assert_eq!(s.sim.mario.status, Status::JumpCatch, "the circle didn't start the dive");
     // On top of the Turbo's own top speed (32), not instead of it, and held while it spins.
     assert!(s.sim.mario.forward_vel > 80.0, "no push forward: {} (was {before})", s.sim.mario.forward_vel);
-    s.pad.stick = Vec2::ZERO;
-    let (mut rolled, mut ticks, mut slowest) = (false, 0, f32::MAX);
-    for _ in 0..400 {
+    // It goes on at the same height for as long as the stick keeps circling.
+    let y0 = s.sim.mario.pos.y;
+    let (mut rolled, mut slowest) = (false, f32::MAX);
+    let mut angle = 0.0f32;
+    for i in 0..300 {
+        angle += std::f32::consts::TAU / 12.0;
+        s.pad.stick = Vec2::new(angle.cos(), angle.sin());
         s.step(1);
-        if s.sim.mario.status != Status::JumpCatch || s.sim.mario.model_pitch != 0x4000 {
-            break;
-        }
-        ticks += 1;
+        assert_eq!(s.sim.mario.status, Status::JumpCatch, "it ended after {i} ticks of circling");
+        assert_eq!(s.sim.mario.model_pitch, 0x4000, "it stopped being the corkscrew after {i} ticks of circling");
+        assert!((s.sim.mario.pos.y - y0).abs() < 8.0, "it left its height: {} -> {}", y0, s.sim.mario.pos.y);
         slowest = slowest.min(s.sim.mario.forward_vel);
-        rolled |= s.sim.mario.model_roll != 0 && s.sim.mario.model_pitch == 0x4000 && s.sim.mario.anim.clip == libsms::anim::clip::SPIN;
+        rolled |= s.sim.mario.model_roll != 0 && s.sim.mario.anim.clip == libsms::anim::clip::SPIN;
     }
     assert!(rolled, "it never rolled");
-    assert!(ticks >= 100, "it spun for only {ticks} ticks (a second is 120)");
     assert!(slowest > 80.0, "it slowed to {slowest} while spinning");
+    // Let go of the stick: the dive follows.
+    s.pad.stick = Vec2::ZERO;
+    let mut ended = None;
+    for i in 0..120 {
+        s.step(1);
+        if s.sim.mario.model_pitch != 0x4000 {
+            ended = Some(i);
+            break;
+        }
+    }
+    let ended = ended.expect("it never ended once the stick stopped");
+    assert!(ended < 80, "it took {ended} ticks to dive after the stick stopped");
     if s.sim.mario.status == Status::JumpCatch {
         assert_eq!(s.sim.mario.model_roll, 0, "it should end upright in the plain dive");
         assert_eq!(s.sim.mario.model_pitch, 0);

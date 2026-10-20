@@ -316,9 +316,8 @@ impl Mario {
         if self.is_fall_cancel() {
             self.vel.y *= 0.75;
         } else if self.status == Status::JumpCatch && self.corkscrew > 0 {
-            // The corkscrew glides: a quarter of the gravity, and a slow fall.
-            self.vel.y = (self.vel.y - j.gravity * crate::air::CORKSCREW_GRAVITY)
-                .max(-crate::air::CORKSCREW_FALL);
+            // The corkscrew holds its height.
+            self.vel.y = 0.0;
         } else if matches!(
             self.status,
             Status::LeftRotateJump | Status::RightRotateJump

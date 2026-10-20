@@ -12,14 +12,14 @@ use crate::params::NozzleKind;
 /// 120 Hz ticks after a jump pad throws him before a move can break the flight, so a button held through the launch (a B or R from before) doesn't.
 pub(crate) const PAD_ACTION_GRACE: u32 = 12;
 
-/// How long the Turbo corkscrew dive's spin and flight last, in ticks (1.25 s), rolling at the spin jump's own rate.
-const CORKSCREW_TICKS: u16 = 150;
+/// The Turbo corkscrew lasts as long as the stick keeps circling, and this many ticks (a fifth of a second, the length of the stick history)
+/// past the last full circle's reading, so a slow circle doesn't drop out between turns.
+const CORKSCREW_GRACE: u16 = 24;
+/// ...but no more than this many ticks in all (6 s), so it can't carry him across the map for ever.
+const CORKSCREW_MAX_TICKS: u16 = 720;
 /// The corkscrew's flight speed is the Turbo jump's, floored here, plus this: well past a plain dive's.
 const CORKSCREW_MIN_SPEED: f32 = 60.0;
 const CORKSCREW_EXTRA_SPEED: f32 = 36.0;
-/// While it lasts gravity is this share of normal, and it never falls faster than `CORKSCREW_FALL`: a glide.
-pub(crate) const CORKSCREW_GRAVITY: f32 = 0.25;
-pub(crate) const CORKSCREW_FALL: f32 = 15.0;
 /// The air-speed cap (`jumping_max`) is this much higher for the corkscrew.
 pub(crate) const CORKSCREW_CAP: f32 = 1.5;
 
@@ -339,11 +339,12 @@ impl Mario {
         let speed = self.forward_vel.max(CORKSCREW_MIN_SPEED) + CORKSCREW_EXTRA_SPEED;
         self.fludd_emitting = false;
         self.change_status(Status::JumpCatch, 0, false);
-        self.corkscrew = CORKSCREW_TICKS;
+        self.corkscrew = CORKSCREW_GRACE;
+        self.corkscrew_age = 0;
         self.corkscrew_speed = speed;
         self.wet_dive = true;
         self.set_player_velocity(speed);
-        self.vel.y = self.vel.y.clamp(0.0, 10.0);
+        self.vel.y = 0.0;
         true
     }
 
@@ -507,12 +508,20 @@ impl Mario {
         if self.corkscrew > 0 {
             // The spin jump's own motion laid flat: tipped head first along the dive, spinning about
             // his length at the spin jump's rate (4096 a tick), then the plain dive.
-            self.corkscrew -= 1;
+            // It goes on at the same height while the stick keeps circling; once it stops, the dive.
+            self.corkscrew_age += 1;
+            if self.corkscrew_age >= CORKSCREW_MAX_TICKS {
+                self.corkscrew = 0;
+            } else if self.check_stick_rotate().is_some() {
+                self.corkscrew = CORKSCREW_GRACE;
+            } else {
+                self.corkscrew -= 1;
+            }
             self.set_anim(clip::SPIN, 1.0);
             self.emit_blur_spin_jump();
             self.model_yaw = self.face_yaw;
             self.model_pitch = 0x4000;
-            self.model_roll = (((CORKSCREW_TICKS - self.corkscrew) as i32 * 0x1000) & 0xFFFF) as u16 as i16;
+            self.model_roll = self.model_roll.wrapping_add(0x1000);
             // Flies at its launch speed, steered a little by the stick, not braked like a plain dive.
             if self.input.stick {
                 let rot = (self.params.hover.rot_sp as i32) / 2;
