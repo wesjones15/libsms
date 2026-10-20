@@ -1500,6 +1500,9 @@ impl View {
             parts.push((*model, *at, js));
         }
 
+        // The corkscrew tips and rolls the whole drawn body about his middle (as `root` does for the effects).
+        let draw_pos = pos + rot * (middle - tilt * middle);
+        let draw_rot = rot * tilt;
         for (model, root, js) in parts {
             let first_vertex = self.positions.len() as u32;
             let first_color = self.colors.len() as u32;
@@ -1553,8 +1556,8 @@ impl View {
                 model,
                 kind: model as u8,
                 flags,
-                pos,
-                rot,
+                pos: draw_pos,
+                rot: draw_rot,
                 first_vertex,
                 first_color,
                 alpha: 1.0,
