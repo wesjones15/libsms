@@ -19,6 +19,8 @@ const CORKSCREW_GRACE: u16 = 24;
 const CORKSCREW_MAX_TICKS: u16 = 720;
 /// A corkscrew that has gone on this long (4 s) is in flames and hits with the super blow.
 pub(crate) const CORKSCREW_SUPER_TICKS: u16 = 480;
+/// A burning corkscrew's landing slide keeps its speed and its fire this many ticks (2 s).
+const BLAZE_TICKS: u16 = 240;
 /// The corkscrew's flight speed is the Turbo jump's, floored here, plus this: well past a plain dive's.
 const CORKSCREW_MIN_SPEED: f32 = 60.0;
 const CORKSCREW_EXTRA_SPEED: f32 = 36.0;
@@ -572,7 +574,12 @@ impl Mario {
                 host.event(Event::Land {
                     strong: self.ask_strong_ground_touch(),
                 });
+                let burning = self.corkscrew_super;
                 self.change_status(Status::Catch, 0, false);
+                if burning {
+                    // Lands in a blazing slide: the flight speed and the fire go on a while.
+                    self.blaze = BLAZE_TICKS;
+                }
             }
             2 => {
                 self.player_refrection(true, host);

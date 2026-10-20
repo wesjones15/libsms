@@ -3645,3 +3645,34 @@ fn a_spin_out_of_the_rockets_climb_doubles_it_and_hits_what_is_above() {
     let (s, _, _) = rocket_climb(true, vec![(Vec3::new(0.0, 2500.0, 0.0), 400.0, 300.0)]);
     assert_eq!(enemy_hits(&s, libsms::EnemyHitKind::RocketSpin), 1, "the enemy above wasn't hit");
 }
+
+/// A burning corkscrew lands in a slide that keeps its speed and its fire for two seconds, then is a plain wet slide.
+#[test]
+fn a_burning_corkscrew_lands_in_a_blazing_slide_for_two_seconds() {
+    let mut s = corkscrew_scene(vec![]);
+    let mut angle = 0.0f32;
+    // Spin four seconds and a bit, then let go and land.
+    for i in 0..1500 {
+        if i < 500 {
+            angle += std::f32::consts::TAU / 12.0;
+            s.pad.stick = Vec2::new(angle.cos(), angle.sin());
+        } else {
+            s.pad.stick = Vec2::ZERO;
+        }
+        s.step(1);
+        if s.sim.mario.status == Status::Catch {
+            break;
+        }
+    }
+    assert_eq!(s.sim.mario.status, Status::Catch, "it never landed in the slide");
+    s.step(2);
+    assert!(s.sim.mario.wet_sliding());
+    assert_eq!(s.sim.mario.flames(), 1, "the slide isn't burning");
+    s.step(200);
+    assert_eq!(s.sim.mario.status, Status::Catch);
+    assert_eq!(s.sim.mario.flames(), 1, "the fire went out early");
+    assert!(s.sim.mario.forward_vel > 60.0, "the slide slowed to {}", s.sim.mario.forward_vel);
+    s.step(60);
+    assert_eq!(s.sim.mario.flames(), 0, "the fire never went out");
+    assert!(s.sim.mario.wet_sliding() || s.sim.mario.status != Status::Catch);
+}

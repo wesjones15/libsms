@@ -905,6 +905,11 @@ impl Mario {
         // FLUDD's water on the ground: the belly slide glides (`do_sliding`). Hosts may cap
         // its duration (`WetSlide::timed`) or supply their own availability rules.
         self.status_state = self.limit_wet_slide() as u32;
+        if self.blaze > 0 {
+            // A burning corkscrew's slide holds its flight speed, then turns into the plain wet slide.
+            self.blaze -= 1;
+            self.set_player_velocity(self.corkscrew_speed);
+        }
         let stop = self.slip_params().slide_stop_catch;
         if self.do_sliding(stop) {
             self.set_player_velocity(0.0);
