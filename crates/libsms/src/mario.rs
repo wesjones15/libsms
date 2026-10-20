@@ -326,6 +326,9 @@ pub struct Mario {
     pub(crate) corkscrew: u16,
     /// The speed the corkscrew flies at until it ends (it is held, not braked like a plain dive's).
     pub(crate) corkscrew_speed: f32,
+    /// The dive after a corkscrew throws wet-slide spray as it flies and lands as a wet belly slide
+    /// (kept from the corkscrew through the dive and into the slide; any other status change clears it).
+    pub(crate) wet_dive: bool,
     /// The rocket or hover has been used since he last stood on the ground: no second use in the same
     /// jump, however the first one ended (a spin or a dive out of it included).
     pub(crate) air_rocket_used: bool,
@@ -465,6 +468,7 @@ impl Mario {
             rocket_spin: false,
             corkscrew: 0,
             corkscrew_speed: 0.0,
+            wet_dive: false,
             air_rocket_used: false,
             model_roll: 0,
             model_pitch: 0,
@@ -705,7 +709,7 @@ impl Mario {
     /// dust (not under water; sand's own dust isn't modelled).
     pub(crate) fn front_slip_effect(&mut self) {
         use crate::event::FxAt;
-        if self.wet_sliding() || self.water_underfoot {
+        if self.wet_sliding() || self.water_underfoot || self.wet_dive {
             let scale = self.options.slide_fx_scale;
             self.fx_scaled("ms_m_watslide_a", FxAt::Center, scale);
             self.fx_scaled("ms_m_watslide_b", FxAt::Center, scale);
@@ -1075,6 +1079,9 @@ impl Mario {
         }
         self.rocket_spin = false;
         self.corkscrew = 0;
+        if !(to == Status::Catch && self.status == Status::JumpCatch) {
+            self.wet_dive = false;
+        }
         self.model_roll = 0;
         self.model_pitch = 0;
         let to = match to.kind() {

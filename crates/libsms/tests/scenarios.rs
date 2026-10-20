@@ -3431,6 +3431,16 @@ fn a_stick_circle_in_a_turbo_dash_jump_is_a_corkscrew_dive() {
         assert_eq!(s.sim.mario.model_roll, 0, "it should end upright in the plain dive");
         assert_eq!(s.sim.mario.model_pitch, 0);
     }
+    // The dive lands as a wet belly slide.
+    for _ in 0..600 {
+        if s.sim.mario.status != Status::JumpCatch {
+            break;
+        }
+        s.step(1);
+    }
+    s.step(2);
+    assert_eq!(s.sim.mario.status, Status::Catch, "it didn't land in the slide");
+    assert!(s.sim.mario.wet_sliding(), "the slide after a corkscrew isn't wet");
 }
 
 /// A stick circle in any jump with the Turbo held is the corkscrew, never a plain spin jump with the

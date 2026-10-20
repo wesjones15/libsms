@@ -354,6 +354,10 @@ impl Mario {
     /// `catching`'s wet slide with [`Limits::wet_slide`]: whether the belly slide glides
     /// this tick. The game's rule is any slide over FLUDD's water.
     pub(crate) fn limit_wet_slide(&mut self) -> bool {
+        // Out of a corkscrew dive it is always a wet slide, with no charge spent.
+        if self.wet_dive {
+            return true;
+        }
         let Some(mut w) = self.limits.wet_slide else {
             return self.wet_ground || self.status_state == 1;
         };

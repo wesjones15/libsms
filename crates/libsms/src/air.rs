@@ -341,6 +341,7 @@ impl Mario {
         self.change_status(Status::JumpCatch, 0, false);
         self.corkscrew = CORKSCREW_TICKS;
         self.corkscrew_speed = speed;
+        self.wet_dive = true;
         self.set_player_velocity(speed);
         self.vel.y = self.vel.y.clamp(0.0, 10.0);
         true
@@ -524,6 +525,10 @@ impl Mario {
             self.model_roll = 0;
             self.set_anim(clip::DIVE, 1.0);
             self.do_jumping();
+        }
+        // After a corkscrew, spin and dive both throw the wet slide's spray, and the landing is a wet slide.
+        if self.wet_dive {
+            self.front_slip_effect();
         }
         match self.jump_process(host, 0) {
             1 => {
