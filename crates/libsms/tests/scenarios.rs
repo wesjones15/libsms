@@ -3411,22 +3411,59 @@ fn a_stick_circle_in_a_turbo_dash_jump_is_a_corkscrew_dive() {
         }
     }
     assert_eq!(s.sim.mario.status, Status::JumpCatch, "the circle didn't start the dive");
-    // On top of the Turbo's own top speed (32), not instead of it.
-    assert!(s.sim.mario.forward_vel > 36.0, "no push forward: {} (was {before})", s.sim.mario.forward_vel);
+    // On top of the Turbo's own top speed (32), not instead of it, and held while it spins.
+    assert!(s.sim.mario.forward_vel > 80.0, "no push forward: {} (was {before})", s.sim.mario.forward_vel);
     s.pad.stick = Vec2::ZERO;
-    let mut rolled = false;
-    for _ in 0..40 {
+    let (mut rolled, mut ticks, mut slowest) = (false, 0, f32::MAX);
+    for _ in 0..400 {
         s.step(1);
-        rolled |= s.sim.mario.model_roll != 0 && s.sim.mario.model_pitch == 0x4000 && s.sim.mario.anim.clip == libsms::anim::clip::SPIN;
-        if s.sim.mario.status != Status::JumpCatch {
+        if s.sim.mario.status != Status::JumpCatch || s.sim.mario.model_pitch != 0x4000 {
             break;
         }
+        ticks += 1;
+        slowest = slowest.min(s.sim.mario.forward_vel);
+        rolled |= s.sim.mario.model_roll != 0 && s.sim.mario.model_pitch == 0x4000 && s.sim.mario.anim.clip == libsms::anim::clip::SPIN;
     }
     assert!(rolled, "it never rolled");
+    assert!(ticks >= 100, "it spun for only {ticks} ticks (a second is 120)");
+    assert!(slowest > 80.0, "it slowed to {slowest} while spinning");
     if s.sim.mario.status == Status::JumpCatch {
         assert_eq!(s.sim.mario.model_roll, 0, "it should end upright in the plain dive");
         assert_eq!(s.sim.mario.model_pitch, 0);
     }
+}
+
+/// A stick circle in any jump with the Turbo held is the corkscrew, never a plain spin jump with the
+/// Turbo's water flying round him.
+#[test]
+fn a_stick_circle_in_a_plain_jump_with_the_turbo_held_is_the_corkscrew() {
+    let mut s = Scene::flat();
+    s.sim.mario.give_fludd();
+    {
+        let p = s.sim.mario.params.clone();
+        let f = s.sim.mario.fludd.as_mut().unwrap();
+        f.change_nozzle(NozzleKind::Turbo, false, &p);
+        f.refill(&p);
+    }
+    s.press_a();
+    s.step(10);
+    s.pad.r_analog = 255;
+    s.step(10);
+    for i in 0..24 {
+        let a = i as f32 * std::f32::consts::TAU / 12.0;
+        s.pad.stick = Vec2::new(a.cos(), a.sin());
+        s.step(1);
+        assert!(
+            !matches!(s.sim.mario.status, Status::LeftRotateJump | Status::RightRotateJump),
+            "a plain spin jump with the Turbo held"
+        );
+        if s.sim.mario.status == Status::JumpCatch {
+            break;
+        }
+    }
+    assert_eq!(s.sim.mario.status, Status::JumpCatch, "the circle didn't start the corkscrew");
+    s.step(1);
+    assert_eq!(s.sim.mario.model_pitch, 0x4000, "it isn't the corkscrew");
 }
 
 /// The stick turns Mario in the rocket's thrust and in the climb after it, not only pushes him along.
@@ -3454,3 +3491,4 @@ fn the_stick_turns_him_after_the_rocket() {
     s.step(20);
     assert_ne!(s.sim.mario.face_yaw, facing, "the stick didn't turn him in the rocket's flight");
 }
+

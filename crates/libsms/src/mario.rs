@@ -324,6 +324,8 @@ pub struct Mario {
     /// Ticks left of the Turbo corkscrew dive's roll (host extension), and how far it has rolled about
     /// the dive's own axis (a 16-bit angle) for a view to draw.
     pub(crate) corkscrew: u16,
+    /// The speed the corkscrew flies at until it ends (it is held, not braked like a plain dive's).
+    pub(crate) corkscrew_speed: f32,
     /// The rocket or hover has been used since he last stood on the ground: no second use in the same
     /// jump, however the first one ended (a spin or a dive out of it included).
     pub(crate) air_rocket_used: bool,
@@ -462,6 +464,7 @@ impl Mario {
             spin_ticks: 0,
             rocket_spin: false,
             corkscrew: 0,
+            corkscrew_speed: 0.0,
             air_rocket_used: false,
             model_roll: 0,
             model_pitch: 0,

@@ -12,8 +12,16 @@ use crate::params::NozzleKind;
 /// 120 Hz ticks after a jump pad throws him before a move can break the flight, so a button held through the launch (a B or R from before) doesn't.
 pub(crate) const PAD_ACTION_GRACE: u32 = 12;
 
-/// How long the Turbo corkscrew dive's spin lasts, in ticks: two full turns at the spin jump's own rate.
-const CORKSCREW_TICKS: u16 = 32;
+/// How long the Turbo corkscrew dive's spin and flight last, in ticks (1.25 s), rolling at the spin jump's own rate.
+const CORKSCREW_TICKS: u16 = 150;
+/// The corkscrew's flight speed is the Turbo jump's, floored here, plus this: well past a plain dive's.
+const CORKSCREW_MIN_SPEED: f32 = 60.0;
+const CORKSCREW_EXTRA_SPEED: f32 = 36.0;
+/// While it lasts gravity is this share of normal, and it never falls faster than `CORKSCREW_FALL`: a glide.
+pub(crate) const CORKSCREW_GRAVITY: f32 = 0.25;
+pub(crate) const CORKSCREW_FALL: f32 = 15.0;
+/// The air-speed cap (`jumping_max`) is this much higher for the corkscrew.
+pub(crate) const CORKSCREW_CAP: f32 = 1.5;
 
 impl Mario {
     pub(crate) fn jump_main(&mut self, host: &mut dyn Host) -> bool {
@@ -299,6 +307,11 @@ impl Mario {
 
     /// `considerJumpRotate`: switches straight to a spin jump mid-air (no take-off boost).
     fn consider_jump_rotate(&mut self) -> bool {
+        // Host extension: with the Turbo held in the air the circle is the corkscrew, not a plain spin
+        // (which would have the Turbo's water flying round him).
+        if self.turbo_held && self.status != Status::JumpCatch && self.consider_corkscrew() {
+            return true;
+        }
         match self.check_stick_rotate() {
             Some(2) => {
                 self.break_pad_flight();
@@ -321,12 +334,15 @@ impl Mario {
             return false;
         }
         self.break_pad_flight();
-        // On top of the Turbo's speed, not instead of it: a dive's own launch speed is added to what he has.
-        let v = self.forward_vel + self.params.jump.jump_jump_catch_sp;
-        self.set_player_velocity(v);
+        // On top of the Turbo's speed, not instead of it. (Entering the dive caps its speed at 48, so the
+        // corkscrew sets its own after, and holds it.)
+        let speed = self.forward_vel.max(CORKSCREW_MIN_SPEED) + CORKSCREW_EXTRA_SPEED;
         self.fludd_emitting = false;
         self.change_status(Status::JumpCatch, 0, false);
         self.corkscrew = CORKSCREW_TICKS;
+        self.corkscrew_speed = speed;
+        self.set_player_velocity(speed);
+        self.vel.y = self.vel.y.clamp(0.0, 10.0);
         true
     }
 
@@ -496,12 +512,19 @@ impl Mario {
             self.model_yaw = self.face_yaw;
             self.model_pitch = 0x4000;
             self.model_roll = (((CORKSCREW_TICKS - self.corkscrew) as i32 * 0x1000) & 0xFFFF) as u16 as i16;
+            // Flies at its launch speed, steered a little by the stick, not braked like a plain dive.
+            if self.input.stick {
+                let rot = (self.params.hover.rot_sp as i32) / 2;
+                self.face_yaw = crate::math::turn_toward(self.face_yaw, self.intended_yaw, rot);
+                self.model_yaw = self.face_yaw;
+            }
+            self.set_player_velocity(self.corkscrew_speed);
         } else {
             self.model_pitch = 0;
             self.model_roll = 0;
             self.set_anim(clip::DIVE, 1.0);
+            self.do_jumping();
         }
-        self.do_jumping();
         match self.jump_process(host, 0) {
             1 => {
                 host.event(Event::Land {

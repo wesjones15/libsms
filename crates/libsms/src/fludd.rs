@@ -771,6 +771,10 @@ impl Mario {
         let p = self.params.clone();
         let Some(f) = self.fludd.as_ref() else { return };
         let kind = f.nozzle;
+        // The Turbo puts no water out while he spins (a spin jump) or corkscrews (host extension).
+        if kind == NozzleKind::Turbo && (self.corkscrew > 0 || self.spinning()) {
+            return;
+        }
         // The handles have to be out first (`unk1CEC > 0` returns), unless riding.
         if !self.on_yoshi() && f.housed > 0.0 {
             return;

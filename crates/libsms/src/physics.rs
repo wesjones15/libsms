@@ -315,6 +315,10 @@ impl Mario {
         let j = &self.params.jump;
         if self.is_fall_cancel() {
             self.vel.y *= 0.75;
+        } else if self.status == Status::JumpCatch && self.corkscrew > 0 {
+            // The corkscrew glides: a quarter of the gravity, and a slow fall.
+            self.vel.y = (self.vel.y - j.gravity * crate::air::CORKSCREW_GRAVITY)
+                .max(-crate::air::CORKSCREW_FALL);
         } else if matches!(
             self.status,
             Status::LeftRotateJump | Status::RightRotateJump
@@ -335,7 +339,10 @@ impl Mario {
     /// `jumpProcess`: one tick of air movement; returns the jump result code.
     pub(crate) fn jump_process(&mut self, host: &mut dyn Host, arg: u32) -> i32 {
         let speed = (self.vel.x * self.vel.x + self.vel.z * self.vel.z).sqrt();
-        let max = self.params.jump.jumping_max;
+        let mut max = self.params.jump.jumping_max;
+        if self.corkscrew > 0 {
+            max *= crate::air::CORKSCREW_CAP;
+        }
         if self.pad_gravity.is_none() && speed > max {
             self.vel.x *= max / speed;
             self.vel.z *= max / speed;
