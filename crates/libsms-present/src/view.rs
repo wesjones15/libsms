@@ -454,6 +454,10 @@ struct FxTick {
     tick: u64,
     pos: Vec3,
     yaw: i16,
+    /// The corkscrew's tip and roll (`Mario::model_pitch` / `model_roll`), so effects born this tick sit in the
+    /// tipped frame, not upright.
+    pitch: i16,
+    roll: i16,
     pounding: u8,
     /// `Mario::flames`: 1 a corkscrew that has spun for 4 seconds, 2 a rising spin out of the Rocket's climb.
     flames: u8,
@@ -1185,6 +1189,8 @@ impl View {
             tick: mario.ticks,
             pos: mario.pos,
             yaw: mario.model_yaw,
+            pitch: mario.model_pitch,
+            roll: mario.model_roll,
             pounding: mario.pounding(),
             flames: mario.flames(),
             cues: events
@@ -1369,15 +1375,21 @@ impl View {
                 tick: m.ticks,
                 pos,
                 yaw: m.model_yaw,
+                pitch: m.model_pitch,
+                roll: m.model_roll,
                 pounding: m.pounding(),
                 flames: m.flames(),
                 cues: Vec::new(),
             });
         }
         for tick in self.fx_ticks.drain(..) {
+            // The same tip and roll as the drawn body (the spin swirl is born in the spin pose's frame).
+            let yaw_q = Quat::from_rotation_y(tick.yaw as f32 * std::f32::consts::PI / 32768.0);
+            let tick_tilt = Quat::from_rotation_x(tick.pitch as f32 * std::f32::consts::PI / 32768.0)
+                * Quat::from_rotation_y(tick.roll as f32 * std::f32::consts::PI / 32768.0);
             let tick_root = Mat4::from_rotation_translation(
-                Quat::from_rotation_y(tick.yaw as f32 * std::f32::consts::PI / 32768.0),
-                tick.pos,
+                yaw_q * tick_tilt,
+                tick.pos + yaw_q * (middle - tick_tilt * middle),
             );
             // Let-go emitters still follow their animation matrix, as in MarioParticle.cpp.
             for &(slot, at) in &self.fx_binds {
