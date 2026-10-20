@@ -3676,3 +3676,43 @@ fn a_burning_corkscrew_lands_in_a_blazing_slide_for_two_seconds() {
     assert_eq!(s.sim.mario.flames(), 0, "the fire never went out");
     assert!(s.sim.mario.wet_sliding() || s.sim.mario.status != Status::Catch);
 }
+
+/// The blazing slide hits like the corkscrew, not like a plain slide.
+#[test]
+fn the_blazing_slide_hits_as_a_corkscrew() {
+    let mut s = corkscrew_scene(vec![]);
+    let (mut angle, mut landed) = (0.0f32, None);
+    for i in 0..1500 {
+        if i < 500 {
+            angle += std::f32::consts::TAU / 12.0;
+            s.pad.stick = Vec2::new(angle.cos(), angle.sin());
+        } else {
+            s.pad.stick = Vec2::ZERO;
+        }
+        s.step(1);
+        if s.sim.mario.status == Status::Catch {
+            landed = Some(s.sim.mario.pos);
+            break;
+        }
+    }
+    let at = landed.expect("it never landed");
+    // Replay with an enemy a little way ahead on the ground.
+    let start = corkscrew_scene(vec![]).sim.mario.pos;
+    let dir = Vec3::new(at.x - start.x, 0.0, at.z - start.z).normalize();
+    let mut s = corkscrew_scene(vec![(at + dir * 600.0, 120.0, 300.0)]);
+    let mut angle = 0.0f32;
+    for i in 0..1500 {
+        if i < 500 {
+            angle += std::f32::consts::TAU / 12.0;
+            s.pad.stick = Vec2::new(angle.cos(), angle.sin());
+        } else {
+            s.pad.stick = Vec2::ZERO;
+        }
+        s.step(1);
+        if i > 500 && s.sim.mario.status != Status::Catch && s.sim.mario.status != Status::JumpCatch {
+            break;
+        }
+    }
+    assert_eq!(enemy_hits(&s, libsms::EnemyHitKind::Corkscrew), 1, "the slide didn't hit as a corkscrew");
+    assert_eq!(enemy_hits(&s, libsms::EnemyHitKind::Punch), 0);
+}

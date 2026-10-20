@@ -64,7 +64,10 @@ impl Mario {
         if matches!(self.status, Status::Catch | Status::JumpCatch) {
             let kind = if self.status == Status::JumpCatch && self.corkscrew_super {
                 EnemyHitKind::SuperCorkscrew
-            } else if self.status == Status::JumpCatch && self.corkscrew > 0 {
+            } else if (self.status == Status::JumpCatch && self.corkscrew > 0)
+                || (self.status == Status::Catch && self.blaze > 0)
+            {
+                // (The blazing slide a burning corkscrew lands in hits as hard as the corkscrew.)
                 EnemyHitKind::Corkscrew
             } else {
                 EnemyHitKind::Punch
