@@ -3587,3 +3587,61 @@ fn a_corkscrew_spun_for_four_seconds_burns_and_its_hit_bonks_him() {
     assert_eq!(s.sim.mario.status, Status::JumpShortBackDown, "he wasn't bonked");
     assert!(s.sim.mario.forward_vel < 0.0, "he wasn't thrown back: {}", s.sim.mario.forward_vel);
 }
+
+/// Runs a Rocket jump, with a stick circle at the start of the climb if `spin`, over `enemies`.
+fn rocket_climb(spin: bool, enemies: Vec<(Vec3, f32, f32)>) -> (Scene<Enemies>, f32, bool) {
+    let mut s = Scene::new(Enemies(enemies));
+    s.sim.mario.give_fludd();
+    {
+        let p = s.sim.mario.params.clone();
+        let f = s.sim.mario.fludd.as_mut().unwrap();
+        f.change_nozzle(NozzleKind::Rocket, false, &p);
+        f.refill(&p);
+    }
+    s.press_a();
+    s.step(6);
+    s.pad.r = true;
+    s.pad.r_analog = 255;
+    s.until(300, |m| m.status == Status::Rocket);
+    let y0 = s.mario().pos.y;
+    let (mut apex, mut flamed) = (y0, false);
+    let mut angle = 0.0f32;
+    for i in 0..900 {
+        if spin && i < 24 {
+            angle += std::f32::consts::TAU / 12.0;
+            s.pad.stick = Vec2::new(angle.cos(), angle.sin());
+        } else {
+            s.pad.stick = Vec2::ZERO;
+        }
+        s.step(1);
+        apex = apex.max(s.mario().pos.y);
+        flamed |= s.mario().flames() == 2;
+        if i > 60 && s.mario().on_ground() {
+            break;
+        }
+    }
+    (s, apex - y0, flamed)
+}
+
+/// A stick circle in the Rocket's climb doubles the climb, burns while it rises, calls out once, and hits
+/// what is above him.
+#[test]
+fn a_spin_out_of_the_rockets_climb_doubles_it_and_hits_what_is_above() {
+    if need_disc() {
+        return;
+    }
+    let call = |s: &Scene<Enemies>| {
+        s.event_count(|e| matches!(e, Event::Sound(c) if c.name == "MSD_SE_MV24_JUMP_SPECIAL_01"))
+    };
+    let (s, plain, flamed) = rocket_climb(false, vec![]);
+    assert!(!flamed);
+    let launch_calls = call(&s);
+    let (s, spun, flamed) = rocket_climb(true, vec![]);
+    assert!(spun > plain * 1.8, "the spin climbed {spun}, a plain rocket {plain}");
+    assert!(spun < plain * 2.4, "the spin climbed {spun}, more than double a plain rocket's {plain}");
+    assert!(flamed, "it never burned while rising");
+    assert_eq!(call(&s), launch_calls + 1, "the spin should call out once, besides the rocket's launch call");
+    // An enemy overhead.
+    let (s, _, _) = rocket_climb(true, vec![(Vec3::new(0.0, 2500.0, 0.0), 400.0, 300.0)]);
+    assert_eq!(enemy_hits(&s, libsms::EnemyHitKind::RocketSpin), 1, "the enemy above wasn't hit");
+}

@@ -51,6 +51,15 @@ impl Mario {
                 return true;
             }
         }
+        // Host extension: rising in the spin out of the Rocket's climb, he hits what is above him.
+        if self.rocket_super
+            && matches!(self.status, Status::LeftRotateJump | Status::RightRotateJump)
+            && self.vel.y > 0.0
+            && e.pos.y + e.height * 0.5 > self.pos.y + crate::mario::HEIGHT * 0.5
+        {
+            self.report_hit(host, e.id, EnemyHitKind::RocketSpin);
+            return false;
+        }
         // `MARIO_STATUS_CATCH` / `OIL_SLIP` / `JUMP_CATCH`: PUNCH, then TRAMPLE.
         if matches!(self.status, Status::Catch | Status::JumpCatch) {
             let kind = if self.status == Status::JumpCatch && self.corkscrew_super {

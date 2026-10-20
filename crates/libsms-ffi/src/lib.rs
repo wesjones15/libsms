@@ -582,6 +582,7 @@ impl Host for FfiHost<'_> {
                     EnemyHitKind::Punch => 2.0,
                     EnemyHitKind::Corkscrew => 3.0,
                     EnemyHitKind::SuperCorkscrew => 4.0,
+                    EnemyHitKind::RocketSpin => 5.0,
                 };
             }
             Event::PoundStart => e.kind = SmsEventKind::PoundStart as u32,

@@ -137,6 +137,8 @@ pub enum EnemyHitKind {
     /// Hit by a corkscrew that has spun for 4 seconds, in flames (host extension): one huge blow that
     /// bonks Mario over.
     SuperCorkscrew,
+    /// Hit from below by Mario rising in a spin out of the Rocket's climb (host extension).
+    RocketSpin,
 }
 
 /// One `startSoundActor` / `startSoundActorWithInfo` call.

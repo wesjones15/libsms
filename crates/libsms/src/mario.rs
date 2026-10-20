@@ -331,6 +331,10 @@ pub struct Mario {
     /// The corkscrew has spun for 4 seconds: it burns, and its next hit is the super blow. Kept through
     /// the dive after it; any status change clears it.
     pub(crate) corkscrew_super: bool,
+    /// Where the Rocket started this jump, and whether the spin out of its climb has doubled that
+    /// climb (the spin burns, rising, and hits what is above him).
+    pub(crate) rocket_start_y: f32,
+    pub(crate) rocket_super: bool,
     /// The dive after a corkscrew throws wet-slide spray as it flies and lands as a wet belly slide
     /// (kept from the corkscrew through the dive and into the slide; any other status change clears it).
     pub(crate) wet_dive: bool,
@@ -475,6 +479,8 @@ impl Mario {
             corkscrew_speed: 0.0,
             corkscrew_age: 0,
             corkscrew_super: false,
+            rocket_start_y: 0.0,
+            rocket_super: false,
             wet_dive: false,
             air_rocket_used: false,
             model_roll: 0,
@@ -639,6 +645,21 @@ impl Mario {
     /// The corkscrew has spun for 4 seconds and is on fire (a view draws the flames; its next hit is the super blow).
     pub fn corkscrew_flaming(&self) -> bool {
         self.corkscrew_super && self.status == Status::JumpCatch
+    }
+
+    /// Which flames to draw on him: 0 none, 1 a corkscrew that has spun for 4 seconds (streaming back), 2 a spin out
+    /// of the Rocket's climb, rising (streaming down).
+    pub fn flames(&self) -> u8 {
+        if self.corkscrew_flaming() {
+            1
+        } else if self.rocket_super
+            && matches!(self.status, Status::LeftRotateJump | Status::RightRotateJump)
+            && self.vel.y > 0.0
+        {
+            2
+        } else {
+            0
+        }
     }
 
     /// 1 while falling in a ground pound, 2 once it's a super pound (`hipAttacking` state 3,
@@ -1088,10 +1109,12 @@ impl Mario {
         }
         if to == Status::Rocket {
             self.air_rocket_used = true;
+            self.rocket_start_y = self.pos.y;
         }
         self.rocket_spin = false;
         self.corkscrew = 0;
         self.corkscrew_super = false;
+        self.rocket_super = false;
         if !(to == Status::Catch && self.status == Status::JumpCatch) {
             self.wet_dive = false;
         }

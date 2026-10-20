@@ -125,6 +125,9 @@ impl Mario {
                 // rocket's climb included (the spray he still holds must not start the rocket again).
                 if self.consider_jump_rotate() {
                     self.rocket_spin = from_rocket;
+                    if from_rocket {
+                        self.rocket_spin_boost();
+                    }
                     return true;
                 }
                 let c = match self.status_arg {
@@ -329,6 +332,18 @@ impl Mario {
         }
     }
 
+    /// Host extension: a spin out of the Rocket's climb doubles the climb. The rise still to come is
+    /// `v^2 / 8g` (a tick moves a quarter of `v`); the boost makes it the height climbed so far plus twice that, so
+    /// the apex, measured from where the Rocket started, is twice what it would have been.
+    fn rocket_spin_boost(&mut self) {
+        let g = self.params.jump.gravity.max(0.1);
+        let climbed = (self.pos.y - self.rocket_start_y).max(0.0);
+        let v = self.vel.y.max(0.0);
+        let rest = v * v / (8.0 * g);
+        self.vel.y = (8.0 * g * (climbed + 2.0 * rest)).sqrt().max(self.vel.y);
+        self.rocket_super = true;
+    }
+
     /// Host extension: out of the Turbo's thrust a full stick circle throws him forward head first in a
     /// dive that rolls about its own length (a corkscrew), then carries on as the dive.
     fn consider_corkscrew(&mut self) -> bool {
@@ -414,6 +429,7 @@ impl Mario {
         // (not the Hover nozzle, whose steering is the stick).
         if nozzle != NozzleKind::Hover && self.consider_jump_rotate() {
             self.rocket_spin = true;
+            self.rocket_spin_boost();
             return true;
         }
 

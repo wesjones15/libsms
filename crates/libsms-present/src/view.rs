@@ -455,8 +455,8 @@ struct FxTick {
     pos: Vec3,
     yaw: i16,
     pounding: u8,
-    /// A corkscrew that has spun for 4 seconds, burning.
-    flaming: bool,
+    /// `Mario::flames`: 1 a corkscrew that has spun for 4 seconds, 2 a rising spin out of the Rocket's climb.
+    flames: u8,
     cues: Vec<ParticleCue>,
 }
 
@@ -1186,7 +1186,7 @@ impl View {
             pos: mario.pos,
             yaw: mario.model_yaw,
             pounding: mario.pounding(),
-            flaming: mario.corkscrew_flaming(),
+            flames: mario.flames(),
             cues: events
                 .iter()
                 .filter_map(|e| match e {
@@ -1370,7 +1370,7 @@ impl View {
                 pos,
                 yaw: m.model_yaw,
                 pounding: m.pounding(),
-                flaming: m.corkscrew_flaming(),
+                flames: m.flames(),
                 cues: Vec::new(),
             });
         }
@@ -1416,10 +1416,15 @@ impl View {
                     }
                 }
             }
-            // The corkscrew's flames: the pound's, streaming back along the flight from about his middle.
-            if tick.flaming {
+            // The pound's flames on a flying Mario, from about his middle, streaming back along the corkscrew's
+            // flight or down behind the Rocket spin's climb (they trail up behind a pounder, as authored).
+            if tick.flames != 0 {
                 if let Some(centre) = fx_matrix(FxAt::Center, root, &joints, self.center, &muzzle_mtx) {
-                    let streaming = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
+                    let streaming = if tick.flames == 1 {
+                        Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)
+                    } else {
+                        Quat::from_rotation_x(std::f32::consts::PI)
+                    };
                     let mtx = Mat4::from_rotation_translation(rot * streaming, centre.w_axis.truncate());
                     for (slot, name) in SUPER_POUND_FLAMES.iter().enumerate() {
                         self.fx.request(slot as u32, name, mtx);
