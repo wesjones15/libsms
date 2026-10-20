@@ -28,7 +28,7 @@ use libsms::{
 use view::SmsView;
 
 /// ABI version, bumped when the C interface changes.
-pub const SMS_ABI_VERSION: u32 = 28;
+pub const SMS_ABI_VERSION: u32 = 29;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sms_abi_version() -> u32 {
@@ -157,6 +157,13 @@ pub enum SmsEventKind {
     /// As `WaterHit`, by a particle from a spin's spray ([`libsms::WaterEmit::spin`]), which
     /// flies in every direction: a host may make it count for more.
     SpinHit = 22,
+    /// Mario set the held object `arg` down: `pos` is where he stood, `value` his facing (a 16-bit angle).
+    Put = 23,
+    /// Mario threw the held object `arg`: it starts at `pos` with `value` times its own throw speed. The
+    /// next event, [`SmsEventKind::ThrowAim`], carries the facing and his velocity.
+    Throw = 24,
+    /// With the [`SmsEventKind::Throw`] before it: `arg` is the facing (a 16-bit angle), `pos` his velocity.
+    ThrowAim = 25,
 }
 
 /// An enemy the host reports ([`libsms::Enemy`]): a standing cylinder.
@@ -205,6 +212,27 @@ pub struct SmsHost {
     /// for none (`TPoolManager::getWaterLevel`). While it's above his feet Mario is in the
     /// water, and R fills FLUDD's tank from it.
     pub water: Option<unsafe extern "C" fn(*mut c_void, *const SmsVec3, *mut f32) -> u8>,
+    /// Things Mario can pick up within `radius` of `pos` (`TMario::hitWantToTake`'s targets): write up to
+    /// `max` to `out` and return how many.
+    pub takeables:
+        Option<unsafe extern "C" fn(*mut c_void, *const SmsVec3, f32, *mut SmsTakeable, u32) -> u32>,
+    /// Mario's hand closes on takeable `id`: return 1 if it is now held (the host keeps it at his right hand
+    /// until a [`SmsEventKind::Put`] or [`SmsEventKind::Throw`]), else 0.
+    pub take: Option<unsafe extern "C" fn(*mut c_void, u32) -> u8>,
+}
+
+/// Something Mario can pick up ([`libsms::host::Takeable`]).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SmsTakeable {
+    /// The host's handle, passed back to `take` and in `Put` / `Throw`.
+    pub id: u32,
+    /// Where it rests (its bottom).
+    pub pos: SmsVec3,
+    /// Its hit radius.
+    pub radius: f32,
+    /// Which fruit it is (0 coconut, 1 papaya, 2 pine, 3 durian, 4 banana), or -1 for none.
+    pub fruit: i32,
 }
 
 /// One frame of controller input.
@@ -510,6 +538,44 @@ impl Host for FfiHost<'_> {
         }));
     }
 
+    fn takeables(&self, pos: Vec3, radius: f32, out: &mut Vec<libsms::host::Takeable>) {
+        let Some(f) = self.0.takeables else {
+            return;
+        };
+        let mut buf = [SmsTakeable::default(); 16];
+        // SAFETY: as above; `buf` has room for its length.
+        let n = unsafe {
+            f(
+                self.0.user,
+                &SmsVec3::from(pos),
+                radius,
+                buf.as_mut_ptr(),
+                buf.len() as u32,
+            )
+        } as usize;
+        out.extend(buf[..n.min(buf.len())].iter().map(|t| libsms::host::Takeable {
+            id: t.id as u64,
+            pos: t.pos.into(),
+            radius: t.radius,
+            fruit: match t.fruit {
+                0 => Some(libsms::host::Fruit::Coconut),
+                1 => Some(libsms::host::Fruit::Papaya),
+                2 => Some(libsms::host::Fruit::Pine),
+                3 => Some(libsms::host::Fruit::Durian),
+                4 => Some(libsms::host::Fruit::Banana),
+                _ => None,
+            },
+        }));
+    }
+
+    fn take(&mut self, id: u64) -> bool {
+        let Some(f) = self.0.take else {
+            return false;
+        };
+        // SAFETY: as above.
+        unsafe { f(self.0.user, id as u32) != 0 }
+    }
+
     fn water_level(&self, pos: Vec3) -> Option<f32> {
         let f = self.0.water?;
         let mut level = 0.0;
@@ -531,6 +597,7 @@ impl Host for FfiHost<'_> {
             name: std::ptr::null(),
         };
         let mut name = None;
+        let mut follow: Option<(i16, Vec3)> = None;
         match event {
             Event::Jump(k) => {
                 e.kind = SmsEventKind::Jump as u32;
@@ -602,6 +669,19 @@ impl Host for FfiHost<'_> {
                 e.arg = yaw as i32;
                 e.pos = pos.into();
             }
+            Event::Put { id, pos, yaw } => {
+                e.kind = SmsEventKind::Put as u32;
+                e.arg = id as i32;
+                e.value = yaw as f32;
+                e.pos = pos.into();
+            }
+            Event::Throw { id, pos, yaw, power, vel } => {
+                e.kind = SmsEventKind::Throw as u32;
+                e.arg = id as i32;
+                e.value = power;
+                e.pos = pos.into();
+                follow = Some((yaw, vel));
+            }
             Event::Sound(s) => {
                 e.kind = SmsEventKind::Sound as u32;
                 e.value = s.info.unwrap_or(0.0);
@@ -615,6 +695,17 @@ impl Host for FfiHost<'_> {
         }
         // SAFETY: as above; `name` outlives the call.
         unsafe { f(self.0.user, &e) };
+        if let Some((yaw, vel)) = follow {
+            let aim = SmsEvent {
+                kind: SmsEventKind::ThrowAim as u32,
+                arg: yaw as i32,
+                value: 0.0,
+                pos: vel.into(),
+                name: std::ptr::null(),
+            };
+            // SAFETY: as above.
+            unsafe { f(self.0.user, &aim) };
+        }
     }
 }
 
@@ -1236,6 +1327,8 @@ mod tests {
             event: Some(capture),
             enemies: None,
             water: None,
+            takeables: None,
+            take: None,
         };
         let mut adapter = FfiHost(&host, Vec::new());
         for flags in 0..8 {
@@ -1292,6 +1385,8 @@ mod tests {
             event: Some(count),
             enemies: None,
             water: None,
+            takeables: None,
+            take: None,
         };
         unsafe {
             let sim = sms_sim_new(dir.as_ptr(), &SmsVec3::default(), 0);
@@ -1401,6 +1496,8 @@ mod tests {
                 event: Some(count_hits),
                 enemies: Some(one_enemy),
                 water: None,
+                takeables: None,
+                take: None,
             };
             let pad = if ahead == 0 {
                 SmsPad {
@@ -1437,7 +1534,7 @@ mod tests {
         assert_eq!(
             &sizes[..n],
             &[
-                12, 20, 8, 16, 32, 56, 24, 52, 40, 24, 12, 64, 48, 56, 24, 28, 24, 36, 16, 12, 32,
+                12, 20, 8, 16, 32, 72, 24, 52, 40, 24, 12, 64, 48, 56, 24, 28, 24, 36, 16, 12, 32,
                 36, 72, 40, 52, 16, 40
             ]
         );
@@ -1545,6 +1642,8 @@ mod tests {
             event: None,
             enemies: None,
             water: None,
+            takeables: None,
+            take: None,
         };
         unsafe {
             let sim = sms_sim_new(dir.as_ptr(), &SmsVec3::default(), 0);
@@ -1600,6 +1699,8 @@ mod tests {
             event: None,
             enemies: None,
             water: None,
+            takeables: None,
+            take: None,
         };
         unsafe {
             let sim = sms_sim_new(dir.as_ptr(), &SmsVec3::default(), 0);
@@ -1689,6 +1790,8 @@ mod tests {
             event: None,
             enemies: None,
             water: None,
+            takeables: None,
+            take: None,
         };
         unsafe {
             let sim = sms_sim_new(dir.as_ptr(), &SmsVec3::default(), 0);
