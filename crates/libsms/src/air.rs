@@ -17,6 +17,8 @@ pub(crate) const PAD_ACTION_GRACE: u32 = 12;
 const CORKSCREW_GRACE: u16 = 24;
 /// ...but no more than this many ticks in all (6 s), so it can't carry him across the map for ever.
 const CORKSCREW_MAX_TICKS: u16 = 720;
+/// A corkscrew that has gone on this long (4 s) is in flames and hits with the super blow.
+pub(crate) const CORKSCREW_SUPER_TICKS: u16 = 480;
 /// The corkscrew's flight speed is the Turbo jump's, floored here, plus this: well past a plain dive's.
 const CORKSCREW_MIN_SPEED: f32 = 60.0;
 const CORKSCREW_EXTRA_SPEED: f32 = 36.0;
@@ -341,6 +343,13 @@ impl Mario {
         self.change_status(Status::JumpCatch, 0, false);
         self.corkscrew = CORKSCREW_GRACE;
         self.corkscrew_age = 0;
+        // One call-out of the spin jump's, not the dive's grunt; the animation's own cues are muted.
+        self.events.retain(|e| !matches!(e, Event::Jump(crate::event::JumpKind::Dive)));
+        self.events.push(Event::Sound(crate::event::SoundCue {
+            name: "MSD_SE_MV24_JUMP_SPECIAL_01",
+            pos: self.pos,
+            info: None,
+        }));
         self.corkscrew_speed = speed;
         self.wet_dive = true;
         self.set_player_velocity(speed);
@@ -510,6 +519,9 @@ impl Mario {
             // his length at the spin jump's rate (4096 a tick), then the plain dive.
             // It goes on at the same height while the stick keeps circling; once it stops, the dive.
             self.corkscrew_age += 1;
+            if self.corkscrew_age >= CORKSCREW_SUPER_TICKS {
+                self.corkscrew_super = true;
+            }
             if self.corkscrew_age >= CORKSCREW_MAX_TICKS {
                 self.corkscrew = 0;
             } else if self.check_stick_rotate().is_some() {

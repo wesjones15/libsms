@@ -455,6 +455,8 @@ struct FxTick {
     pos: Vec3,
     yaw: i16,
     pounding: u8,
+    /// A corkscrew that has spun for 4 seconds, burning.
+    flaming: bool,
     cues: Vec<ParticleCue>,
 }
 
@@ -1184,6 +1186,7 @@ impl View {
             pos: mario.pos,
             yaw: mario.model_yaw,
             pounding: mario.pounding(),
+            flaming: mario.corkscrew_flaming(),
             cues: events
                 .iter()
                 .filter_map(|e| match e {
@@ -1367,6 +1370,7 @@ impl View {
                 pos,
                 yaw: m.model_yaw,
                 pounding: m.pounding(),
+                flaming: m.corkscrew_flaming(),
                 cues: Vec::new(),
             });
         }
@@ -1409,6 +1413,16 @@ impl View {
                 if let Some(center) = fx_matrix(FxAt::Center, tick_root, &joints, self.center, &muzzle_mtx) {
                     for (slot, name) in SUPER_POUND_FLAMES.iter().enumerate() {
                         self.fx.request(slot as u32, name, center);
+                    }
+                }
+            }
+            // The corkscrew's flames: the pound's, streaming back along the flight from about his middle.
+            if tick.flaming {
+                if let Some(centre) = fx_matrix(FxAt::Center, root, &joints, self.center, &muzzle_mtx) {
+                    let streaming = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
+                    let mtx = Mat4::from_rotation_translation(rot * streaming, centre.w_axis.truncate());
+                    for (slot, name) in SUPER_POUND_FLAMES.iter().enumerate() {
+                        self.fx.request(slot as u32, name, mtx);
                     }
                 }
             }

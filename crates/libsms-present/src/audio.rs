@@ -217,7 +217,10 @@ impl SceneAudio {
             self.animation.reset(sys);
             self.clip = Some(mario.anim.clip);
         }
-        if let Some(table) = self.tables.get(mario.anim.clip) {
+        // The corkscrew calls out once (a cue of the sim's) and goes quiet: the spin clip's own cues would
+        // repeat with every turn.
+        let corkscrew = mario.model_pitch == 0x4000;
+        if let Some(table) = self.tables.get(mario.anim.clip).filter(|_| !corkscrew) {
             self.animation.update(
                 sys,
                 table,

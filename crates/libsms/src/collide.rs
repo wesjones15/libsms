@@ -53,22 +53,34 @@ impl Mario {
         }
         // `MARIO_STATUS_CATCH` / `OIL_SLIP` / `JUMP_CATCH`: PUNCH, then TRAMPLE.
         if matches!(self.status, Status::Catch | Status::JumpCatch) {
-            let kind = if self.status == Status::JumpCatch && self.corkscrew > 0 {
+            let kind = if self.status == Status::JumpCatch && self.corkscrew_super {
+                EnemyHitKind::SuperCorkscrew
+            } else if self.status == Status::JumpCatch && self.corkscrew > 0 {
                 EnemyHitKind::Corkscrew
             } else {
                 EnemyHitKind::Punch
             };
-            self.report_hit(host, e.id, kind);
+            if self.report_hit(host, e.id, kind) && kind == EnemyHitKind::SuperCorkscrew {
+                // The blow bonks him back off it, and over.
+                self.sound("MSD_SE_MA_HIP_ATTACK", None);
+                host.event(Event::WallBump);
+                self.bump_stars();
+                self.set_player_velocity(-12.0);
+                self.vel.y = 25.0;
+                self.change_status(Status::JumpShortBackDown, 0, false);
+            }
         }
         false
     }
 
     /// [`Event::EnemyHit`], once per enemy per status (see `enemies_hit`).
-    fn report_hit(&mut self, host: &mut dyn Host, id: u64, kind: EnemyHitKind) {
-        if !self.enemies_hit.contains(&id) {
-            self.enemies_hit.push(id);
-            host.event(Event::EnemyHit { id, kind });
+    fn report_hit(&mut self, host: &mut dyn Host, id: u64, kind: EnemyHitKind) -> bool {
+        if self.enemies_hit.contains(&id) {
+            return false;
         }
+        self.enemies_hit.push(id);
+        host.event(Event::EnemyHit { id, kind });
+        true
     }
 
     /// `trampleExec`: bounce off the enemy's head. A long jump turns into a back flip;

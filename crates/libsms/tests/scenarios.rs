@@ -3516,3 +3516,74 @@ fn the_stick_turns_him_after_the_rocket() {
     assert_ne!(s.sim.mario.face_yaw, facing, "the stick didn't turn him in the rocket's flight");
 }
 
+
+/// A Turbo dash jump a full stick circle into the corkscrew, over a flat floor with `enemies`.
+fn corkscrew_scene(enemies: Vec<(Vec3, f32, f32)>) -> Scene<Enemies> {
+    let mut s = Scene::new(Enemies(enemies));
+    s.sim.mario.give_fludd();
+    {
+        let p = s.sim.mario.params.clone();
+        let f = s.sim.mario.fludd.as_mut().unwrap();
+        f.change_nozzle(NozzleKind::Turbo, false, &p);
+        f.refill(&p);
+    }
+    s.pad.stick = Vec2::new(0.0, 1.0);
+    s.pad.r_analog = 255;
+    s.secs(6.0);
+    s.pad.a = true;
+    s.step(30);
+    for i in 0..24 {
+        let a = i as f32 * std::f32::consts::TAU / 12.0;
+        s.pad.stick = Vec2::new(a.cos(), a.sin());
+        s.step(1);
+        if s.sim.mario.status == Status::JumpCatch {
+            break;
+        }
+    }
+    s
+}
+
+/// A corkscrew that has spun for four seconds burns, and its one hit is the super blow, which bonks
+/// Mario back over.
+#[test]
+fn a_corkscrew_spun_for_four_seconds_burns_and_its_hit_bonks_him() {
+    let mut s = corkscrew_scene(vec![]);
+    assert_eq!(s.sim.mario.status, Status::JumpCatch);
+    let start = s.sim.mario.pos;
+    let mut angle = 0.0f32;
+    let mut spin = |s: &mut Scene<Enemies>| {
+        angle += std::f32::consts::TAU / 12.0;
+        s.pad.stick = Vec2::new(angle.cos(), angle.sin());
+        s.step(1);
+    };
+    let mut flaming_at = None;
+    for i in 0..700 {
+        spin(&mut s);
+        if i < 400 {
+            assert!(!s.sim.mario.corkscrew_flaming(), "burning after only {i} ticks");
+        }
+        if s.sim.mario.corkscrew_flaming() {
+            flaming_at = Some((i, s.sim.mario.pos));
+            break;
+        }
+    }
+    let (ticks, at) = flaming_at.expect("it never caught fire");
+    assert!((470..=490).contains(&ticks), "it caught fire after {ticks} ticks (4 s is 480)");
+    let ahead = Vec3::new(at.x - start.x, 0.0, at.z - start.z).normalize();
+    // The same flight again, with an enemy in its path a little past where it catches fire.
+    let enemy = at + ahead * 1500.0;
+    let mut s = corkscrew_scene(vec![(enemy, 120.0, 400.0)]);
+    let mut angle = 0.0f32;
+    for _ in 0..800 {
+        angle += std::f32::consts::TAU / 12.0;
+        s.pad.stick = Vec2::new(angle.cos(), angle.sin());
+        s.step(1);
+        if s.sim.mario.status != Status::JumpCatch {
+            break;
+        }
+    }
+    assert_eq!(enemy_hits(&s, libsms::EnemyHitKind::SuperCorkscrew), 1, "no super blow: {:?}", s.sim.mario.status);
+    assert_eq!(enemy_hits(&s, libsms::EnemyHitKind::Corkscrew), 0);
+    assert_eq!(s.sim.mario.status, Status::JumpShortBackDown, "he wasn't bonked");
+    assert!(s.sim.mario.forward_vel < 0.0, "he wasn't thrown back: {}", s.sim.mario.forward_vel);
+}

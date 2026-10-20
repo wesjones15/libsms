@@ -328,6 +328,9 @@ pub struct Mario {
     pub(crate) corkscrew_speed: f32,
     /// Ticks the corkscrew has lasted (it has a cap).
     pub(crate) corkscrew_age: u16,
+    /// The corkscrew has spun for 4 seconds: it burns, and its next hit is the super blow. Kept through
+    /// the dive after it; any status change clears it.
+    pub(crate) corkscrew_super: bool,
     /// The dive after a corkscrew throws wet-slide spray as it flies and lands as a wet belly slide
     /// (kept from the corkscrew through the dive and into the slide; any other status change clears it).
     pub(crate) wet_dive: bool,
@@ -471,6 +474,7 @@ impl Mario {
             corkscrew: 0,
             corkscrew_speed: 0.0,
             corkscrew_age: 0,
+            corkscrew_super: false,
             wet_dive: false,
             air_rocket_used: false,
             model_roll: 0,
@@ -630,6 +634,11 @@ impl Mario {
     /// Current floor height under Mario (`mFloorPosition.y`).
     pub fn floor_y(&self) -> f32 {
         self.floor_y
+    }
+
+    /// The corkscrew has spun for 4 seconds and is on fire (a view draws the flames; its next hit is the super blow).
+    pub fn corkscrew_flaming(&self) -> bool {
+        self.corkscrew_super && self.status == Status::JumpCatch
     }
 
     /// 1 while falling in a ground pound, 2 once it's a super pound (`hipAttacking` state 3,
@@ -1082,6 +1091,7 @@ impl Mario {
         }
         self.rocket_spin = false;
         self.corkscrew = 0;
+        self.corkscrew_super = false;
         if !(to == Status::Catch && self.status == Status::JumpCatch) {
             self.wet_dive = false;
         }
