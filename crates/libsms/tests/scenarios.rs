@@ -3716,3 +3716,40 @@ fn the_blazing_slide_hits_as_a_corkscrew() {
     assert_eq!(enemy_hits(&s, libsms::EnemyHitKind::Corkscrew), 1, "the slide didn't hit as a corkscrew");
     assert_eq!(enemy_hits(&s, libsms::EnemyHitKind::Punch), 0);
 }
+
+/// A full stick circle in a plain dive is a corkscrew at the dive's own speed, once per dive.
+#[test]
+fn a_stick_circle_in_a_plain_dive_is_a_normal_speed_corkscrew() {
+    let mut s = Scene::flat();
+    s.pad.stick = Vec2::new(0.0, 1.0);
+    s.pad.a = true;
+    s.step(30);
+    s.pad.a = false;
+    s.pad.b = true;
+    s.step(2);
+    s.pad.b = false;
+    assert_eq!(s.sim.mario.status, Status::JumpCatch, "no dive");
+    let y0 = s.sim.mario.pos.y;
+    let mut angle = 0.0f32;
+    for i in 0..120 {
+        angle += std::f32::consts::TAU / 12.0;
+        s.pad.stick = Vec2::new(angle.cos(), angle.sin());
+        s.step(1);
+        if i > 30 {
+            assert_eq!(s.sim.mario.model_pitch, 0x4000, "not corkscrewing at {i}");
+            assert!((s.sim.mario.pos.y - y0).abs() < 40.0, "left its height");
+            assert!(s.sim.mario.forward_vel < 60.0, "faster than a dive: {}", s.sim.mario.forward_vel);
+        }
+    }
+    // Let go: the plain dive, and a fresh circle doesn't start another corkscrew.
+    s.pad.stick = Vec2::ZERO;
+    s.step(60);
+    assert_ne!(s.sim.mario.model_pitch, 0x4000, "it never ended");
+    for _ in 0..30 {
+        angle += std::f32::consts::TAU / 12.0;
+        s.pad.stick = Vec2::new(angle.cos(), angle.sin());
+        s.step(1);
+        assert_ne!(s.sim.mario.model_pitch, 0x4000, "a second corkscrew in one dive");
+        if s.sim.mario.status != Status::JumpCatch { break; }
+    }
+}

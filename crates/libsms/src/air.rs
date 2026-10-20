@@ -360,6 +360,7 @@ impl Mario {
         self.change_status(Status::JumpCatch, 0, false);
         self.corkscrew = CORKSCREW_GRACE;
         self.corkscrew_age = 0;
+        self.corkscrew_used = true;
         // One call-out of the spin jump's, not the dive's grunt; the animation's own cues are muted.
         self.events.retain(|e| !matches!(e, Event::Jump(crate::event::JumpKind::Dive)));
         self.events.push(Event::Sound(crate::event::SoundCue {
@@ -531,6 +532,19 @@ impl Mario {
     fn jump_catch(&mut self, host: &mut dyn Host) -> bool {
         if self.input.dive && self.input.l_pressed {
             return self.change_status(Status::HipDrop, 0, false);
+        }
+        // Host extension: a full stick circle in a plain dive is the corkscrew too, at the dive's own speed.
+        if self.corkscrew == 0 && !self.corkscrew_used && !self.on_yoshi() && self.check_stick_rotate().is_some() {
+            self.corkscrew = CORKSCREW_GRACE;
+            self.corkscrew_age = 0;
+            self.corkscrew_used = true;
+            self.corkscrew_speed = self.forward_vel;
+            self.vel.y = 0.0;
+            self.events.push(Event::Sound(crate::event::SoundCue {
+                name: "MSD_SE_MV24_JUMP_SPECIAL_01",
+                pos: self.pos,
+                info: None,
+            }));
         }
         if self.corkscrew > 0 {
             // The spin jump's own motion laid flat: tipped head first along the dive, spinning about

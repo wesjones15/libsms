@@ -328,6 +328,8 @@ pub struct Mario {
     pub(crate) corkscrew_speed: f32,
     /// Ticks the corkscrew has lasted (it has a cap).
     pub(crate) corkscrew_age: u16,
+    /// This dive has had its corkscrew (so a circle after it ends doesn't start another); cleared by any status change.
+    pub(crate) corkscrew_used: bool,
     /// The corkscrew has spun for 4 seconds: it burns, and its next hit is the super blow. Kept through
     /// the dive after it; any status change clears it.
     pub(crate) corkscrew_super: bool,
@@ -480,6 +482,7 @@ impl Mario {
             corkscrew: 0,
             corkscrew_speed: 0.0,
             corkscrew_age: 0,
+            corkscrew_used: false,
             corkscrew_super: false,
             blaze: 0,
             rocket_start_y: 0.0,
@@ -1117,6 +1120,7 @@ impl Mario {
         self.rocket_spin = false;
         self.corkscrew = 0;
         self.corkscrew_super = false;
+        self.corkscrew_used = false;
         self.rocket_super = false;
         if to != Status::Catch {
             self.blaze = 0;
