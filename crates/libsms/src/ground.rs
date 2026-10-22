@@ -326,16 +326,10 @@ impl Mario {
         false
     }
 
-    /// `canSquat`: holding R/L with a non-rocket, non-turbo nozzle.
+    /// `canSquat`: disabled — the squat stance never triggers. (The left trigger's air
+    /// ground pound is a separate path and is unaffected.)
     pub(crate) fn can_squat(&self) -> bool {
-        match &self.fludd {
-            Some(f) => {
-                f.nozzle_params(&self.params).rocket_type != 1
-                    && f.nozzle != NozzleKind::Turbo
-                    && self.input.lr_held
-            }
-            None => false,
-        }
+        false
     }
 
     fn squating(&mut self, host: &mut dyn Host) -> bool {
