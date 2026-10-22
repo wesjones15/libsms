@@ -351,7 +351,10 @@ impl Mario {
                 Vec3::new(-sin(face), 0.0, -cos(face))
             }
             _ => {
-                let pitch = f.gun_angle() * (std::f32::consts::PI / 32768.0);
+                // `gun_angle` counts the neck's way (a negative angle lifts the barrel), but the
+                // world direction is up-positive, so negate it: otherwise the fallback sprays down
+                // while the barrel is up, and up while it droops.
+                let pitch = -f.gun_angle() * (std::f32::consts::PI / 32768.0);
                 Vec3::new(
                     sin(face) * pitch.cos(),
                     pitch.sin(),
@@ -978,4 +981,29 @@ fn np_base(p: &Params, k: NozzleKind) -> f32 {
 }
 fn np_chase(p: &Params, k: NozzleKind) -> f32 {
     p.nozzle(k).l_angle_chase
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_spray_barrel_pointed_up_sends_the_fallback_direction_up() {
+        let mut m = crate::Sim::new(
+            crate::params::Params::default(),
+            crate::anim::AnimTable::default(),
+            Vec3::ZERO,
+            0,
+        )
+        .mario;
+        m.give_fludd();
+        // `gun_angle` counts the neck's way: a negative angle lifts the barrel (the game's
+        // `-mLAngleBase` rest), so a barrel pitched up must spray up, not down.
+        m.fludd.as_mut().unwrap().slots[NozzleKind::Spray as usize].gun_angle = -(0x4000 as f32);
+        let dir = m.nozzle_pitch_dir(NozzleKind::Spray, 0);
+        assert!(
+            dir.y > 0.9,
+            "a barrel pointed straight up must fall back upward, got {dir:?}"
+        );
+    }
 }
