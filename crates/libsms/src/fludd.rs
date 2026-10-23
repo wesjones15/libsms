@@ -841,6 +841,20 @@ impl Mario {
             _ => dir,
         };
         let face = self.face_yaw;
+        // Host extension: in a corkscrew the Spray turns with him about the line of flight, as a spin jump's
+        // turns about his height: it comes out of his belly (down, flat as he is) and goes round with the
+        // roll, so a pass carpets what is below and to either side.
+        let dir = if kind == NozzleKind::Spray
+            && self.status == Status::JumpCatch
+            && self.corkscrew > 0
+            && !self.on_yoshi()
+        {
+            let roll = (self.model_roll as u16) as f32 * (std::f32::consts::TAU / 65536.0);
+            let right = Vec3::new(cos(face), 0.0, -sin(face));
+            (Vec3::NEG_Y * roll.cos() + right * roll.sin()).normalize()
+        } else {
+            dir
+        };
         let inherit = Vec3::new(self.vel.x * 0.125, 0.0, self.vel.z * 0.125);
         let (mut size, mut dir_tremble) = (np.size, np.dir_tremble);
 

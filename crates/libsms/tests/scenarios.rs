@@ -3642,6 +3642,45 @@ fn corkscrew_scene(enemies: Vec<(Vec3, f32, f32)>) -> Scene<Enemies> {
     s
 }
 
+/// Switching to the Spray in a corkscrew turns the water with the roll: the spin's water, round the line of
+/// flight and down, whatever the host aims at.
+#[test]
+fn the_spray_in_a_corkscrew_turns_with_the_roll_as_spin_water() {
+    let mut s = corkscrew_scene(vec![]);
+    assert_eq!(s.sim.mario.status, Status::JumpCatch);
+    {
+        let p = s.sim.mario.params.clone();
+        let f = s.sim.mario.fludd.as_mut().unwrap();
+        f.change_nozzle(NozzleKind::Spray, false, &p);
+        f.refill(&p);
+    }
+    // The host's crosshair points straight up and forward: not where the water goes.
+    s.sim.mario.aim = Some(libsms::Aim { yaw: s.sim.mario.face_yaw, pitch: 0x2000 });
+    s.pad.r_analog = 255;
+    let mut angle = 0.0f32;
+    for _ in 0..80 {
+        angle += std::f32::consts::TAU / 12.0;
+        s.pad.stick = Vec2::new(angle.cos(), angle.sin());
+        s.step(1);
+        assert_eq!(s.sim.mario.status, Status::JumpCatch, "the corkscrew ended");
+    }
+    let drops: Vec<_> = s
+        .host
+        .events
+        .iter()
+        .filter_map(|e| match e {
+            Event::WaterEmit(w) if w.nozzle == NozzleKind::Spray => Some((w.dir, w.spin)),
+            _ => None,
+        })
+        .collect();
+    assert!(drops.len() > 20, "the Spray put out {} bursts", drops.len());
+    assert!(drops.iter().all(|&(_, spin)| spin), "some water wasn't the spin's");
+    let (low, high) = drops.iter().fold((f32::MAX, f32::MIN), |(lo, hi), &(d, _)| (lo.min(d.y), hi.max(d.y)));
+    assert!(low < -0.9 && high > 0.9, "the water didn't go round: y from {low} to {high}");
+    let sideways = drops.iter().any(|&(d, _)| d.x.abs() + d.z.abs() > 0.9);
+    assert!(sideways, "the water never went out to the side");
+}
+
 /// A corkscrew that has spun for four seconds burns, and its one hit is the super blow, which bonks
 /// Mario back over.
 #[test]

@@ -412,11 +412,13 @@ impl Mario {
         Some(self.model_to_world(p))
     }
 
-    /// Whether he is spinning, in a spin jump or on the ground (a stick circle while spraying):
-    /// FLUDD's water flies in every direction as he turns.
+    /// Whether he is spinning, in a spin jump or on the ground (a stick circle while spraying), or in a
+    /// corkscrew dive (host extension, which is the spin jump laid flat): FLUDD's water flies in every
+    /// direction as he turns, and is the spin's water (stronger, and not aimed by the host).
     pub(crate) fn spinning(&self) -> bool {
         use crate::mario::Status::*;
         matches!(self.status, LeftRotateJump | RightRotateJump | RotateL | RotateR)
+            || (self.status == JumpCatch && self.corkscrew > 0)
     }
 
     /// The host's aim, except in a spin, where the nozzle turns with him and sprays all round.
