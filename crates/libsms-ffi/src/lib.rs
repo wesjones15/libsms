@@ -457,6 +457,26 @@ pub struct SmsSim {
     status: CString,
     clip: CString,
     pub(crate) poisoned: bool,
+    /// The last water emit the sim made and how many it has made, for the host's diagnostics
+    /// ([`sms_sim_last_spray`]).
+    last_spray: SmsSpray,
+}
+
+/// The sim's last FLUDD emit: where the water left and which way it was sent.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SmsSpray {
+    pub pos: SmsVec3,
+    pub dir: SmsVec3,
+    pub power: f32,
+    /// Drops in that emit.
+    pub count: u32,
+    /// The fitted nozzle then: `NozzleKind` + 1.
+    pub nozzle: u8,
+    /// 1 if it was a spin's water.
+    pub spin: u8,
+    /// Emits since the sim started.
+    pub emits: u32,
 }
 
 /// The host's callbacks, plus this tick's events for the view's sounds.
@@ -802,6 +822,7 @@ pub unsafe extern "C" fn sms_sim_new(
             status: CString::default(),
             clip: CString::default(),
             poisoned: false,
+            last_spray: SmsSpray::default(),
         })),
         _ => std::ptr::null_mut(),
     }
@@ -873,6 +894,15 @@ pub unsafe extern "C" fn sms_sim_step(
         // `TModelWaterManager`: emitted every tick, moved once a 30 Hz frame.
         for e in &emits {
             s.water.emit(e);
+            s.last_spray = SmsSpray {
+                pos: e.pos.into(),
+                dir: e.dir.into(),
+                power: e.power,
+                count: e.count,
+                nozzle: e.nozzle as u8 + 1,
+                spin: e.spin as u8,
+                emits: s.last_spray.emits.wrapping_add(1),
+            };
         }
         s.water_ticks += n;
         while s.water_ticks >= 4 {
@@ -1051,6 +1081,21 @@ pub unsafe extern "C" fn sms_sim_set_aim(sim: *mut SmsSim, on: u8, yaw: i16, pit
             pitch: (pitch.clamp(-1.5, 1.5) * (32768.0 / std::f32::consts::PI)) as i16,
         });
     }
+}
+
+/// The direction the sim last sent FLUDD's water (a diagnostic: what the host's aim became). Returns
+/// the emits made since the sim started, 0 before the first.
+///
+/// # Safety
+/// `sim` from [`sms_sim_new`]; `out` is null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_sim_last_spray(sim: *const SmsSim, out: *mut SmsSpray) -> u32 {
+    // SAFETY: the caller promised valid pointers.
+    let Some(s) = (unsafe { sim.as_ref() }) else { return 0 };
+    if let Some(o) = unsafe { out.as_mut() } {
+        *o = s.last_spray;
+    }
+    s.last_spray.emits
 }
 
 /// The host's health ran out: Mario falls down for good (`loserExec`: the "die" clip and his
