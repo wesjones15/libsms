@@ -2414,6 +2414,83 @@ fn limited_air_uses_spend_the_free_one_then_extras_then_refuse() {
 }
 
 #[test]
+fn a_granted_extra_use_starts_another_hover_in_the_same_jump() {
+    // The game allows one Rocket or Hover start per jump; each use the host grants is another.
+    let mut s = Scene::flat();
+    s.sim.mario.limits.air_uses = true;
+    s.sim.mario.limits.air_extra = 1;
+    airborne_with_fludd(&mut s);
+    let params = s.sim.mario.params.clone();
+    s.sim.mario.fludd.as_mut().unwrap().change_nozzle(libsms::params::NozzleKind::Hover, false, &params);
+    s.pad.r_analog = 200;
+    s.step(3);
+    assert_eq!(s.mario().status, Status::Rocket, "the free use did not start the hover");
+    // Let go; it ends, and he falls.
+    s.pad.r_analog = 0;
+    assert!(s.until(120, |m| m.status != Status::Rocket));
+    // The extra use: another hover, which the same jump's first one would have blocked.
+    s.pad.r_analog = 200;
+    s.step(6);
+    assert_eq!(s.mario().status, Status::Rocket, "the extra use did not start a second hover: uses {:?}, extra left {}, airborne {}", (air_uses(&s, false), air_uses(&s, true)), s.mario().limits.air_extra, s.mario().status.is_jumping());
+    assert_eq!((air_uses(&s, false), air_uses(&s, true)), (1, 1));
+}
+
+#[test]
+fn rocket_after_rocket_in_one_jump_needs_and_spends_a_granted_use() {
+    // From the ground: the first Rocket is the jump's free use; each Rocket after it in the air is one of the extras.
+    let run = |extra: u32| {
+        let mut s = Scene::flat();
+        s.sim.mario.limits.air_uses = true;
+        s.sim.mario.limits.air_extra = extra;
+        s.sim.mario.give_fludd();
+        let params = s.sim.mario.params.clone();
+        s.sim.mario.fludd.as_mut().unwrap().change_nozzle(libsms::params::NozzleKind::Rocket, false, &params);
+        let mut launches = 0;
+        for _ in 0..3 {
+            // Hold R until the Rocket launches (or give up), then let go and come off it.
+            s.pad.r_analog = 255;
+            let launched = s.until(300, |m| m.status == Status::Rocket);
+            s.pad.r_analog = 0;
+            if !launched {
+                break;
+            }
+            launches += 1;
+            s.step(30);
+            assert!(s.until(600, |m| m.status != Status::Rocket));
+            s.step(2);
+            if !s.mario().status.is_jumping() && s.mario().status != Status::RocketLanding {
+                break; // down already
+            }
+        }
+        launches
+    };
+    assert_eq!(run(0), 1, "a second Rocket with no extra use");
+    assert_eq!(run(1), 2, "the extra use did not start a second Rocket");
+    assert_eq!(run(2), 3, "two extras did not start the third Rocket");
+}
+
+#[test]
+fn a_rocket_from_the_ground_is_the_jumps_free_use() {
+    let mut s = Scene::flat();
+    s.sim.mario.limits.air_uses = true;
+    s.sim.mario.limits.air_extra = 0;
+    s.sim.mario.give_fludd();
+    let params = s.sim.mario.params.clone();
+    s.sim.mario.fludd.as_mut().unwrap().change_nozzle(libsms::params::NozzleKind::Hover, false, &params);
+    // Hover started on the ground: the jump's one start.
+    s.pad.r_analog = 200;
+    s.step(6);
+    assert_eq!(s.mario().status, Status::Rocket);
+    s.pad.r_analog = 0;
+    assert!(s.until(120, |m| m.status != Status::Rocket));
+    // Another in the air has no use to spend (no extra on hand): refused.
+    s.pad.r_analog = 200;
+    s.step(6);
+    assert_ne!(s.mario().status, Status::Rocket, "a second start with no extra use");
+    assert_eq!(air_uses(&s, true), 0);
+}
+
+#[test]
 fn the_sprays_air_starts_are_free_but_other_nozzles_are_counted() {
     let mut s = Scene::flat();
     s.sim.mario.limits.air_uses = true;

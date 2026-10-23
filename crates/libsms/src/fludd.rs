@@ -407,7 +407,8 @@ impl Mario {
         let np = f.nozzle_params(&self.params);
         !self.on_yoshi()
             && crate::anim::pump_clip(self.anim.clip).is_some()
-            && !(self.status == Status::RocketLanding && np.rocket_type == 1)
+            // Host extension: not while a use the host granted this press (`Limits::air_uses`) starts the next one.
+            && !(self.status == Status::RocketLanding && np.rocket_type == 1 && !self.limit_granted())
             && !(f.nozzle.is_trigger() && f.trigger_state() == TriggerState::Dead)
             && !f.is_switching()
     }

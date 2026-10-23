@@ -1116,6 +1116,9 @@ impl Mario {
             self.air_rocket_used = false;
         }
         if to == Status::Rocket {
+            if !self.status.is_jumping() {
+                self.limit_ground_rocket();
+            }
             self.air_rocket_used = true;
             self.rocket_start_y = self.pos.y;
         }

@@ -182,6 +182,9 @@ pub(crate) struct LimitState {
     r_refused: bool,
     /// The free mid-air use is spent; it comes back on landing.
     free_spent: bool,
+    /// A mid-air use was granted to this press of R (a counted nozzle), until R is let go: the Rocket or
+    /// Hover may start even from the fall out of an earlier one (the nozzle takes a few ticks to pump).
+    granted: bool,
     /// Ticks this press has sprayed.
     spray_ticks: u32,
     /// Mid-air jumps made since the last landing.
@@ -202,6 +205,7 @@ impl Default for LimitState {
             r_nozzle: None,
             r_refused: false,
             free_spent: false,
+            granted: false,
             spray_ticks: 0,
             air_jumps: 0,
             wet_decided: false,
@@ -238,6 +242,19 @@ pub(crate) fn trigger_time(kind: NozzleKind, ticks: i16, hover_time: f32) -> i16
 }
 
 impl Mario {
+    /// A Rocket or Hover started from the ground (the first start of the jump) is the jump's free
+    /// use ([`Limits::air_uses`]): a second start in the air needs one of `air_extra`.
+    pub(crate) fn limit_ground_rocket(&mut self) {
+        if self.limits.air_uses {
+            self.lim.free_spent = true;
+        }
+    }
+
+    /// A mid-air use was granted to the press of R now down ([`Limits::air_uses`]).
+    pub(crate) fn limit_granted(&self) -> bool {
+        self.lim.granted
+    }
+
     /// Airborne for the limits: the jumping family (hovering and rocketing too).
     fn limits_airborne(&self) -> bool {
         self.status.is_jumping()
@@ -261,6 +278,7 @@ impl Mario {
                 r_down: false,
                 r_nozzle: None,
                 r_refused: false,
+                granted: false,
                 spray_ticks: 0,
                 ..self.lim
             };
@@ -282,9 +300,15 @@ impl Mario {
             {
                 if !self.lim.free_spent {
                     self.lim.free_spent = true;
+                    self.lim.granted = true;
+                    self.air_rocket_used = false;
                     self.events.push(Event::AirNozzle { extra: false });
                 } else if self.limits.air_extra > 0 {
                     self.limits.air_extra -= 1;
+                    self.lim.granted = true;
+                    // The game lets a jump start the Rocket or Hover once (`air_rocket_used`); a use the host
+                    // has granted is another start, so the charge it spends is not wasted on a refusal.
+                    self.air_rocket_used = false;
                     self.events.push(Event::AirNozzle { extra: true });
                 } else {
                     self.lim.r_refused = true;

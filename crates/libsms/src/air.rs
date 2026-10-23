@@ -397,7 +397,13 @@ impl Mario {
 
     /// `rocketCheck`: with FLUDD firing a rocket-type nozzle, start rocketing.
     pub(crate) fn rocket_check(&mut self) -> bool {
-        if matches!(self.status, Status::Rocket | Status::RocketLanding) || self.air_rocket_used {
+        // Host extension: a use the host granted this press (`Limits::air_uses`) may start from the fall out of an
+        // earlier Rocket or Hover too, which the game's own check refuses.
+        let granted = self.limit_granted();
+        if self.status == Status::Rocket
+            || (self.status == Status::RocketLanding && !granted)
+            || self.air_rocket_used
+        {
             return false;
         }
         let ok = self.fludd.as_ref().is_some_and(|f| {
