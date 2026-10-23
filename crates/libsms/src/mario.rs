@@ -674,6 +674,8 @@ impl Mario {
         match (self.status, self.status_state) {
             (Status::HipDrop, 2) => 1,
             (Status::HipDrop, 3) => 2,
+            // The get-up after the landing: a hit does not cut it short either (`hurt`).
+            (Status::HipAttackEnd, _) => 3,
             _ => 0,
         }
     }

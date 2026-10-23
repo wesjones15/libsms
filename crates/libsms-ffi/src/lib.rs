@@ -314,7 +314,8 @@ pub struct SmsState {
     pub health: i16,
     pub on_ground: u8,
     pub has_fludd: u8,
-    /// 1 falling in a ground pound, 2 in a super pound (the game draws flames), else 0.
+    /// 1 falling in a ground pound, 2 in a super pound (the game draws flames), 3 in the get-up
+    /// after the landing (hits do not interrupt any of the three), else 0.
     pub pounding: u8,
     /// 1 standing in shallow water (the host's `water`).
     pub in_water: u8,

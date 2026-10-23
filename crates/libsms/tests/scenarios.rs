@@ -1772,6 +1772,28 @@ fn a_hit_does_not_take_him_out_of_a_ground_pound() {
 }
 
 #[test]
+fn a_hit_does_not_take_him_out_of_the_landing_of_a_ground_pound() {
+    let mut s = Scene::flat();
+    s.pad.a = true;
+    s.press_a();
+    s.step(40);
+    s.pad.l = true;
+    s.step(1);
+    s.pad.l = false;
+    assert_eq!(s.mario().status, Status::HipDrop);
+    // Fall until he lands and the pound's get-up begins.
+    assert!(s.until(600, |m| m.status == Status::HipAttackEnd));
+    assert_eq!(s.mario().pounding(), 3);
+    assert!(
+        s.sim
+            .mario
+            .knock_down(Vec3::new(0.0, 0.0, 100.0), libsms::DamageKind::EnemyCommon)
+    );
+    // The hit lands (flash, voice) but the get-up is not cut short (host extension).
+    assert_eq!(s.mario().status, Status::HipAttackEnd);
+}
+
+#[test]
 fn a_dive_is_not_knocked_out_of() {
     let mut s = Scene::flat();
     s.pad.a = true;
