@@ -28,7 +28,7 @@ use libsms::{
 use view::SmsView;
 
 /// ABI version, bumped when the C interface changes.
-pub const SMS_ABI_VERSION: u32 = 29;
+pub const SMS_ABI_VERSION: u32 = 30;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sms_abi_version() -> u32 {
@@ -1208,6 +1208,69 @@ pub unsafe extern "C" fn sms_sim_shine_end(sim: *mut SmsSim) {
     if let Some(s) = unsafe { sim.as_mut() } {
         s.sim.mario.end_win_demo();
     }
+}
+
+/// Presentation-only pose for a skill portrait: sets a fresh sim's status, animation clip and
+/// frame, fitted nozzle and wet-ground flag, without stepping the game. The skill portrait
+/// generator calls this after creating its own throwaway sim; gameplay never does.
+///
+/// `status`: 0 Wait, 1 HipDrop, 2 Catch, 3 JumpCatch, 4 SlipFore, 5 Run, 6 Squat.
+/// `clip`: 0 wait, 1 hipat, 2 sldct, 3 hiped, 4 slip, 5 jump, 6 squat.
+/// `nozzle`: 0 leave it, 1 Spray, 2 Rocket, 3 Hover, 4 Turbo.
+/// Returns 1 when the pose was set.
+///
+/// # Safety
+/// `sim` from [`sms_sim_new`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_sim_portrait(
+    sim: *mut SmsSim,
+    status: u32,
+    clip: u32,
+    frame: f32,
+    state: u32,
+    nozzle: u32,
+    wet: u8,
+) -> u8 {
+    use libsms::anim::clip;
+    use libsms::Status;
+    let Some(s) = (unsafe { sim.as_mut() }) else { return 0 };
+    let status = match status {
+        0 => Status::Wait,
+        1 => Status::HipDrop,
+        2 => Status::Catch,
+        3 => Status::JumpCatch,
+        4 => Status::SlipFore,
+        5 => Status::Run,
+        6 => Status::Squat,
+        _ => return 0,
+    };
+    let name = match clip {
+        0 => clip::WAIT,
+        1 => clip::HIP_FALL,
+        2 => clip::DIVE,
+        3 => clip::HIP_END,
+        4 => clip::SLIP,
+        5 => clip::JUMP,
+        6 => clip::SQUAT,
+        _ => return 0,
+    };
+    let m = &mut s.sim.mario;
+    m.portrait_pose(status, name, frame, state, wet != 0);
+    if nozzle != 0 {
+        let p = m.params.clone();
+        let kind = match nozzle {
+            1 => libsms::NozzleKind::Spray,
+            2 => libsms::NozzleKind::Rocket,
+            3 => libsms::NozzleKind::Hover,
+            4 => libsms::NozzleKind::Turbo,
+            _ => return 0,
+        };
+        if let Some(f) = m.fludd.as_mut() {
+            f.change_nozzle(kind, false, &p);
+            f.refill(&p);
+        }
+    }
+    1
 }
 
 /// Sets host tuning (see [`SmsTuning`]); a new sim has the game's.

@@ -799,9 +799,11 @@ fn demo_pad(t: f32) -> Pad {
 }
 
 fn window_conf() -> Conf {
+    // `SMS_SQUARE=1`: a square window, for skill-portrait reference captures.
+    let square = std::env::var_os("SMS_SQUARE").is_some();
     Conf {
         window_title: "libsms viewer".to_owned(),
-        window_width: 1280,
+        window_width: if square { 720 } else { 1280 },
         window_height: 720,
         ..Default::default()
     }
@@ -948,6 +950,10 @@ async fn main() {
     };
     let mut frame_no = 0u32;
     let mut sim_secs = 0.0f32;
+    // `SMS_PORTRAIT=fludd|pound|slide|air`: hold a skill portrait's pose for reference captures.
+    let portrait = std::env::var("SMS_PORTRAIT").ok();
+    // `SMS_CLEAN=1`: no course, water or HUD; only Mario and his effects on a keyable green.
+    let clean = std::env::var_os("SMS_CLEAN").is_some();
     let prof = std::env::var("SMS_PROF").is_ok();
     let mut prof_acc = [0.0f64; 5];
     // `SMS_CAM=yaw,pitch,dist` overrides the starting camera.
@@ -1021,6 +1027,10 @@ async fn main() {
             pad.r_analog = r;
             // All the way in is the click that crouches him (Ctrl): what the Rocket charges from.
             pad.r = r >= 255;
+        }
+        if portrait.as_deref() == Some("fludd") {
+            pad.r_analog = 255;
+            pad.r = true;
         }
         // `SMS_B=<frame>` presses B on that frame (for screenshots of the tongue).
         if std::env::var("SMS_B")
@@ -1107,6 +1117,17 @@ async fn main() {
             world.sounds.clear();
         });
         world.touch(&mut sim.mario);
+        // Reference captures: hold the pose each skill portrait uses (the FFI's
+        // sms_sim_portrait). The generated icons use the same poses.
+        if let Some(p) = portrait.as_deref() {
+            use libsms::anim::clip;
+            match p {
+                "pound" => sim.mario.portrait_pose(Status::HipDrop, clip::HIP_FALL, 22.0, 3, false),
+                "slide" => sim.mario.portrait_pose(Status::Catch, clip::DIVE, 50.0, 1, true),
+                "air" => sim.mario.portrait_pose(Status::Wait, clip::WAIT, 30.0, 0, false),
+                _ => {}
+            }
+        }
         // `K` hurts Mario from in front (for trying the knock-backs without a Stu);
         // `SMS_HIT=<frame>` does it on that frame (for screenshots).
         let hit_frame = std::env::var("SMS_HIT")
@@ -1144,8 +1165,13 @@ async fn main() {
 
         let t1 = std::time::Instant::now();
         // Render.
-        clear_background(Color::new(0.45, 0.65, 0.9, 1.0));
-        let target = mq(sim.mario.prev_pos.lerp(sim.mario.pos, sim.alpha())) + vec3(0.0, 1.0, 0.0);
+        clear_background(if clean {
+            Color::new(0.0, 1.0, 0.0, 1.0)
+        } else {
+            Color::new(0.45, 0.65, 0.9, 1.0)
+        });
+        let focus_y = std::env::var("SMS_TARGET_Y").ok().and_then(|v| v.parse().ok()).unwrap_or(1.0f32);
+        let target = mq(sim.mario.prev_pos.lerp(sim.mario.pos, sim.alpha())) + vec3(0.0, focus_y, 0.0);
         // `SMS_FOCUS=yoshi` follows Yoshi instead (for screenshots).
         let target = if focus_yoshi {
             mq(sim.mario.yoshi.pos) + vec3(0.0, 1.3, 0.0)
@@ -1171,7 +1197,9 @@ async fn main() {
             ..Default::default()
         };
         set_camera(&camera);
-        draw_world(&world);
+        if !clean {
+            draw_world(&world);
+        }
         match (&mut mario_model, &rig) {
             (Some(model), Some(r)) => {
                 let m = &sim.mario;
@@ -1193,7 +1221,9 @@ async fn main() {
                     0.01,
                     10000.0,
                 );
-                draw_shadow(&sim, sim.alpha());
+                if !clean {
+                    draw_shadow(&sim, sim.alpha());
+                }
                 let muzzles = model.draw(&sim, &joints, root, view, proj, get_time() as f32);
                 if let Some(f) = &sim.mario.fludd {
                     let kind = f.nozzle;
@@ -1217,7 +1247,7 @@ async fn main() {
                 }
                 // Fruit; Mario's rides his right hand (`getTakingMtx`), Yoshi's the tongue
                 // tip, shrinking as it comes in.
-                if let Some(pr) = props.as_mut().filter(|p| p.loaded()) {
+                if let Some(pr) = props.as_mut().filter(|p| !clean && p.loaded()) {
                     let hand = r.skeleton.find("jnt_hand_R").and_then(|h| joints.get(h));
                     let tongue = match sim.mario.yoshi.tongue.held {
                         Some(libsms::tongue::Held::Object { id, .. }) => Some(id),
@@ -1241,11 +1271,11 @@ async fn main() {
                         pr.draw(f.kind, at, view, proj);
                     }
                 }
-                if let Some(cm) = coin_model.as_mut() {
+                if let Some(cm) = coin_model.as_mut().filter(|_| !clean) {
                     cm.draw(&world.coins, sim.mario.ticks, S, view, proj);
                 }
                 // Stus walk their circle; one on the tongue rides the tip, shrinking in.
-                if let Some(sm) = stu_model.as_mut() {
+                if let Some(sm) = stu_model.as_mut().filter(|_| !clean) {
                     let t = &sim.mario.yoshi.tongue;
                     let on_tongue = match t.held {
                         Some(libsms::tongue::Held::Enemy { id }) => Some(id),
@@ -1274,12 +1304,17 @@ async fn main() {
         }
         match water_view.as_mut() {
             Some(v) => v.draw(&water, &camera, sim.mario.juice_color()),
-            None => draw_water_plain(&water),
+            None if !clean => draw_water_plain(&water),
+            None => {}
         }
         let t3 = std::time::Instant::now();
-        set_default_camera();
-        hud(&sim, &data_label, rig.as_ref(), show_help);
-        if show_help {
+        if clean {
+            // No 2D overlay; the capture is Mario and his effects alone.
+        } else {
+            set_default_camera();
+            hud(&sim, &data_label, rig.as_ref(), show_help);
+        }
+        if show_help && !clean {
             let music = audio
                 .as_ref()
                 .map_or("audio unavailable", |a| a.music_name());
@@ -1291,7 +1326,7 @@ async fn main() {
                 WHITE,
             );
         }
-        for (i, l) in world.log.iter().rev().enumerate() {
+        for (i, l) in world.log.iter().rev().filter(|_| !clean).enumerate() {
             draw_text(
                 l,
                 screen_width() - 300.0,

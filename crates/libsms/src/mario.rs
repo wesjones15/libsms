@@ -1106,6 +1106,21 @@ impl Mario {
 
     // ---- status changes -----------------------------------------------------------------
 
+    /// Presentation-only: hold a status, clip and frame for a portrait, without stepping the
+    /// game. Hosts build a throwaway sim for skill artwork; gameplay never calls this.
+    pub fn portrait_pose(&mut self, status: Status, clip: crate::anim::ClipName, frame: f32, state: u32, wet: bool) {
+        self.change_status(status, 0, true);
+        self.status_state = state;
+        self.status_timer = 0;
+        let anim = crate::anim::AnimState::new(clip, &self.anims);
+        self.anim = anim;
+        self.anim.frame = frame.max(0.0);
+        self.vel = Vec3::ZERO;
+        self.prev_pos = self.pos;
+        self.model_yaw = self.face_yaw;
+        self.wet_ground = wet;
+    }
+
     /// `changePlayerStatus`. Returns true if the status changed.
     pub fn change_status(&mut self, to: Status, arg: u32, force: bool) -> bool {
         if !force && to == self.status {

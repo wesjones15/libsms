@@ -114,6 +114,13 @@ impl FxLayer {
             };
             let first = b.first_vertex as usize;
             let verts = &fx.vertices[first..first + b.vertex_count as usize];
+            // `SMS_FX_OPACITY`: portrait captures dim the additive layers so the pose stays
+            // readable (the Unity icon generator does the same with MarioFx.Opacity).
+            let opacity = std::env::var("SMS_FX_OPACITY")
+                .ok()
+                .and_then(|v| v.parse::<f32>().ok())
+                .unwrap_or(1.0f32)
+                .clamp(0.0, 1.0);
             let vertices: Vec<Vertex> = verts
                 .iter()
                 .map(|v| {
@@ -123,7 +130,7 @@ impl FxLayer {
                         v.pos.z * scale,
                         v.u,
                         v.v,
-                        Color::new(v.color[0], v.color[1], v.color[2], v.color[3]),
+                        Color::new(v.color[0], v.color[1], v.color[2], v.color[3] * opacity),
                     )
                 })
                 .collect();
