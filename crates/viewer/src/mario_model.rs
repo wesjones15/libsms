@@ -84,7 +84,8 @@ impl MarioModel {
                     lo = lo.min(p); hi = hi.max(p);
                 }
             }
-            let scale = 1.05 / (hi - lo).max_element();
+            let scale = libsms_present::view::NOZZLE_PORTRAIT_SPANS[i] * 0.01
+                / (hi - lo).max_element();
             let at = [Vec3::new(0.0, 0.55, 0.0), Vec3::new(-0.66, -0.52, 0.0), Vec3::new(0.66, -0.52, 0.0)][i];
             let root = Mat4::from_translation(at)
                 * Mat4::from_rotation_y(2.54)

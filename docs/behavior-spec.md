@@ -706,5 +706,15 @@ green black/white tint and 180/255 alpha. The strip stretches to cover host coun
 beyond the original three digits. Image bounds include the backdrop; slide and pulse
 animations remain omitted. The headless coins example previews all three counters.
 
+### Air Pump portrait
+
+Air Pump's presentation-only still life uses `WaterGun.cpp::nozzleBmdData`'s original
+Hover, Turbo and Rocket geometry, arranged in a front-facing triangle with no Mario
+or Yoshi egg. `sms_view_nozzle_portrait` replaces the view's draw buffers for one
+frame; the regular update restores them. Native and viewer share the portrait spans:
+Hover 210 cm, Turbo/Rocket 105 cm, keeping the wider Hover visually comparable.
+The export is additive and does not change ABI 30 struct layouts.
+
 ### Water-boost texture animation
+
 The Turbo cone now loads 01_waterboost.btk (MarioEffect.cpp setBtk). TTK1 reuses the BCK Hermite channel reader, applies named material SRT matrices, and advances its separate texture clock at 60 animation frames/second. Independently moving layers rebake into stable texture slots at 30 Hz; shared hosts upload only changed versions. Asset checks verify motion, looping and stable texture storage; in-game visual confirmation remains manual.

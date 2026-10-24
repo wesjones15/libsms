@@ -212,6 +212,14 @@ pub struct SmsView {
     poisoned: bool,
 }
 
+/// Presentation-only Air Pump still life. Uses the existing model/draw readers.
+/// # Safety
+/// `view` must be a live Mario view from sms_view_new.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_nozzle_portrait(view: *mut SmsView) {
+    unsafe { with_view(view, (), |v| v.view.nozzle_portrait()) }
+}
+
 /// Loads Mario's models (and with `sound` non-zero, opens the default output device for the
 /// game's sounds, without music) from `assets_dir`. Null if the models can't be loaded. Free
 /// with [`sms_view_free`].

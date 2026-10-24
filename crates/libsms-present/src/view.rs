@@ -718,7 +718,49 @@ impl Textures {
     }
 }
 
+/// Air Pump composition spans in native centimetres: the wide Hover needs twice
+/// the span to give its shorter body the same visual weight as Turbo and Rocket.
+pub const NOZZLE_PORTRAIT_SPANS: [f32; 3] = [210.0, 105.0, 105.0];
+
 impl View {
+    /// Air Pump still life, from WaterGun.cpp's nozzleBmdData. Same bind geometry,
+    /// normalized size, triangle placement and orientation approved in the Rust viewer.
+    pub fn nozzle_portrait(&mut self) {
+        self.draws.clear(); self.positions.clear(); self.normals.clear();
+        self.uvs.clear(); self.colors.clear(); self.texture_ids.clear();
+        let places = [Vec3::new(0.0, 55.0, 0.0), Vec3::new(-66.0, -52.0, 0.0), Vec3::new(66.0, -52.0, 0.0)];
+        for (i, model) in [models::NOZZLES[1], models::NOZZLES[3], models::NOZZLES[2]].into_iter().enumerate() {
+            let mdl = &self.models[model as usize];
+            let bind = Pose::new(&mdl.bmd, Mat4::IDENTITY, &mdl.bind);
+            let mut lo = Vec3::splat(f32::INFINITY);
+            let mut hi = Vec3::splat(f32::NEG_INFINITY);
+            for b in &mdl.batches { for v in &b.vertices {
+                let p = bind.skin(v).0; lo = lo.min(p); hi = hi.max(p);
+            } }
+            let scale = NOZZLE_PORTRAIT_SPANS[i] / (hi - lo).max_element().max(0.001);
+            let root = Mat4::from_translation(places[i]) * Mat4::from_rotation_y(2.54)
+                * Mat4::from_scale(Vec3::splat(scale)) * Mat4::from_translation(-(lo + hi) * 0.5);
+            let pose = Pose::new(&mdl.bmd, root, &mdl.bind);
+            let first_vertex = self.positions.len() as u32;
+            let first_color = self.colors.len() as u32;
+            for (bi, b) in mdl.batches.iter().enumerate() {
+                for v in &b.vertices {
+                    let (p, n) = pose.skin(v);
+                    let n = n.normalize_or_zero();
+                    self.positions.push(p); self.normals.push(n);
+                    self.uvs.push(match mdl.batch_env[bi] {
+                        Some(mtx) => { let w = Vec3::new(-n.x, n.y, n.z); env_uv(w.dot(self.right), w.dot(self.up), mtx) },
+                        None => [v.uv[0].x, v.uv[0].y],
+                    });
+                }
+                self.texture_ids.push(mdl.batch_texture[bi]);
+                self.colors.push(mdl.batch_color[bi]);
+            }
+            self.draws.push(Draw { key: (model as u64) << 56, model, kind: model as u8,
+                flags: 0, pos: Vec3::ZERO, rot: Quat::IDENTITY, first_vertex, first_color, alpha: 1.0 });
+        }
+    }
+
     /// Loads Mario's models, rig and clips from the extracted `assets/` folder.
     pub fn load(dir: &Path) -> Result<View, String> {
         View::load_look(dir, Look::Mario)
