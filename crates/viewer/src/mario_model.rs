@@ -69,6 +69,34 @@ pub struct MarioModel {
 }
 
 impl MarioModel {
+    /// Native nozzle-only still life for Air Pump. WaterGun.cpp's nozzleBmdData:
+    /// hover_wg, back_wg, rocket_wg. Each keeps its own disc geometry/materials.
+    pub fn draw_nozzle_group(&mut self, view: Mat4, proj: Mat4) {
+        let lights = Lights::daylight(view);
+        for (i, slot) in [1usize, 3, 2].into_iter().enumerate() {
+            let Some(part) = self.nozzles[slot].as_mut() else { continue };
+            let bind_pose = Pose::new(&part.model.bmd, Mat4::IDENTITY, &part.bind);
+            let mut lo = Vec3::splat(f32::INFINITY);
+            let mut hi = Vec3::splat(f32::NEG_INFINITY);
+            for b in part.model.bmd.batches().expect("nozzle geometry") {
+                for v in b.vertices {
+                    let p = bind_pose.skin(&v).0;
+                    lo = lo.min(p); hi = hi.max(p);
+                }
+            }
+            let scale = 1.05 / (hi - lo).max_element();
+            let at = [Vec3::new(0.0, 0.55, 0.0), Vec3::new(-0.66, -0.52, 0.0), Vec3::new(0.66, -0.52, 0.0)][i];
+            let root = Mat4::from_translation(at)
+                * Mat4::from_rotation_y(2.54)
+                * Mat4::from_scale(Vec3::splat(scale))
+                * Mat4::from_translation(-(lo + hi) * 0.5);
+            let pose = Pose::new(&part.model.bmd, root, &part.bind);
+            for pass in [Pass::Opaque, Pass::Translucent] {
+                self.renderer.draw(&mut part.model, &pose, view, proj, &lights, &Look::default(), pass);
+            }
+        }
+    }
+
     pub fn load(dir: &Path) -> Result<MarioModel, String> {
         let mut r = Renderer::new();
         let body = Part::load(&mut r, dir, paths::BODY)?;

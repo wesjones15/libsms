@@ -1,6 +1,6 @@
 //! The game's particle effects (the nozzle's mist, smoke, dust, bursts, the Rocket's exhaust),
 //! run by `libsms-present`'s `View` exactly as the hosts do, and drawn here as textured quads
-//! with macroquad. Refraction batches (the water's heat haze) aren't drawn. The viewer's own
+//! with macroquad, including projected framebuffer ribbons. The viewer's own
 //! Mario and water don't come from the view; only the effects do, so the models it also poses are
 //! unused here.
 
@@ -43,9 +43,25 @@ pub struct FxLayer {
     textures: Vec<Option<(u32, Texture2D)>>,
     additive: Material,
     alpha: Material,
+    refraction: Material,
+    scene: Option<Texture2D>,
+    wave_masks: Vec<Option<Texture2D>>,
 }
 
 impl FxLayer {
+    pub fn capture_report(&self) {
+        let fx = &self.view.fx;
+        let refs: Vec<_> = fx.batches.iter().filter(|b| b.blend == blend::REFRACTION).collect();
+        eprintln!("fx batches={} refraction={}", fx.batches.len(), refs.len());
+        for b in refs {
+            let tex = &fx.textures[b.texture as usize];
+            eprintln!("ribbon mask peak={} covered={}", tex.rgba.chunks_exact(4).map(|p| p[2]).max().unwrap_or(0), tex.rgba.chunks_exact(4).filter(|p| p[2]>16).count());
+            let mut lo = libsms::Vec3::splat(f32::INFINITY);
+            let mut hi = libsms::Vec3::splat(f32::NEG_INFINITY);
+            for v in &fx.vertices[b.first_vertex as usize..(b.first_vertex+b.vertex_count) as usize] { lo=lo.min(v.pos); hi=hi.max(v.pos); }
+            eprintln!("ribbon vertices={} bounds {:?}..{:?}", b.vertex_count, lo, hi);
+        }
+    }
     pub fn load(dir: &Path) -> Option<FxLayer> {
         let view = View::load(dir).ok()?;
         let material = |dst: BlendFactor| {
@@ -75,6 +91,32 @@ impl FxLayer {
             textures: Vec::new(),
             additive: material(BlendFactor::One)?,
             alpha: material(BlendFactor::OneMinusValue(BlendValue::SourceAlpha))?,
+            refraction: load_material(ShaderSource::Glsl { vertex: VERTEX, fragment: r#"#version 100
+precision mediump float;
+varying lowp vec2 uv;
+uniform sampler2D Texture;
+uniform sampler2D Scene;
+uniform vec2 Screen;
+void main() {
+    vec4 wave = texture2D(Texture, uv);
+    float coverage = wave.b;
+    if (coverage < 0.0039) discard;
+    vec2 offset = (vec2(wave.a, wave.g) * 2.0 - 1.0) / 4.0;
+    vec2 screenUV = gl_FragCoord.xy / Screen;
+    vec3 behind = texture2D(Scene, screenUV + offset * 0.035).rgb;
+    gl_FragColor = vec4(behind, coverage);
+}"# }, MaterialParams {
+                pipeline_params: PipelineParams {
+                    color_blend: Some(BlendState::new(Equation::Add, BlendFactor::Value(BlendValue::SourceAlpha), BlendFactor::OneMinusValue(BlendValue::SourceAlpha))),
+                    depth_test: Comparison::LessOrEqual, depth_write: false,
+                    ..Default::default()
+                },
+                uniforms: vec![UniformDesc::new("Screen", UniformType::Float2)],
+                textures: vec!["Scene".into()],
+                ..Default::default()
+            }).ok()?,
+            scene: None,
+            wave_masks: Vec::new(),
         })
     }
 
@@ -96,17 +138,25 @@ impl FxLayer {
     pub fn draw(&mut self, scale: f32) {
         let fx = &self.view.fx;
         self.textures.resize_with(fx.textures.len(), || None);
-        for (slot, t) in self.textures.iter_mut().zip(&fx.textures) {
+        self.wave_masks.resize_with(fx.textures.len(), || None);
+        for (i, (slot, t)) in self.textures.iter_mut().zip(&fx.textures).enumerate() {
             if slot.as_ref().is_some_and(|(v, _)| *v == t.version) {
                 continue;
             }
             let tex = Texture2D::from_rgba8(t.width as u16, t.height as u16, &t.rgba);
             tex.set_filter(FilterMode::Linear);
             *slot = Some((t.version, tex));
+            let rgba: Vec<u8> = t.rgba.chunks_exact(4).flat_map(|p| [255, 255, 255, p[2]]).collect();
+            self.wave_masks[i] = Some(Texture2D::from_rgba8(t.width as u16, t.height as u16, &rgba));
         }
         for b in &fx.batches {
-            if b.blend > blend::ALPHA {
-                continue;
+            if b.blend == blend::REFRACTION {
+                // Capture the current scene: this authored ribbon reads the framebuffer.
+                let shot = get_screen_data();
+                if let Some(scene) = self.scene.as_ref() { scene.update(&shot); }
+                else { self.scene = Some(Texture2D::from_image(&shot)); }
+                self.refraction.set_texture("Scene", self.scene.as_ref().unwrap().clone());
+                self.refraction.set_uniform("Screen", vec2(screen_width(), screen_height()));
             }
             let Some((_, tex)) = self.textures.get(b.texture as usize).and_then(|t| t.as_ref())
             else {
@@ -140,7 +190,16 @@ impl FxLayer {
                     [o, o + 1, o + 2, o, o + 2, o + 3]
                 })
                 .collect();
-            gl_use_material(if b.blend == blend::ADDITIVE {
+            if b.blend == blend::REFRACTION {
+                let mut tinted = vertices.clone();
+                let opacity = std::env::var("SMS_WAVE_TINT").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.35);
+                for v in &mut tinted { v.color = Color::new(0.75, 0.9, 1.0, opacity).into(); }
+                gl_use_material(&self.alpha);
+                draw_mesh(&Mesh { vertices: tinted, indices: indices.clone(), texture: self.wave_masks[b.texture as usize].clone() });
+            }
+            gl_use_material(if b.blend == blend::REFRACTION {
+                &self.refraction
+            } else if b.blend == blend::ADDITIVE {
                 &self.additive
             } else {
                 &self.alpha

@@ -214,6 +214,10 @@ impl World {
 
 impl Host for World {
     fn ground(&self, p: V3) -> Option<GroundHit> {
+        if std::env::var_os("SMS_PORTRAIT").is_some() {
+            return Some(GroundHit { height: 0.0, normal: V3::Y,
+                flags: if std::env::var("SMS_PORTRAIT").as_deref() == Ok("slide") { SurfaceFlags(SurfaceFlags::WET) } else { SurfaceFlags::NONE } });
+        }
         let mut best: Option<GroundHit> = None;
         let mut consider = |h: f32, n: V3| {
             if h <= p.y && best.is_none_or(|b| h > b.height) {
@@ -242,6 +246,7 @@ impl Host for World {
     }
 
     fn roof(&self, p: V3) -> Option<RoofHit> {
+        if std::env::var_os("SMS_PORTRAIT").is_some() { return None; }
         let mut best: Option<f32> = None;
         for b in &self.blocks {
             if b.min.y > p.y
@@ -261,6 +266,7 @@ impl Host for World {
     }
 
     fn walls(&self, center: V3, radius: f32, max: usize, out: &mut Vec<WallHit>) -> V3 {
+        if std::env::var_os("SMS_PORTRAIT").is_some() { return center; }
         let mut c = center;
         let mut hits: Vec<(f32, WallHit)> = Vec::new();
         for b in &self.blocks {
@@ -952,6 +958,18 @@ async fn main() {
     let mut sim_secs = 0.0f32;
     // `SMS_PORTRAIT=fludd|pound|slide|air`: hold a skill portrait's pose for reference captures.
     let portrait = std::env::var("SMS_PORTRAIT").ok();
+    if portrait.as_deref() == Some("pound") {
+        sim.mario.pos.y = 20000.0;
+        sim.mario.prev_pos = sim.mario.pos;
+        sim.mario.portrait_pose(Status::HipDrop, libsms::anim::clip::HIP_FALL, 22.0, 3, false);
+    }
+    if portrait.as_deref() == Some("slide") {
+        sim.mario.options.slide_fx_scale = std::env::var("SMS_SLIDE_FX_SCALE").ok().and_then(|v| v.parse().ok()).unwrap_or(1.4);
+        sim.mario.limits.wet_slide = Some(libsms::WetSlide::timed(240, true));
+        sim.mario.launch(V3::new(0.0, 0.0, 45.0));
+        sim.mario.portrait_pose(Status::Catch, libsms::anim::clip::DIVE, 50.0, 1, true);
+        sim.mario.vel = V3::new(0.0, 0.0, 45.0);
+    }
     // `SMS_CLEAN=1`: no course, water or HUD; only Mario and his effects on a keyable green.
     let clean = std::env::var_os("SMS_CLEAN").is_some();
     let prof = std::env::var("SMS_PROF").is_ok();
@@ -968,7 +986,9 @@ async fn main() {
     }
 
     loop {
-        let dt = get_frame_time().min(0.1);
+        let dt = if portrait.is_some() && std::env::var_os("SMS_SHOT").is_some() {
+            1.0 / 120.0
+        } else { get_frame_time().min(0.1) };
         sim_secs += dt;
 
         // Camera.
@@ -1116,14 +1136,12 @@ async fn main() {
             }
             world.sounds.clear();
         });
-        world.touch(&mut sim.mario);
+        if portrait.is_none() { world.touch(&mut sim.mario); }
         // Reference captures: hold the pose each skill portrait uses (the FFI's
         // sms_sim_portrait). The generated icons use the same poses.
         if let Some(p) = portrait.as_deref() {
             use libsms::anim::clip;
             match p {
-                "pound" => sim.mario.portrait_pose(Status::HipDrop, clip::HIP_FALL, 22.0, 3, false),
-                "slide" => sim.mario.portrait_pose(Status::Catch, clip::DIVE, 50.0, 1, true),
                 "air" => sim.mario.portrait_pose(Status::Wait, clip::WAIT, 30.0, 0, false),
                 _ => {}
             }
@@ -1151,7 +1169,7 @@ async fn main() {
         while water_ticks >= 4 {
             water_ticks -= 4;
             water.step(&world, sim.mario.pos);
-            if sim.mario.wet_sliding() {
+            if sim.mario.wet_sliding() && portrait.is_none() {
                 water.slide_splashes(sim.mario.pos);
             }
             if let Some(v) = water_view.as_mut() {
@@ -1166,19 +1184,26 @@ async fn main() {
         let t1 = std::time::Instant::now();
         // Render.
         clear_background(if clean {
-            Color::new(0.0, 1.0, 0.0, 1.0)
+            if portrait.as_deref() == Some("air") { Color::new(0.78, 0.32, 0.07, 1.0) }
+            else if portrait.as_deref() == Some("fludd") { Color::new(0.06, 0.26, 0.56, 1.0) }
+            else if portrait.as_deref() == Some("slide") { Color::new(0.06, 0.30, 0.13, 1.0) }
+            else { Color::new(0.035, 0.045, 0.065, 1.0) }
         } else {
             Color::new(0.45, 0.65, 0.9, 1.0)
         });
         let focus_y = std::env::var("SMS_TARGET_Y").ok().and_then(|v| v.parse().ok()).unwrap_or(1.0f32);
-        let target = mq(sim.mario.prev_pos.lerp(sim.mario.pos, sim.alpha())) + vec3(0.0, focus_y, 0.0);
+        let offset = std::env::var("SMS_TARGET_Z").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0);
+        let right_offset = std::env::var("SMS_TARGET_X").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0);
+        let target = if portrait.as_deref() == Some("air") { vec3(0.0, 0.0, 0.0) } else {
+            mq(sim.mario.prev_pos.lerp(sim.mario.pos, sim.alpha())) + vec3(right_offset, focus_y, offset)
+        };
         // `SMS_FOCUS=yoshi` follows Yoshi instead (for screenshots).
         let target = if focus_yoshi {
             mq(sim.mario.yoshi.pos) + vec3(0.0, 1.3, 0.0)
         } else {
             target
         };
-        cam_target = cam_target.lerp(target, (dt * 8.0).min(1.0));
+        cam_target = if portrait.is_some() { target } else { cam_target.lerp(target, (dt * 8.0).min(1.0)) };
         let eye = cam_target
             + vec3(
                 cam_a.sin() * cam_p.cos(),
@@ -1224,14 +1249,17 @@ async fn main() {
                 if !clean {
                     draw_shadow(&sim, sim.alpha());
                 }
-                let muzzles = model.draw(&sim, &joints, root, view, proj, get_time() as f32);
+                let muzzles = if portrait.as_deref() == Some("air") {
+                    model.draw_nozzle_group(view, proj);
+                    Vec::new()
+                } else { model.draw(&sim, &joints, root, view, proj, get_time() as f32) };
                 if let Some(f) = &sim.mario.fludd {
                     let kind = f.nozzle;
                     sim.mario.set_emitters(kind, &muzzles);
                 }
                 // Yoshi under Mario (his root is Mario's while ridden) and the eggs. The
                 // posed mouth goes back to the sim for the tongue and the juice.
-                if let Some(ym) = yoshi_model.as_mut() {
+                if let Some(ym) = yoshi_model.as_mut().filter(|_| portrait.is_none()) {
                     if let Some(look) = sim.mario.yoshi_look() {
                         let at = look.mounted.then_some(root);
                         if let Some((p, x)) = ym.draw(&look, at, view, proj) {
@@ -1351,6 +1379,8 @@ async fn main() {
                 None => frame_no == at,
             };
             if due {
+                eprintln!("portrait {:?}: {:?}, position {:?}, wet={}, pounding={}", portrait, sim.mario.status, sim.mario.pos, sim.mario.wet_sliding(), sim.mario.pounding());
+                if let Some(fx) = fx_layer.as_ref() { fx.capture_report(); }
                 get_screen_data().export_png(&path);
                 break;
             }
