@@ -1187,6 +1187,7 @@ async fn main() {
             if portrait.as_deref() == Some("air") { Color::new(0.78, 0.32, 0.07, 1.0) }
             else if portrait.as_deref() == Some("fludd") { Color::new(0.06, 0.26, 0.56, 1.0) }
             else if portrait.as_deref() == Some("slide") { Color::new(0.06, 0.30, 0.13, 1.0) }
+            else if portrait.as_deref() == Some("pound") { Color::from_rgba(116, 70, 158, 255) }
             else { Color::new(0.035, 0.045, 0.065, 1.0) }
         } else {
             Color::new(0.45, 0.65, 0.9, 1.0)
