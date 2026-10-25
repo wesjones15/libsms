@@ -13,7 +13,7 @@
 //! host mirrors each instance across its own X.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use glam::{Mat4, Quat, Vec3};
 use libsms::{Clip, ClipLibrary, Event, FxAt, Mario, NozzleKind, ParticleCue, Sim, Skeleton};
@@ -34,6 +34,10 @@ use crate::tev::{Baked, C4, Inputs, Source, Tex, env_uv};
 mod entrance;
 pub use entrance::{Entrance, entrance_fall, entrance_pose, ENTRANCE_RETURN};
 
+#[path = "luigi_skin.rs"]
+mod luigi_skin;
+pub use luigi_skin::{HsdBatch, Luigi, LUIGI_HANG_OFFSET, LUIGI_ROD_SHAPE};
+
 /// Model indices.
 pub mod models {
     pub const BODY: u32 = 0;
@@ -47,7 +51,10 @@ pub mod models {
     pub const NOZZLES: [u32; 5] = [7, 8, 9, 10, 11];
     /// The Turbo dash's water-boost cone, there when the disc's files are.
     pub const WATERBOOST: u32 = 12;
-    pub const COUNT: usize = 13;
+    /// Luigi's HSD mesh (Melee assets), posed by the same Sunshine clips through the retarget,
+    /// wearing his own FLUDD. Only present when the Melee cache was loaded ([`View::set_luigi`]).
+    pub const LUIGI: u32 = 13;
+    pub const COUNT: usize = 14;
 }
 
 /// Largest baked texture side.
@@ -357,6 +364,10 @@ pub struct View {
     pub uvs: Vec<[f32; 2]>,
     pub colors: Vec<C4>,
     pub texture_ids: Vec<i32>,
+    /// Luigi's HSD mesh, when the Melee cache was loaded ([`Self::set_luigi`]).
+    pub luigi: Option<Luigi>,
+    /// The Sunshine assets folder, kept for loading Luigi's rig and clips later.
+    assets_dir: PathBuf,
 }
 
 /// `PARTICLE_MS_M_SPHIPD_A..D` (`TMario::emitBlurHipDropSuper`).
@@ -748,6 +759,20 @@ impl Textures {
 /// the span to give its shorter body the same visual weight as Turbo and Rocket.
 pub const NOZZLE_PORTRAIT_SPANS: [f32; 3] = [210.0, 105.0, 105.0];
 
+/// The lowest skinned point of a J3D model for `joints`, in model space (decomp units), as the
+/// viewer's `MarioModel::lowest`: Luigi's alt-skin anchors his own lowest point to this so he
+/// stands, dives and hangs where Mario does.
+fn body_lowest(model: &Model, joints: &[Mat4]) -> f32 {
+    let pose = Pose::new(&model.bmd, Mat4::IDENTITY, joints);
+    let mut low = f32::INFINITY;
+    for b in &model.batches {
+        for v in &b.vertices {
+            low = low.min(pose.skin(v).0.y);
+        }
+    }
+    low
+}
+
 impl View {
     /// Air Pump still life, from WaterGun.cpp's nozzleBmdData. Same bind geometry,
     /// normalized size, triangle placement and orientation approved in the Rust viewer.
@@ -983,6 +1008,8 @@ impl View {
             uvs: Vec::new(),
             colors: Vec::new(),
             texture_ids: Vec::new(),
+            luigi: None,
+            assets_dir: dir.to_path_buf(),
         })
     }
 
@@ -1061,6 +1088,8 @@ impl View {
             uvs,
             colors,
             texture_ids,
+            luigi: None,
+            assets_dir: PathBuf::new(),
         })
     }
 
@@ -1148,6 +1177,8 @@ impl View {
             uvs: Vec::new(),
             colors: Vec::new(),
             texture_ids: Vec::new(),
+            luigi: None,
+            assets_dir: PathBuf::new(),
         };
         view.update_shine(0.0, Vec3::ZERO, 0, 0, 0.0, 1.0, false);
         Ok(view)
@@ -1266,6 +1297,22 @@ impl View {
         self.skin = skin;
     }
 
+    /// Loads Luigi's HSD mesh from the Melee cache (alongside the Sunshine assets this view was
+    /// built from), making [`Skin::Luigi`] drawable. False when the cache is incomplete, so a
+    /// host can offer the skin only then.
+    pub fn set_luigi(&mut self, melee_dir: &Path) -> bool {
+        match Luigi::load(melee_dir, &self.assets_dir, &mut self.textures) {
+            Ok(luigi) => {
+                self.luigi = Some(luigi);
+                true
+            }
+            Err(_) => {
+                self.luigi = None;
+                false
+            }
+        }
+    }
+
     pub fn set_muzzles(&mut self, muzzles: &[Mat4]) {
         self.host_muzzles.clear();
         self.host_muzzles.extend_from_slice(muzzles);
@@ -1381,21 +1428,57 @@ impl View {
         // `|m[1][0]| * (unk1D04 - unk1D06) + unk1D06`, 0 and -0x1800), posed by the sim's clip;
         // the nozzle on `nozzle_center` with its own clip and the aiming callbacks.
         let deg = |a: f32| a * std::f32::consts::PI / 32768.0;
-        let fludd_base = look
-            .and(self.chest)
-            .and_then(|c| joints.get(c))
-            .map(|chest| {
-                let lean = chest.x_axis.truncate().normalize_or_zero().y.abs();
-                *chest * Mat4::from_rotation_z(deg(lean * 6144.0 - 6144.0))
-            });
+        // Luigi's HSD body: posed by the same clip through the retarget, anchored to Mario's
+        // lowest point, and his chest frame for FLUDD. None when the skin is Mario or the Melee
+        // cache never loaded.
+        let mut luigi_world: Option<Vec<Mat4>> = None;
+        let mut luigi_chest: Option<Mat4> = None;
+        if self.skin == Skin::Luigi
+            && let Some(luigi) = self.luigi.as_mut()
+            && let Some(mut world) = luigi.pose(m.anim.clip, m.anim.frame_before(back))
+        {
+            // Luigi's rig carries Mario's clip as rotations only, so it loses the root motion
+            // the clips carry (the dive's drop, the hang's drop, the idle's bob). Anchor his
+            // lowest point to the drawn Mario's: feet to feet, belly to belly.
+            let mario_lowest = body_lowest(&self.models[models::BODY as usize], &joints);
+            let anchor = (mario_lowest - luigi.lowest(&world) * 10.0) * 0.1;
+            for mtx in &mut world {
+                mtx.w_axis.y += anchor;
+            }
+            // Hanging, he sits a touch lower and further off the wall than the anchor puts him.
+            if m.status == libsms::Status::Hanging {
+                for mtx in &mut world {
+                    mtx.w_axis.y -= LUIGI_HANG_OFFSET.0 * 0.1;
+                    mtx.w_axis.z -= LUIGI_HANG_OFFSET.1 * 0.1;
+                }
+            }
+            luigi_chest = Some(luigi.chest(&world));
+            luigi_world = Some(world);
+        }
+        // Mario's chest, or Luigi's `WaistN`-aligned chest, carrying FLUDD.
+        let chest_frame = luigi_chest.or_else(|| look.and(self.chest).and_then(|c| joints.get(c)).copied());
+        let fludd_base = chest_frame.map(|chest| {
+            let lean = chest.x_axis.truncate().normalize_or_zero().y.abs();
+            chest * Mat4::from_rotation_z(deg(lean * 6144.0 - 6144.0))
+        });
         let fludd = &self.models[models::FLUDD as usize].bmd;
-        let fludd_joints = fludd.pose(
+        let mut fludd_joints = fludd.pose(
             |j| {
                 look.and_then(|l| self.fludd_clips.get(l.body_clip))
                     .and_then(|c| c.sample(j, look.map_or(0.0, |l| l.body_frame)))
             },
             |_| None,
         );
+        // The Spray neck leans out of the way of Luigi's taller head, to the side he aims past;
+        // the frame rod (shape 3) hides while it is swung out. The game's Mario keeps the
+        // authored neck.
+        let mut fludd_hidden: Vec<usize> = Vec::new();
+        if let Some(luigi) = self.luigi.as_mut() {
+            let deployed = m.fludd.as_ref().is_some_and(|f| f.housed < 0.5);
+            if luigi.lean_fludd(&mut fludd_joints, look, deployed, dt) {
+                fludd_hidden.push(LUIGI_ROD_SHAPE);
+            }
+        }
         let slot = look.map(|l| match l.nozzle {
             NozzleKind::Spray => 0,
             NozzleKind::Hover | NozzleKind::Underwater => 1,
@@ -1598,26 +1681,31 @@ impl View {
             Some((models::WATERBOOST, at, js))
         });
 
-        let mut parts: Vec<(u32, Mat4, &[Mat4])> =
-            vec![(models::BODY, Mat4::IDENTITY, &joints)];
-        if let Some(h) = self.head.and_then(|h| joints.get(h)) {
-            let cap = if return_landing && m.anim.frame < 157. { self.return_parts.map_or(models::CAP, |p| p[0]) } else { models::CAP };
-            parts.push((
-                cap,
-                *h,
-                &self.models[models::CAP as usize].bind,
-            ));
-        }
-        let set = match hands {
-            Hands::Open => Some(models::HAND_OPEN),
-            Hands::Fists => Some(models::FIST),
-            Hands::Body => None,
-        };
-        if let Some(set) = set {
-            for (model, joint) in set.into_iter().zip(self.hand_joints) {
-                let model = if return_landing && model == models::FIST[0] && m.anim.frame < 158. { self.return_parts.map_or(model, |p| p[1]) } else { model };
-                if let Some(at) = joint.and_then(|j| joints.get(j)) {
-                    parts.push((model, *at, &self.models[model as usize].bind));
+        // Mario's own parts: body, cap and hands. Luigi's body is the HSD mesh drawn below; his
+        // FLUDD and nozzle are the same models, on his chest.
+        let luigi_body = self.skin == Skin::Luigi;
+        let mut parts: Vec<(u32, Mat4, &[Mat4])> = Vec::new();
+        if !luigi_body {
+            parts.push((models::BODY, Mat4::IDENTITY, &joints));
+            if let Some(h) = self.head.and_then(|h| joints.get(h)) {
+                let cap = if return_landing && m.anim.frame < 157. { self.return_parts.map_or(models::CAP, |p| p[0]) } else { models::CAP };
+                parts.push((
+                    cap,
+                    *h,
+                    &self.models[models::CAP as usize].bind,
+                ));
+            }
+            let set = match hands {
+                Hands::Open => Some(models::HAND_OPEN),
+                Hands::Fists => Some(models::FIST),
+                Hands::Body => None,
+            };
+            if let Some(set) = set {
+                for (model, joint) in set.into_iter().zip(self.hand_joints) {
+                    let model = if return_landing && model == models::FIST[0] && m.anim.frame < 158. { self.return_parts.map_or(model, |p| p[1]) } else { model };
+                    if let Some(at) = joint.and_then(|j| joints.get(j)) {
+                        parts.push((model, *at, &self.models[model as usize].bind));
+                    }
                 }
             }
         }
@@ -1643,6 +1731,7 @@ impl View {
             let mirror_rot = |n: Vec3| rot * Vec3::new(-n.x, n.y, n.z);
             for (bi, b) in mdl.batches.iter().enumerate() {
                 let hide = (model == models::BODY && hidden.contains(&b.shape))
+                    || (model == models::FLUDD && fludd_hidden.contains(&b.shape))
                     || mdl.bmd.materials[b.material].cull == Cull::All;
                 let env = mdl.batch_env[bi];
                 for v in &b.vertices {
@@ -1694,6 +1783,29 @@ impl View {
                 alpha: 1.0,
             });
         }
+        // Luigi's HSD body: CPU-skinned into the same buffers as the parts, ×10 from Melee
+        // units into Sunshine's decomp units, drawn as one instance of model [`models::LUIGI`].
+        if let (Some(luigi), Some(world)) = (self.luigi.as_ref(), luigi_world.as_ref()) {
+            let (first_vertex, first_color) = luigi.skin_into(
+                world,
+                &mut self.positions,
+                &mut self.normals,
+                &mut self.uvs,
+                &mut self.colors,
+                &mut self.texture_ids,
+            );
+            self.draws.push(Draw {
+                key: (models::LUIGI as u64) << 56,
+                model: models::LUIGI,
+                kind: models::LUIGI as u8,
+                flags,
+                pos: draw_pos,
+                rot: draw_rot,
+                first_vertex,
+                first_color,
+                alpha: 1.0,
+            });
+        }
         if let Some(f) = &sim.mario.fludd {
             let kind = f.nozzle;
             sim.mario.set_emitters(kind, &muzzles);
@@ -1711,6 +1823,48 @@ mod tests {
             Ok(v) => Some(v),
             Err(e) => panic!("loading Mario's models: {e}"),
         }
+    }
+
+    /// The Melee cache (`SSBM_ASSETS`, or the sibling libssbm checkout's assets), if present.
+    fn melee_dir() -> Option<std::path::PathBuf> {
+        std::env::var_os("SSBM_ASSETS").map(std::path::PathBuf::from).or_else(|| {
+            let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../libssbm/assets");
+            p.is_dir().then_some(p)
+        })
+    }
+
+    #[test]
+    fn luigi_skin_loads_his_hsd_mesh_and_skins_the_wait_pose() {
+        let Some(dir) = libsms::assets::find(None) else {
+            eprintln!("SKIP: Sunshine assets absent");
+            return;
+        };
+        let Some(melee) = melee_dir() else {
+            eprintln!("SKIP: Melee cache absent");
+            return;
+        };
+        let mut v = View::load(&dir).unwrap();
+        assert!(v.set_luigi(&melee), "Luigi's HSD mesh should load from the Melee cache");
+        let luigi = v.luigi.as_mut().unwrap();
+        assert!(!luigi.batches.is_empty() && luigi.vertex_count > 0, "HSD batches and vertices");
+        assert!(!luigi.indices.is_empty(), "HSD triangle indices");
+        let world = luigi.pose("wait", 0.0).expect("the wait clip");
+        assert!(world.len() >= 40, "Luigi's 61-joint rig, got {}", world.len());
+        assert!(luigi.lowest(&world).is_finite(), "a finite lowest point");
+        let mut positions = Vec::new();
+        let mut normals = Vec::new();
+        let mut uvs = Vec::new();
+        let mut colors = Vec::new();
+        let mut texture_ids = Vec::new();
+        let (first_vertex, first_color) =
+            luigi.skin_into(&world, &mut positions, &mut normals, &mut uvs, &mut colors, &mut texture_ids);
+        assert_eq!((first_vertex, first_color), (0, 0));
+        assert_eq!(positions.len(), luigi.vertex_count);
+        assert_eq!(uvs.len(), luigi.vertex_count);
+        assert_eq!(colors.len(), luigi.batches.len());
+        assert_eq!(texture_ids.len(), luigi.batches.len());
+        assert!(positions.iter().all(|p| p.is_finite()), "skinned vertices are finite");
+        assert!(positions.iter().any(|p| p.y.abs() > 10.0), "the body is not collapsed to a point");
     }
 
     fn shine() -> Option<View> {

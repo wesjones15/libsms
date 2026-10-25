@@ -32,6 +32,7 @@ use std::path::PathBuf;
 
 use glam::{Mat4, Vec3, Vec4};
 use libsms_present::particles::{FxBatch, FxVertex};
+use libsms_present::view::models;
 use libsms_present::water::WaterVertex;
 use libsms_present::{Audio, View, WaterLook};
 
@@ -228,6 +229,24 @@ pub unsafe extern "C" fn sms_view_skin(view: *mut SmsView, skin: u32) {
             })
         })
     }
+}
+
+/// Loads Luigi's HSD mesh from the Melee cache so [`sms_view_skin`]'s Luigi draws his body. 1
+/// when the cache was complete; 0 (and the view keeps drawing Mario) otherwise, so a host can
+/// offer the skin only then. The view must have been built from the same Sunshine assets as the
+/// clips Luigi's retarget reads.
+///
+/// # Safety
+/// `view` must be a live Mario view from sms_view_new; `melee_dir` a nul-terminated UTF-8 path.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_set_luigi(view: *mut SmsView, melee_dir: *const c_char) -> u8 {
+    if melee_dir.is_null() {
+        return 0;
+    }
+    let dir = unsafe { std::ffi::CStr::from_ptr(melee_dir) }
+        .to_string_lossy()
+        .into_owned();
+    unsafe { with_view(view, 0, |v| v.view.set_luigi(std::path::Path::new(&dir)) as u8) }
 }
 
 /// Presentation-only Air Pump still life. Uses the existing model/draw readers.
@@ -708,7 +727,7 @@ pub(crate) unsafe fn with_view<R>(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_view_model_count(view: *mut SmsView) -> u32 {
     // SAFETY: as documented.
-    unsafe { with_view(view, 0, |v| v.view.models.len() as u32) }
+    unsafe { with_view(view, 0, |v| v.view.models.len() as u32 + v.view.luigi.is_some() as u32) }
 }
 
 /// # Safety
@@ -722,6 +741,20 @@ pub unsafe extern "C" fn sms_view_model(
     // SAFETY: as documented.
     unsafe {
         with_view(view, 0, |v| {
+            if model == models::LUIGI {
+                let (Some(l), Some(out)) = (&v.view.luigi, out.as_mut()) else {
+                    return 0;
+                };
+                *out = SmsModelInfo {
+                    vertex_count: l.vertex_count as u32,
+                    index_count: l.indices.len() as u32,
+                    batch_count: l.batches.len() as u32,
+                    texture_count: v.view.textures.list.len() as u32,
+                    lo: l.lo.into(),
+                    hi: l.hi.into(),
+                };
+                return 1;
+            }
             let (Some(m), Some(out)) = (v.view.models.get(model as usize), out.as_mut()) else {
                 return 0;
             };
@@ -752,6 +785,30 @@ pub unsafe extern "C" fn sms_view_batches(
     // SAFETY: as documented.
     unsafe {
         with_view(view, 0, |v| {
+            if model == models::LUIGI {
+                let Some(l) = &v.view.luigi else {
+                    return 0;
+                };
+                let mut n = 0;
+                for b in &l.batches {
+                    if n >= max as usize || out.is_null() {
+                        break;
+                    }
+                    out.add(n).write(SmsBatch {
+                        first_index: b.first_index,
+                        index_count: b.index_count,
+                        first_vertex: b.first_vertex,
+                        vertex_count: b.vertex_count,
+                        texture: b.texture,
+                        blend: b.blend,
+                        lit: b.lit,
+                        cull: 2,
+                        env: 0,
+                    });
+                    n += 1;
+                }
+                return n as u32;
+            }
             let Some(m) = v.view.models.get(model as usize) else {
                 return 0;
             };
@@ -796,6 +853,17 @@ pub unsafe extern "C" fn sms_view_indices(
     // SAFETY: as documented.
     unsafe {
         with_view(view, 0, |v| {
+            if model == models::LUIGI {
+                let Some(l) = &v.view.luigi else {
+                    return 0;
+                };
+                if out.is_null() {
+                    return 0;
+                }
+                let n = l.indices.len().min(max as usize);
+                std::ptr::copy_nonoverlapping(l.indices.as_ptr(), out, n);
+                return n as u32;
+            }
             let Some(m) = v.view.models.get(model as usize) else {
                 return 0;
             };
@@ -833,6 +901,17 @@ pub unsafe extern "C" fn sms_view_uvs(
     // SAFETY: as documented.
     unsafe {
         with_view(view, 0, |v| {
+            if model == models::LUIGI {
+                let Some(l) = &v.view.luigi else {
+                    return 0;
+                };
+                if out.is_null() {
+                    return 0;
+                }
+                let n = l.uvs.len().min(max as usize);
+                std::ptr::copy_nonoverlapping(l.uvs.as_ptr(), out, n);
+                return n as u32;
+            }
             let Some(m) = v.view.models.get(model as usize) else {
                 return 0;
             };
