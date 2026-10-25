@@ -76,6 +76,8 @@ impl Luigi {
             .map_err(|e| e.to_string())?;
         let rig = sms::Rig::from_file(&sms_dir.join("bmd/ma_mdl1.bmd")).map_err(|e| e.to_string())?;
         let retarget = sms::Retarget::new(&model, &rig);
+        // `SMS_LG_ALLPARTS=1` draws every DObj alternative (for checking what is hidden).
+        let all_parts = std::env::var_os("SMS_LG_ALLPARTS").is_some();
         // FLUDD rides the chest: the retarget maps `jnt_chest` (14) onto `WaistN` (5), so its
         // bind rotations give the frame that carries FLUDD's Mario-space base to Luigi.
         let chest_align = Mat4::from_mat3(
@@ -116,6 +118,12 @@ impl Luigi {
         let mut scratch = Vec::new();
         for batch in &model.batches {
             if batch.indices.is_empty() {
+                continue;
+            }
+            // `ftParts_8007487C`'s DObj alternatives: Melee keeps one hand open and one
+            // closed (among other variants) and shows only the chosen one. Drawing every
+            // batch shows both at once, which is what a fist and a spread hand together was.
+            if !all_parts && !model.normal_visible.get(batch.dobj).copied().unwrap_or(true) {
                 continue;
             }
             let indices: Vec<u16> = batch.indices.iter().map(|&i| i as u16).collect();
