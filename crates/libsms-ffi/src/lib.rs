@@ -810,6 +810,9 @@ pub unsafe extern "C" fn sms_sim_new(
         let a = Assets::load(dir);
         let mut sim = Sim::new(a.params, a.anim_table, pos.into(), yaw);
         sim.mario.give_fludd();
+        // RoR2 permits the primary Spray while B-diving or belly sliding.
+        sim.mario.options.spray_during_dive = true;
+        sim.mario.options.redive_after_slide = true;
         Some(sim)
     });
     match made {
@@ -1500,6 +1503,8 @@ mod tests {
         unsafe {
             let sim = sms_sim_new(dir.as_ptr(), &SmsVec3::default(), 0);
             assert!(!sim.is_null());
+            assert!((*sim).sim.mario.options.spray_during_dive);
+            assert!((*sim).sim.mario.options.redive_after_slide);
             let run = SmsPad {
                 move_x: 1.0,
                 use_move: 1,

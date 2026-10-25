@@ -412,6 +412,129 @@ fn dive_then_belly_slide() {
 }
 
 #[test]
+fn spray_can_start_or_continue_through_a_b_dive_and_belly_slide() {
+    for already_spraying in [false, true] {
+        let mut s = Scene::flat();
+        s.sim.mario.give_fludd();
+        s.sim.mario.options.spray_during_dive = true;
+        s.sim.mario.options.spray_pressure_fades = false;
+        s.run_forward();
+        if already_spraying {
+            s.pad.r_analog = 255;
+        }
+        s.secs(1.0);
+        s.press_a();
+        s.step(10);
+        s.pad.b = true;
+        s.step(1);
+        s.pad.b = false;
+        s.pad.r_analog = 255;
+        assert_eq!(s.mario().status, Status::JumpCatch);
+        s.host.events.clear();
+        let water = s.mario().fludd.as_ref().unwrap().water;
+        let mut dive_emits = 0;
+        let mut slide_emits = 0;
+        for _ in 0..240 {
+            s.host.events.clear();
+            s.step(1);
+            let emits = s.event_count(|e| matches!(e, Event::WaterEmit(w) if w.nozzle == NozzleKind::Spray));
+            match s.mario().status {
+                Status::JumpCatch => dive_emits += emits,
+                Status::Catch => slide_emits += emits,
+                _ => break,
+            }
+            assert_eq!(s.mario().anim.clip, "sldct");
+            assert!(s.mario().upper_layer().is_none(), "pumping arm replaced the dive/slide pose");
+        }
+        assert!(dive_emits > 0, "no water during B dive (held: {already_spraying})");
+        assert!(slide_emits > 0, "no water during belly slide (held: {already_spraying})");
+        assert!(s.mario().fludd.as_ref().unwrap().water < water);
+    }
+}
+
+#[test]
+fn spray_can_start_and_stop_during_a_belly_slide() {
+    let mut s = Scene::flat();
+    s.sim.mario.give_fludd();
+    s.sim.mario.options.spray_during_dive = true;
+    s.run_forward();
+    s.secs(1.0);
+    s.press_a();
+    s.step(10);
+    s.pad.b = true;
+    s.step(1);
+    s.pad.b = false;
+    assert!(s.until(600, |m| m.status == Status::Catch));
+    s.pad.r_analog = 255;
+    s.host.events.clear();
+    s.step(15);
+    assert_eq!(s.mario().status, Status::Catch);
+    assert!(s.event_count(|e| matches!(e, Event::WaterEmit(_))) > 0);
+    s.pad.r_analog = 0;
+    s.host.events.clear();
+    s.step(5);
+    assert_eq!(s.event_count(|e| matches!(e, Event::WaterEmit(_))), 0);
+}
+
+#[test]
+fn dive_spray_exception_keeps_other_nozzles_and_default_rules_gated() {
+    for (enabled, nozzle) in [
+        (false, NozzleKind::Spray),
+        (true, NozzleKind::Hover),
+        (true, NozzleKind::Rocket),
+        (true, NozzleKind::Turbo),
+    ] {
+        let mut s = Scene::flat();
+        s.sim.mario.give_fludd();
+        s.sim.mario.options.spray_during_dive = enabled;
+        let p = s.mario().params.clone();
+        s.sim.mario.fludd.as_mut().unwrap().change_nozzle(nozzle, false, &p);
+        s.run_forward();
+        s.secs(1.0);
+        s.press_a();
+        s.step(10);
+        s.pad.b = true;
+        s.step(1);
+        s.pad.b = false;
+        // Let the dive clip settle before pressing R, as the original animation gate does.
+        s.step(2);
+        s.pad.r_analog = 255;
+        s.host.events.clear();
+        s.step(15);
+        assert_eq!(s.event_count(|e| matches!(e, Event::WaterEmit(_))), 0, "{nozzle:?}");
+    }
+}
+
+#[test]
+fn a_fresh_b_can_redive_from_both_slide_jump_recoveries() {
+    for enabled in [false, true] {
+        for (fast, recovery) in [(false, Status::CatchStop), (true, Status::RotateBroadJump)] {
+            let mut s = Scene::flat();
+            s.sim.mario.options.redive_after_slide = enabled;
+            s.run_forward();
+            s.secs(1.0);
+            s.press_a();
+            s.step(10);
+            s.pad.b = true;
+            s.step(1);
+            s.pad.b = false;
+            assert!(s.until(600, |m| m.status == Status::Catch));
+            // Choose either side of catching's speed threshold for the two A recoveries.
+            s.sim.mario.forward_vel = s.mario().params.mario.clash_speed + if fast { 1.0 } else { -1.0 };
+            s.press_a();
+            assert_eq!(s.mario().status, recovery);
+            s.step(3);
+            s.pad.b = true;
+            s.step(1);
+            assert_eq!(s.mario().status, if enabled { Status::JumpCatch } else { recovery });
+            s.pad.b = false;
+            s.pad.stick = Vec2::ZERO;
+            assert!(s.until(600, |m| m.status == if enabled { Status::Catch } else { Status::Wait }));
+        }
+    }
+}
+
+#[test]
 fn ground_pound_reaches_the_floor() {
     let mut s = Scene::flat();
     s.pad.a = true;

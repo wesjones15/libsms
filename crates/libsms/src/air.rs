@@ -173,6 +173,9 @@ impl Mario {
                 false
             }
             RotateBroadJump => {
+                if self.options.redive_after_slide && self.input.b_pressed && self.check_back_trig() {
+                    return true;
+                }
                 self.jumping_basic(host, Run, "roll_jump", 1);
                 false
             }
@@ -778,6 +781,10 @@ impl Mario {
     }
 
     fn catch_stop(&mut self, host: &mut dyn Host) -> bool {
+        // Host extension to MarioJump.cpp::catchStop: accept a fresh B press during recovery.
+        if self.options.redive_after_slide && self.input.b_pressed && self.check_back_trig() {
+            return true;
+        }
         if self.status_state == 0 {
             self.vel.y = 30.0;
             self.status_state = 1;

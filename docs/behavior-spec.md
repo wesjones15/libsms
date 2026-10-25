@@ -185,6 +185,10 @@ Landing results from `jumpProcess`: 1 floor, 2 wall within `mClashAngle` (12000)
 A head-on wall hit at speed > `mClashSpeed` bumps; > 16 reflects and starts a wall slide
 (`WallSlide`, jump to kick off; slides at `-timer/2` after 20 ticks); else stops dead.
 
+Host option `redive_after_slide` (off in the core, enabled by the RoR2 FFI)
+accepts a fresh B press in `CatchStop` and the fast slide's `RotateBroadJump` to enter
+another dive through the usual `checkBackTrig` path. This extends the recovery gates in
+`MarioJump.cpp::catchStop` / `rotateBroadJumping`.
 Dive (`JumpCatch`) lands into `Catch` (belly slide), which jumps out (`CatchStop`) or gets up
 (`CatchLost`); the slide holds the dive clip at frame 50, its belly pose, and plays `MA_SLIP`
 every tick (`catching`). Ground pound (`HipDrop`): 60 ticks of hover, then falls at `mHipAttackSpeedY` (-80);
@@ -312,6 +316,11 @@ Slots: 0 Spray (`NozzleDeform.prm`), 1 Rocket, 2 Underwater, 3 Yoshi, 4 Hover, 5
   `Options::unlimited_water` (host tuning, not the game) keeps the tank full.
 - **Upper-body state**: R pressure > 0 enters `Pumping`; releasing holds the stance for
   `mPumpWaitTime` (5) ticks. Firing only happens in `Pumping`.
+  Host option `spray_during_dive` (off in the core, enabled by the RoR2 FFI) also permits
+  the Spray nozzle during `JumpCatch` (B dive) and `Catch` (belly slide), bypassing
+  `MarioUpper.cpp::checkPumpEnable`'s pump-clip requirement for `sldct`. The dive/slide
+  keeps its body pose without a pumping-arm overlay; trigger release, tank drain and
+  nozzle switching still follow the normal FLUDD path. Other nozzles retain the game gate.
 - **Trigger nozzles** (Rocket, Hover, Turbo; `TNozzleTrigger::movement`): while pumping,
   `fill += 150 * rLevel` each tick, `fill -= mInsidePressureDec`, clamp to `mInsidePressureMax`; on
   reaching max the nozzle goes `Active` for `mTriggerTime` ticks, then `Dead` until R is released.

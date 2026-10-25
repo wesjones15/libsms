@@ -295,6 +295,9 @@ impl Mario {
                         let info = self.anims.get(c);
                         self.upper_ctrl = FrameCtrl::new(info);
                     }
+                } else {
+                    // A host can permit Spray in the dive/slide without replacing its pose.
+                    self.upper_on = false;
                 }
             }
             UpperState::HoldingObject => {

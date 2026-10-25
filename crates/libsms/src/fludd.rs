@@ -405,8 +405,13 @@ impl Mario {
             return false;
         };
         let np = f.nozzle_params(&self.params);
+        // Host extension to MarioUpper.cpp::checkPumpEnable: B dive and belly slide
+        // share `sldct`, which has no pump clip. Only the Spray may bypass that gate.
+        let dive_spray = self.options.spray_during_dive
+            && f.nozzle == NozzleKind::Spray
+            && matches!(self.status, Status::JumpCatch | Status::Catch);
         !self.on_yoshi()
-            && crate::anim::pump_clip(self.anim.clip).is_some()
+            && (crate::anim::pump_clip(self.anim.clip).is_some() || dive_spray)
             // Host extension: not while a use the host granted this press (`Limits::air_uses`) starts the next one.
             && !(self.status == Status::RocketLanding && np.rocket_type == 1 && !self.limit_granted())
             && !(f.nozzle.is_trigger() && f.trigger_state() == TriggerState::Dead)

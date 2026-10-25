@@ -185,6 +185,12 @@ pub struct Options {
     /// go or pressed deeper. true (the default): the game's. false: a steady output set by
     /// the trigger's depth, for hosts that want to hold the Spray on.
     pub spray_pressure_fades: bool,
+    /// Allow the Spray nozzle during B dives and belly slides without a pumping arm clip.
+    /// false: the game's `MarioUpper.cpp::checkPumpEnable` animation gate.
+    pub spray_during_dive: bool,
+    /// Permit B to dive again from either jump out of a belly slide.
+    /// false: the game's `catchStop` / `rotateBroadJumping` recovery gates.
+    pub redive_after_slide: bool,
     /// Jump heights times this (1: the game's), for hosts whose worlds are built bigger. The
     /// take-off speed scales by its square root, so arcs keep their shape and last longer.
     pub jump_height: f32,
@@ -240,6 +246,8 @@ impl Default for Options {
     fn default() -> Options {
         Options {
             spray_pressure_fades: true,
+            spray_during_dive: false,
+            redive_after_slide: false,
             jump_height: 1.0,
             jump_buffer_ticks: 0,
             chain_grace_ticks: 0,
