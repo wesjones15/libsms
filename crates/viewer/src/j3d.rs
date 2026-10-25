@@ -1,4 +1,4 @@
-//! Draws J3D models the way the GameCube would: a TEV interpreter in GLSL fed by CPU skinning and
+﻿//! Draws J3D models the way the GameCube would: a TEV interpreter in GLSL fed by CPU skinning and
 //! per-vertex lighting, on raw miniquad pipelines (macroquad's mesh vertex can't carry the three
 //! texcoord sets and two colour channels Mario's materials use).
 //!
@@ -495,7 +495,7 @@ pub enum Pass {
     Translucent,
 }
 
-fn ctx() -> &'static mut dyn RenderingBackend {
+pub(crate) fn ctx() -> &'static mut dyn RenderingBackend {
     // SAFETY: the viewer only renders from the main thread.
     unsafe { macroquad::window::get_internal_gl() }.quad_context
 }
@@ -838,3 +838,5 @@ impl Renderer {
         ctx.end_render_pass();
     }
 }
+
+

@@ -1,4 +1,4 @@
-//! A running sample: libsms driving Mario through a small 3D obstacle course.
+﻿//! A running sample: libsms driving Mario through a small 3D obstacle course.
 //!
 //! The course is the host: `World` implements `libsms::Host` with boxes and two ramps and turns
 //! FLUDD `WaterEmit` events into droplets. Everything about how Mario moves comes from the library.
@@ -21,6 +21,7 @@
 mod coin;
 mod fx;
 mod j3d;
+mod luigi;
 mod mario_model;
 mod props;
 mod stu;
@@ -863,6 +864,11 @@ async fn main() {
     let mut audio = assets
         .as_ref()
         .and_then(|a| libsms_present::Audio::start(&a.dir, true));
+    // `--luigi`: draw Luigi instead of Mario.s body (FLUDD and effects stay Mario.s).
+    let use_luigi = std::env::args().any(|s| s == "--luigi");
+    if use_luigi {
+        unsafe { std::env::set_var("SMS_HIDE", "body,cap,hands") };
+    }
     // The disc's Mario: body, hands, cap, FLUDD and nozzles with their materials.
     let mut mario_model = assets.as_ref().and_then(|a| {
         mario_model::MarioModel::load(&a.dir)
@@ -870,6 +876,15 @@ async fn main() {
             .ok()
     });
     // Yoshi, his tongue and his egg.
+    let mut luigi_model = if use_luigi {
+        assets.as_ref().and_then(|a| {
+            luigi::Luigi::load(&luigi::melee_dir(), &a.dir, 0)
+                .map_err(|e| eprintln!("Luigi.s model: {e}"))
+                .ok()
+        })
+    } else {
+        None
+    };
     let mut yoshi_model = assets.as_ref().and_then(|a| {
         yoshi_model::YoshiModel::load(&a.dir)
             .map_err(|e| eprintln!("Yoshi's model: {e}"))
@@ -892,7 +907,7 @@ async fn main() {
         s.mario.params = params.clone();
         s.mario.anims = anims.clone();
         s.mario.give_fludd();
-        // `SMS_SPRAY_DIVE=1`: the host extension the RoR2 mod uses — the Spray nozzle may fire
+        // `SMS_SPRAY_DIVE=1`: the host extension the RoR2 mod uses â€” the Spray nozzle may fire
         // during a B dive and the belly slide (`Options::spray_during_dive`).
         s.mario.options.spray_during_dive = std::env::var_os("SMS_SPRAY_DIVE").is_some();
         s.mario.anim = libsms::AnimState::new(libsms::anim::clip::WAIT, &s.mario.anims);
@@ -1279,6 +1294,13 @@ async fn main() {
                     model.draw_nozzle_group(view, proj);
                     Vec::new()
                 } else { model.draw(&sim, &joints, root, view, proj, get_time() as f32) };
+                if let Some(l) = &mut luigi_model {
+                    let name = sim.mario.anim.clip;
+                    let frame = sim.mario.anim.frame;
+                    if let Some(world) = l.pose(name, frame) {
+                        l.draw(&world, root, view, proj);
+                    }
+                }
                 if let Some(f) = &sim.mario.fludd {
                     let kind = f.nozzle;
                     sim.mario.set_emitters(kind, &muzzles);
@@ -1553,3 +1575,7 @@ mod tests {
         assert!(water.particles.iter().any(|d| d.pos.z > 100.0));
     }
 }
+
+
+
+
