@@ -302,6 +302,7 @@ impl MarioModel {
                 look,
                 spraying,
                 false,
+                0.0,
                 base,
                 root,
                 view,

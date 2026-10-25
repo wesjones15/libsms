@@ -6,7 +6,8 @@
 //! Controls
 //!   WASD            move (Left Alt = gentle push)        Arrows   orbit camera
 //!   Space           jump (A)    hold for full height     F        B: dive, grab, put, throw
-//!   Z               ground pound in the air (L)          Left Ctrl  crouch/aim (R click)
+//!   Z               ground pound in the air (L)          Left Ctrl  crouch (R click)
+//!   Right mouse     aim along the camera (cyan line)
 //!   Left Shift      spray (R, half press)                X        swap nozzle (Spray <-> second)
 //!   1 2 3 4         fit Spray / Hover / Rocket / Turbo   G        refill tank
 //!   R               respawn                              H        toggle help
@@ -715,7 +716,7 @@ fn hud(sim: &Sim, data: &str, rig: Option<&Rig>, show_help: bool) {
     if show_help {
         let h = screen_height();
         draw_text(
-            "WASD move  Space jump  F dive/grab  Z pound  Ctrl crouch  Shift spray  X swap  1-4 nozzle",
+            "WASD move  Space jump  F dive/grab  Z pound  Ctrl crouch  Shift spray  X swap  1-4 nozzle  RMB aim",
             14.0,
             h - 34.0,
             20.0,
@@ -1171,6 +1172,24 @@ async fn main() {
         }
 
         // Simulate. Water events are drained into droplets right after each frame's ticks.
+        // Host aim, the way the RoR2 adapter reports the crosshair: the right mouse button
+        // aims along the camera. `SMS_AIM=<deg>` holds an aim that far to Luigi's right (+)
+        // or left (-) of his facing, for captures.
+        let aim_deg = std::env::var("SMS_AIM")
+            .ok()
+            .and_then(|v| v.parse::<f32>().ok());
+        let pi = std::f32::consts::PI;
+        let aim = if let Some(deg) = aim_deg {
+            Some((to_angle(sim.mario.model_yaw as f32 + deg * 32768.0 / pi), 0))
+        } else if is_mouse_button_down(MouseButton::Right) {
+            Some((
+                to_angle((cam_a + pi) * 32768.0 / pi),
+                to_angle(-cam_p * 32768.0 / pi),
+            ))
+        } else {
+            None
+        };
+        sim.mario.aim = aim.map(|(yaw, pitch)| libsms::Aim { yaw, pitch });
         let t0 = std::time::Instant::now();
         sim.mario.water_underfoot = water.on_ground_near(sim.mario.pos);
         let ticks = sim.advance_observed(&mut world, &pad, camera_yaw, dt, |mario, world| {
@@ -1272,6 +1291,18 @@ async fn main() {
             ..Default::default()
         };
         set_camera(&camera);
+        // The host aim vector (cyan) and the facing it is measured against (white), so the
+        // side of the aim can be read at a glance.
+        if let Some(aim) = sim.mario.aim {
+            let base = mq(sim.mario.prev_pos.lerp(sim.mario.pos, sim.alpha()))
+                + vec3(0.0, 1.25, 0.0);
+            let yaw = aim.yaw as f32 * std::f32::consts::PI / 32768.0;
+            let dir = vec3(yaw.sin(), 0.0, yaw.cos());
+            draw_line_3d(base, base + dir * 2.5, Color::new(0.2, 1.0, 1.0, 1.0));
+            let face = sim.mario.model_yaw as f32 * std::f32::consts::PI / 32768.0;
+            let fwd = vec3(face.sin(), 0.0, face.cos());
+            draw_line_3d(base, base + fwd * 1.5, Color::new(1.0, 1.0, 1.0, 0.8));
+        }
         if !clean {
             draw_world(&world);
         }
@@ -1333,7 +1364,7 @@ async fn main() {
                             let deployed =
                                 sim.mario.fludd.as_ref().is_some_and(|f| f.housed < 0.5);
                             muzzle_mtx = f.draw(
-                                look, deployed, true, chest, root, view, proj, (true, true),
+                                look, deployed, true, dt, chest, root, view, proj, (true, true),
                             );
                         }
                     }

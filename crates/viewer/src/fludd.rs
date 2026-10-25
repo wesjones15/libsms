@@ -29,6 +29,9 @@ pub const LEAN_PIVOT: Vec3 = Vec3::new(37.0, -40.0, 0.0);
 pub const LEAN_JOINTS: [usize; 4] = [4, 5, 6, 7];
 /// The thin frame rod (`_mat_G_main`); it would poke out of the tank when the neck leans.
 pub const ROD_SHAPE: usize = 3;
+/// How fast the neck swings to the other side, degrees per second: about two frames for the
+/// full +45 to -45, quick because the water visibly breaks while it turns.
+pub const LEAN_RATE: f32 = 1800.0;
 
 /// One FLUDD: its body, its nozzles and every `watergun2` clip.
 pub struct Fludd {
@@ -41,6 +44,10 @@ pub struct Fludd {
     clips: HashMap<String, Clip>,
     /// `nozzle_center` on the body.
     centre: Option<usize>,
+    /// The current lean, in degrees, eased towards its target; and the side it last chose
+    /// (+1 the right-hand lean, -1 the mirrored one, picked from where the host aims).
+    lean: f32,
+    side: f32,
 }
 
 impl Fludd {
@@ -95,6 +102,8 @@ impl Fludd {
             nozzles,
             clips,
             centre,
+            lean: 0.0,
+            side: 1.0,
         })
     }
 
@@ -106,13 +115,15 @@ impl Fludd {
     /// Draws FLUDD on `chest` (in decomp units, relative to `root`) and returns its posed
     /// muzzle matrices in model space (for `Mario::set_emitters` and the nozzle effects).
     /// `deployed` is `housed < 0.5`. `alt_skin` is the tall head that needs the Spray neck
-    /// leaned out of the way; the game's Mario does not. `show` is (body, nozzle).
+    /// leaned out of the way; the game's Mario does not. `dt` eases the neck from one side
+    /// to the other. `show` is (body, nozzle).
     #[allow(clippy::too_many_arguments)]
     pub fn draw(
         &mut self,
         look: Option<FluddLook>,
         deployed: bool,
         alt_skin: bool,
+        dt: f32,
         chest: Mat4,
         root: Mat4,
         view: Mat4,
@@ -129,18 +140,37 @@ impl Fludd {
             look.map_or(0.0, |l| l.body_frame),
             |_| None,
         );
-        // The Spray neck leans out of the way of a taller head. Only the neck joints above
-        // the collar base move; the tank and the frame rod stay where the game puts them.
+        // The Spray neck leans out of the way of a taller head, to the side the host aims
+        // past (the water would cross his face otherwise). Only the neck joints above the
+        // collar base move; the tank and the frame rod stay where the game puts them.
         let lean_env = std::env::var("SMS_LEAN")
             .ok()
             .and_then(|v| v.parse::<f32>().ok());
         let spraying = deployed && look.is_some_and(|l| l.nozzle == NozzleKind::Spray);
-        let leaning = lean_env.is_some() || (alt_skin && spraying);
+        // Crossed well past the facing plane, so aiming straight ahead cannot flicker it.
+        if let Some(l) = look
+            && l.aimed
+            && l.aim_turn.unsigned_abs() > 512
+        {
+            self.side = if l.aim_turn > 0 { -1.0 } else { 1.0 };
+        }
+        // `SMS_LEAN=<deg>` forces an angle for A/B captures; 0 means "as authored" and keeps
+        // the frame rod, which only has to go when the neck actually swings out.
+        let target = match lean_env {
+            Some(d) => d,
+            None if alt_skin && spraying => self.side * LEAN_DEG,
+            None => 0.0,
+        };
+        let step = LEAN_RATE * dt.max(0.0);
+        self.lean += (target - self.lean).clamp(-step, step);
+        if lean_env.is_some() {
+            self.lean = target;
+        }
+        let leaning = self.lean.abs() > 0.5;
         if leaning {
-            let d = lean_env.unwrap_or(LEAN_DEG);
             let pivot = LEAN_PIVOT;
             let m = Mat4::from_translation(pivot)
-                * Mat4::from_rotation_y(d.to_radians())
+                * Mat4::from_rotation_y(self.lean.to_radians())
                 * Mat4::from_translation(-pivot);
             for i in LEAN_JOINTS {
                 if let Some(j) = joints.get_mut(i) {
@@ -161,7 +191,12 @@ impl Fludd {
         let nozzle_joints = match (look, slot.and_then(|i| self.nozzles[i].as_ref())) {
             (Some(l), Some(part)) => {
                 let extra = |name: &str| match name {
-                    // `NozzleCtrl`: the neck dips with the aim, never above level.
+                    // `NozzleCtrl`: a host aim (the lock-on) swivels the head round to the
+                    // target, and the neck dips with the aim, never above level.
+                    "chn_muzzle_1" | "jnt_back_nozzle_neck" if l.aimed => {
+                        Some(Mat4::from_rotation_y(deg(l.aim_turn as f32))
+                            * Mat4::from_rotation_z(deg(l.gun_angle)))
+                    }
                     "chn_muzzle_1" | "jnt_back_nozzle_neck" if l.gun_angle < 0.0 => {
                         Some(Mat4::from_rotation_z(deg(l.gun_angle)))
                     }

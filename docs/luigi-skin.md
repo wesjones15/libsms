@@ -44,9 +44,24 @@ and so does Luigi's character: a host passes the chest frame the pack straps to,
   FLUDD as independent packs. `SMS_HIDE` and the second-`MarioModel` trick are gone from both.
 
 Tunables live at the top of `fludd.rs`: `LEAN_DEG` (45), `LEAN_PIVOT` (37, -40, 0),
-`LEAN_JOINTS` (4, 5, 6, 7) and `ROD_SHAPE` (3). `Fludd::draw` leans only when the caller says
-the wearer is an alt-skin (`alt_skin`), so the game's Mario keeps his authored Spray neck;
-`SMS_LEAN=<deg>` still forces a lean for A/B captures.
+`LEAN_JOINTS` (4, 5, 6, 7), `ROD_SHAPE` (3) and `LEAN_RATE` (1800 deg/s, so the two-frame
+swing from one side to the other). `Fludd::draw` leans only when the caller says the wearer is
+an alt-skin (`alt_skin`), so the game's Mario keeps his authored Spray neck; `SMS_LEAN=<deg>`
+still forces an angle for A/B captures.
+
+## Aiming and which side the neck leans
+
+The host aim (`Mario::aim`, `Aim { yaw, pitch }`) is what the RoR2 adapter reports from the
+crosshair. The viewer now sets it too: hold the right mouse button and the aim follows the
+camera; `SMS_AIM=<deg>` holds an aim that far to Luigi's right (+) or left (-) of his facing
+for captures. A cyan line from his chest draws the aim, a white one his facing.
+
+`FluddLook::aim_turn` is the aim relative to the model's facing. The lean follows it: aiming
+past his right shoulder leans the neck right, past the left leans it left, with a 512-unit
+(~6 deg) deadband so aiming straight ahead cannot flicker. The neck eases at `LEAN_RATE`
+instead of snapping, so the swing reads as a fast smear; the water keeps flowing through it.
+An aimed nozzle also swivels its head to the aim (`chn_muzzle_1`), matching
+`libsms-present`'s view, so the drawn spray points where the line does.
 
 ## Anchoring (why he used to float)
 
