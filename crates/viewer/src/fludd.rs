@@ -104,19 +104,21 @@ impl Fludd {
     }
 
     /// Draws FLUDD on `chest` (in decomp units, relative to `root`) and returns its posed
-    /// muzzles in model space for `Mario::set_emitters`. `deployed` is `housed < 0.5`: only a
-    /// deployed FLUDD leans. `show` is (body, nozzle).
+    /// muzzle matrices in model space (for `Mario::set_emitters` and the nozzle effects).
+    /// `deployed` is `housed < 0.5`. `alt_skin` is the tall head that needs the Spray neck
+    /// leaned out of the way; the game's Mario does not. `show` is (body, nozzle).
     #[allow(clippy::too_many_arguments)]
     pub fn draw(
         &mut self,
         look: Option<FluddLook>,
         deployed: bool,
+        alt_skin: bool,
         chest: Mat4,
         root: Mat4,
         view: Mat4,
         proj: Mat4,
         show: (bool, bool),
-    ) -> Vec<(Vec3, Vec3)> {
+    ) -> Vec<Mat4> {
         let lights = Lights::daylight(view);
         let deg = |a: f32| a * std::f32::consts::PI / 32768.0;
         // `setBaseTRMtx`: the pack tilts back as the chest leans, `|m[1][0]| * (0 - -0x1800)`.
@@ -133,7 +135,7 @@ impl Fludd {
             .ok()
             .and_then(|v| v.parse::<f32>().ok());
         let spraying = deployed && look.is_some_and(|l| l.nozzle == NozzleKind::Spray);
-        let leaning = lean_env.is_some() || spraying;
+        let leaning = lean_env.is_some() || (alt_skin && spraying);
         if leaning {
             let d = lean_env.unwrap_or(LEAN_DEG);
             let pivot = LEAN_PIVOT;
@@ -175,8 +177,7 @@ impl Fludd {
                 if let Some(at) = nozzle_at.filter(|_| l.nozzle != NozzleKind::Yoshi) {
                     for name in ["null_G_muzzle", "null_G_muzzle2"] {
                         if let Some(j) = part.model.bmd.joint(name) {
-                            let mm = at * js[j];
-                            muzzles.push((mm.w_axis.truncate(), mm.x_axis.truncate()));
+                            muzzles.push(at * js[j]);
                         }
                     }
                 }

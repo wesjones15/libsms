@@ -1299,7 +1299,7 @@ async fn main() {
                 if !clean {
                     draw_shadow(&sim, sim.alpha());
                 }
-                let mut muzzles = if portrait.as_deref() == Some("air") {
+                let mut muzzle_mtx: Vec<::glam::Mat4> = if portrait.as_deref() == Some("air") {
                     model.draw_nozzle_group(view, proj);
                     Vec::new()
                 } else if use_luigi && !luigi_beside {
@@ -1315,21 +1315,35 @@ async fn main() {
                 if let Some(l) = &mut luigi_model {
                     let name = sim.mario.anim.clip;
                     let frame = sim.mario.anim.frame;
-                    if let Some(world) = l.pose(name, frame) {
+                    if let Some(mut world) = l.pose(name, frame) {
+                        // Luigi's rig carries Mario's clip as rotations only, so it loses the
+                        // root motion the game's clips carry (the dive's drop, the hang's drop
+                        // below the grab, the idle's bob). Anchor his lowest point to the drawn
+                        // Mario's: feet to feet, belly to belly.
+                        let anchor = (model.lowest(&joints) - l.lowest(&world) * 10.0) * 0.1;
+                        for m in &mut world {
+                            m.w_axis.y += anchor;
+                        }
                         l.draw(&world, root, view, proj);
-                        // Luigi's own FLUDD, on his chest.
+                        // Luigi's own FLUDD, on his chest: the sim's character wears it, so its
+                        // muzzles are the ones the water and the mist leave.
                         if let Some(f) = &mut luigi_fludd {
                             let chest = l.chest(&world);
                             let look = sim.mario.fludd_look();
                             let deployed =
                                 sim.mario.fludd.as_ref().is_some_and(|f| f.housed < 0.5);
-                            let drawn =
-                                f.draw(look, deployed, chest, root, view, proj, (true, true));
-                            if !luigi_beside {
-                                muzzles = drawn;
-                            }
+                            muzzle_mtx = f.draw(
+                                look, deployed, true, chest, root, view, proj, (true, true),
+                            );
                         }
                     }
+                }
+                let muzzles: Vec<(::glam::Vec3, ::glam::Vec3)> = muzzle_mtx
+                    .iter()
+                    .map(|m| (m.w_axis.truncate(), m.x_axis.truncate()))
+                    .collect();
+                if let Some(fx) = &mut fx_layer {
+                    fx.set_muzzles(&muzzle_mtx);
                 }
                 if let Some(f) = &sim.mario.fludd {
                     let kind = f.nozzle;

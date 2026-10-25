@@ -226,6 +226,17 @@ impl Luigi {
         Some(self.retarget.pose(&self.model, &self.rig, clip, frame))
     }
 
+    /// The lowest skinned point of a pose from [`pose`], in Luigi's model units.
+    pub fn lowest(&self, world: &[Mat4]) -> f32 {
+        let mut low = f32::INFINITY;
+        for i in 0..self.model.batches.len() {
+            for (p, _) in self.model.skin(i, world) {
+                low = low.min(p.y);
+            }
+        }
+        low
+    }
+
     pub fn bind_world(&self) -> Vec<Mat4> {
         self.model.bind_world()
     }

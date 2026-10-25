@@ -148,10 +148,24 @@ impl MarioModel {
         })
     }
 
+    /// The lowest skinned point of the body for `joints`, in model space (decomp units):
+    /// Luigi's alt-skin anchors his own lowest point to this so he stands, dives and hangs
+    /// where Mario does.
+    pub fn lowest(&self, joints: &[Mat4]) -> f32 {
+        let pose = Pose::new(&self.body.model.bmd, Mat4::IDENTITY, joints);
+        let mut low = f32::INFINITY;
+        for b in self.body.model.bmd.batches().expect("body geometry") {
+            for v in b.vertices {
+                low = low.min(pose.skin(&v).0.y);
+            }
+        }
+        low
+    }
+
     /// Draws Mario. `joints` are the body's model-space joint matrices for this frame (from
     /// `Skeleton::pose_layered`); `root` places model space (decomp units) in the scene.
-    /// Returns FLUDD's posed muzzles in model space (position, X axis) for
-    /// `Mario::set_emitters`.
+    /// Returns FLUDD's posed muzzle matrices in model space (for `Mario::set_emitters` and the
+    /// nozzle's effects).
     #[allow(clippy::too_many_arguments)]
     pub fn draw(
         &mut self,
@@ -161,7 +175,7 @@ impl MarioModel {
         view: Mat4,
         proj: Mat4,
         time: f32,
-    ) -> Vec<(Vec3, Vec3)> {
+    ) -> Vec<Mat4> {
         let m = &sim.mario;
         // `SMS_HIDE=fludd,nozzle,cap,hands,body` leaves parts out (for checking placement).
         let hide = self.hide.clone();
@@ -284,8 +298,16 @@ impl MarioModel {
             }
         }
         fludd_base.map_or_else(Vec::new, |base| {
-            self.fludd
-                .draw(look, spraying, base, root, view, proj, (shown("fludd"), shown("nozzle")))
+            self.fludd.draw(
+                look,
+                spraying,
+                false,
+                base,
+                root,
+                view,
+                proj,
+                (shown("fludd"), shown("nozzle")),
+            )
         })
     }
 }

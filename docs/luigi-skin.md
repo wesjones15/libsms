@@ -44,5 +44,26 @@ and so does Luigi's character: a host passes the chest frame the pack straps to,
   FLUDD as independent packs. `SMS_HIDE` and the second-`MarioModel` trick are gone from both.
 
 Tunables live at the top of `fludd.rs`: `LEAN_DEG` (45), `LEAN_PIVOT` (37, -40, 0),
-`LEAN_JOINTS` (4, 5, 6, 7) and `ROD_SHAPE` (3).
+`LEAN_JOINTS` (4, 5, 6, 7) and `ROD_SHAPE` (3). `Fludd::draw` leans only when the caller says
+the wearer is an alt-skin (`alt_skin`), so the game's Mario keeps his authored Spray neck;
+`SMS_LEAN=<deg>` still forces a lean for A/B captures.
+
+## Anchoring (why he used to float)
+
+`fsms::Clip` (`libssbm-assets/src/sms.rs`) reads ANK1 rotations only; the clips also carry
+joint translation tracks in the same chunk (Mario's root/`center` drops for the dive and the
+hang), so a retarget that only takes rotations leaves Luigi standing at the sim's position —
+floating at hip height in a dive, a body above a ledge in a hang, and a few centimetres off
+the floor in idle. The viewer now anchors each frame: it takes the lowest skinned point of the
+drawn Mario (`MarioModel::lowest`, model space) and the lowest point of Luigi's pose
+(`Luigi::lowest`), and shifts every Luigi joint by the difference, so feet follow feet and a
+prone body follows a prone body.
+
+## Water
+
+The sim takes the drawn muzzles through `Mario::set_emitters`, but the viewer's particles
+(`libsms_present::View`) posed its own Mario and overwrote them, so the spray left the
+authored, un-leaned nozzle. `View::set_muzzles` (and `fx::FxLayer::set_muzzles`) now takes the
+matrices the host drew; the viewer passes Luigi's, so the mist and the water leave the leaned
+nozzle.
 

@@ -125,6 +125,12 @@ void main() {
         self.view.events(events, mario);
     }
 
+    /// FLUDD's muzzles as this viewer drew them (an alt-skin's own pack), so the nozzle mist
+    /// and the water leave the drawn nozzle.
+    pub fn set_muzzles(&mut self, muzzles: &[::glam::Mat4]) {
+        self.view.set_muzzles(muzzles);
+    }
+
     /// Runs the effects up to the sim's state; `right` and `up` are the camera's axes.
     pub fn update(&mut self, sim: &mut Sim, dt: f32, right: Vec3, up: Vec3) {
         self.view.set_camera(

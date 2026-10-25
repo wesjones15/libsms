@@ -305,6 +305,9 @@ pub struct View {
     pub pound_flames: bool,
     fx_ticks: Vec<FxTick>,
     fx_binds: Vec<(u32, FxAt)>,
+    /// Model-space muzzle matrices a host drew itself this frame (an alt-skin's FLUDD): the
+    /// mist and the water take these instead of the ones this view would pose.
+    host_muzzles: Vec<Mat4>,
     /// FLUDD's water gauge (the HUD's tank), redrawn as the tank changes; None without the
     /// HUD's files. `hud_shown` says whether to show it this frame (Mario has FLUDD).
     pub hud: Option<Hud>,
@@ -930,6 +933,7 @@ impl View {
             pound_flames: true,
             fx_ticks: Vec::new(),
             fx_binds: (0..4).map(|s| (s, FxAt::Center)).collect(),
+            host_muzzles: Vec::new(),
             hud: Hud::load(dir).ok(),
             hud_shown: false,
             life: [
@@ -1011,6 +1015,7 @@ impl View {
             pound_flames: false,
             fx_ticks: Vec::new(),
             fx_binds: Vec::new(),
+            host_muzzles: Vec::new(),
             hud: None,
             hud_shown: false,
             life: [None, None],
@@ -1096,6 +1101,7 @@ impl View {
             pound_flames: false,
             fx_ticks: Vec::new(),
             fx_binds: Vec::new(),
+            host_muzzles: Vec::new(),
             hud: None,
             hud_shown: false,
             life: [None, None],
@@ -1236,10 +1242,16 @@ impl View {
     }
 
     /// Observe every sim tick (`Sim::advance_observed`), even without sound or rendering.
+    /// Muzzle matrices a host posed itself (an alt-skin's FLUDD), in Mario's model space:
+    /// from this frame on, the nozzle mist and the water leave those instead of this view's.
+    pub fn set_muzzles(&mut self, muzzles: &[Mat4]) {
+        self.host_muzzles.clear();
+        self.host_muzzles.extend_from_slice(muzzles);
+    }
+
     /// Queue effects until the next pose is available, preserving one-shots and short held
     /// effects between rendered frames. Empty ticks release held emitters at 30 Hz too.
-    pub fn events(&mut self, events: &[Event], mario: &Mario) {
-        self.fx_ticks.push(FxTick {
+    pub fn events(&mut self, events: &[Event], mario: &Mario) {        self.fx_ticks.push(FxTick {
             tick: mario.ticks,
             pos: mario.pos,
             yaw: mario.model_yaw,
@@ -1417,6 +1429,15 @@ impl View {
             }
             _ => None,
         };
+        // A host that drew FLUDD itself (an alt-skin with its own pack) knows where the muzzles
+        // ended up; the mist and the water take those instead of this posed nozzle.
+        if !self.host_muzzles.is_empty() {
+            muzzle_mtx.clone_from(&self.host_muzzles);
+            muzzles = muzzle_mtx
+                .iter()
+                .map(|m| (m.w_axis.truncate(), m.x_axis.truncate()))
+                .collect();
+        }
 
         // The Turbo corkscrew dive: the spin jump's motion tipped head first and spun about his own length,
         // through about his middle.
