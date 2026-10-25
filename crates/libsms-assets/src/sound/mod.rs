@@ -23,6 +23,7 @@ pub mod stream;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 pub use aaf::{CategoryInfo, InitData, SoundInfo, SoundTable};
@@ -51,6 +52,12 @@ pub struct SoundData {
     dir: PathBuf,
     files: Mutex<HashMap<String, Arc<Vec<u8>>>>,
     pcm: Mutex<HashMap<WaveKey, Arc<Vec<i16>>>>,
+    /// Pitch for the voice cues (SE category 7, Mario's `_MV` lines): 1.0 is the disc's own.
+    /// Baked into the PCM once, with the cue's length kept (resample for the pitch, then a
+    /// WSOLA pass for the duration), so a pitched-up voice is not faster.
+    voice_pitch: Mutex<f32>,
+    /// A voice cue was just started: the next one-shot wave decoded is its voice.
+    voice_pending: AtomicBool,
 }
 
 impl SoundData {
@@ -77,11 +84,29 @@ impl SoundData {
             dir: assets.to_path_buf(),
             files: Mutex::default(),
             pcm: Mutex::default(),
+            voice_pitch: Mutex::new(1.0),
+            voice_pending: AtomicBool::new(false),
         })
     }
 
     pub fn wave(&self, key: WaveKey) -> Option<&Wave> {
         self.init.wave_banks.get(key.0)?.bank.wave((key.1, key.2))
+    }
+
+    /// Pitch the voice cues (`_MV`, SE category 7) by `ratio`, keeping their length. Clears
+    /// the decoded-wave cache so cues decoded before this call bake at the new pitch.
+    pub fn set_voice_pitch(&self, ratio: f32) {
+        *self.voice_pitch.lock().unwrap() = if ratio > 0.0 { ratio } else { 1.0 };
+        self.pcm.lock().unwrap().clear();
+    }
+
+    pub fn voice_pitch(&self) -> f32 {
+        *self.voice_pitch.lock().unwrap()
+    }
+
+    /// A voice cue is starting: the next one-shot wave decoded is its voice.
+    pub fn mark_voice(&self) {
+        self.voice_pending.store(true, Ordering::Relaxed);
     }
 
     /// A wave decoded to 16-bit PCM (cached).
@@ -108,7 +133,17 @@ impl SoundData {
         let bytes = file
             .get(start..start + w.length as usize)
             .ok_or(Error::Truncated(start))?;
-        let pcm = Arc::new(adpcm::decode_wave(w.format, bytes, w.end as usize));
+        let pcm = adpcm::decode_wave(w.format, bytes, w.end as usize);
+        // A voice cue's wave decoded right after `mark_voice`: bake the pitch in, same
+        // length, so the line is not faster. Looping waves (music) never take this path.
+        let ratio = self.voice_pitch();
+        let pcm = if !w.looping && ratio != 1.0 && self.voice_pending.swap(false, Ordering::Relaxed)
+        {
+            shift_voice(&pcm, ratio)
+        } else {
+            pcm
+        };
+        let pcm = Arc::new(pcm);
         self.pcm.lock().unwrap().insert(key, pcm.clone());
         Ok(pcm)
     }
@@ -129,4 +164,90 @@ impl SoundData {
         let p = self.dir.join(STREAMS_DIR).join(name);
         Stream::decode(&std::fs::read(&p).map_err(|_| Error::NotFound(p))?)
     }
+}
+
+/// One voice cue, pitched by `ratio` with its length kept: resample by `ratio` (the pitch),
+/// then a WSOLA overlap-add pass back to the original sample count (the duration). Plain
+/// resampling alone would make the line `ratio` times faster, which is what the GameCube's
+/// pitch parameter does; this decouples the two.
+pub fn shift_voice(samples: &[i16], ratio: f32) -> Vec<i16> {
+    if samples.len() < 2 || ratio <= 0.0 || ratio == 1.0 {
+        return samples.to_vec();
+    }
+    let x: Vec<f32> = samples.iter().map(|s| *s as f32 / 32768.0).collect();
+    let n = (x.len() as f32 / ratio).floor() as usize;
+    let mut y = Vec::with_capacity(n);
+    let mut t = 0.0f32;
+    for _ in 0..n {
+        let i = t as usize;
+        if i + 1 >= x.len() {
+            break;
+        }
+        let f = t - i as f32;
+        y.push(x[i] * (1.0 - f) + x[i + 1] * f);
+        t += ratio;
+    }
+    let out = wsola(&y, x.len());
+    out.into_iter()
+        .map(|v| (v.clamp(-1.0, 1.0) * 32767.0) as i16)
+        .collect()
+}
+
+/// Overlap-add time stretch to `target` samples: 512-sample Hann windows at half overlap, the
+/// analysis offset searched in a small window so successive grains stay in phase.
+fn wsola(y: &[f32], target: usize) -> Vec<f32> {
+    const WIN: usize = 512;
+    const HOP: usize = WIN / 2;
+    const SEARCH: usize = 96;
+    if y.len() <= WIN {
+        let mut out = y.to_vec();
+        out.resize(target, 0.0);
+        return out;
+    }
+    let win: Vec<f32> = (0..WIN)
+        .map(|i| 0.5 - 0.5 * (std::f32::consts::TAU * i as f32 / WIN as f32).cos())
+        .collect();
+    let analyse_hop = HOP as f32 * (y.len() as f32 / target as f32);
+    let mut out = vec![0.0f32; target + WIN];
+    let mut wsum = vec![0.0f32; target + WIN];
+    let mut pos = 0.0f32;
+    let mut o = 0usize;
+    let mut prev: Vec<f32> = Vec::new();
+    while o + WIN <= target + WIN && (pos as usize) + SEARCH + WIN < y.len() {
+        let mut best = 0i32;
+        if !prev.is_empty() {
+            let mut best_score = f32::NEG_INFINITY;
+            for lag in -(SEARCH as i32)..=(SEARCH as i32) {
+                let at = pos as i32 + lag;
+                if at < 0 || (at as usize) + HOP >= y.len() {
+                    continue;
+                }
+                let score: f32 = (0..HOP)
+                    .map(|i| prev[i] * y[at as usize + i])
+                    .sum();
+                if score > best_score {
+                    best_score = score;
+                    best = lag;
+                }
+            }
+        }
+        let p = (pos as i32 + best).max(0) as usize;
+        if p + WIN >= y.len() {
+            break;
+        }
+        for i in 0..WIN {
+            out[o + i] += y[p + i] * win[i];
+            wsum[o + i] += win[i];
+        }
+        prev = y[p + HOP..p + HOP + HOP].to_vec();
+        pos += analyse_hop;
+        o += HOP;
+    }
+    let mut res: Vec<f32> = out
+        .iter()
+        .zip(&wsum)
+        .map(|(s, w)| if *w > 0.25 { s / *w } else { 0.0 })
+        .collect();
+    res.truncate(target);
+    res
 }

@@ -869,6 +869,17 @@ async fn main() {
     // `--luigi`: draw Luigi with his own FLUDD instead of Mario.
     let use_luigi = std::env::args().any(|s| s == "--luigi" || s == "--luigi-beside");
     let luigi_beside = std::env::args().any(|s| s == "--luigi-beside");
+    // Luigi's voice: Mario's, pitched up with the lines' length kept (the Melee trick).
+    // `SMS_VOICE_PITCH=<ratio>` overrides it; 1.0 leaves Mario's voice alone.
+    if use_luigi {
+        let ratio = std::env::var("SMS_VOICE_PITCH")
+            .ok()
+            .and_then(|v| v.parse::<f32>().ok())
+            .unwrap_or(1.14);
+        if let Some(a) = &audio {
+            a.set_voice_pitch(ratio);
+        }
+    }
     // The disc's Mario: body, hands, cap, FLUDD and nozzles with their materials.
     let mut mario_model = assets.as_ref().and_then(|a| {
         mario_model::MarioModel::load(&a.dir)
@@ -1019,6 +1030,15 @@ async fn main() {
     {
         (cam_a, cam_p, cam_dist) = (v[0], v[1], v[2]);
     }
+    // Luigi hangs a little lower and further off the wall than Mario's anchor
+    // (`SMS_HANG_OFFSET=<down>,<back>`, decomp cm).
+    let hang_offset = std::env::var("SMS_HANG_OFFSET")
+        .ok()
+        .map(|v| {
+            let mut it = v.split(',').filter_map(|x| x.trim().parse::<f32>().ok());
+            (it.next().unwrap_or(0.0), it.next().unwrap_or(0.0))
+        })
+        .unwrap_or((8.0, 6.0));
 
     loop {
         let dt = if portrait.is_some() && std::env::var_os("SMS_SHOT").is_some() {
@@ -1362,6 +1382,14 @@ async fn main() {
                         let anchor = (model.lowest(&joints) - l.lowest(&world) * 10.0) * 0.1;
                         for m in &mut world {
                             m.w_axis.y += anchor;
+                        }
+                        // Hanging, he sits a touch lower and further off the wall than the
+                        // anchor puts him (`SMS_HANG_OFFSET=<down>,<back>` in decomp cm).
+                        if sim.mario.status == Status::Hanging {
+                            for m in &mut world {
+                                m.w_axis.y -= hang_offset.0 * 0.1;
+                                m.w_axis.z -= hang_offset.1 * 0.1;
+                            }
                         }
                         l.draw(&world, root, view, proj);
                         // Luigi's own FLUDD, on his chest: the sim's character wears it, so its

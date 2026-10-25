@@ -502,6 +502,12 @@ impl SoundSystem {
         self.camera = camera;
     }
 
+    /// Pitches Mario's voice cues (SE category 7) by `ratio` with their length unchanged.
+    /// 1.0 is the disc's own voice; a skin can use it to tell itself apart.
+    pub fn set_voice_pitch(&mut self, ratio: f32) {
+        self.data.set_voice_pitch(ratio);
+    }
+
     /// Looks a sound up by its `MSD_*` name.
     pub fn id(&self, name: &str) -> Option<u32> {
         self.data.names.id(name)
@@ -641,6 +647,12 @@ impl SoundSystem {
             info = *table.info(sid)?;
         }
         let cat = id::category(sid) as usize;
+        // Mario's voices are SE category 7 (`play_anim_sound` routes them through
+        // `mario_voice`). Their wave is decoded on the next frame: mark it so the data can
+        // bake the host's voice pitch into it.
+        if cat == 7 {
+            self.data.mark_voice();
+        }
         if cat >= self.regist.len() {
             return None;
         }

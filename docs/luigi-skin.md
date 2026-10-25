@@ -79,6 +79,21 @@ drawn Mario (`MarioModel::lowest`, model space) and the lowest point of Luigi's 
 (`Luigi::lowest`), and shifts every Luigi joint by the difference, so feet follow feet and a
 prone body follows a prone body.
 
+## Voice
+
+Luigi's voice is Mario's, pitched up 14% with the line's length kept (the Melee trick, done
+properly). `SoundData::set_voice_pitch` (the voice cues are SE category 7, Mario's `_MV`
+lines) resamples the decoded wave by the ratio and then WSOLA-stretches it back to its own
+sample count, so the line is not faster; it is baked once per wave and cached. The viewer sets
+it for `--luigi` (1.14, `SMS_VOICE_PITCH` overrides). Measured on the jump cue: F0
+286 -> 325 Hz, duration 1.20 s unchanged. `--example voice_pitch` renders an A/B.
+
+## Hanging
+
+Luigi hangs a little lower and further off the wall than the feet anchor puts him
+(`SMS_HANG_OFFSET=<down>,<back>` in decomp cm, default 8,6), applied to the whole pose while
+`Status::Hanging` so FLUDD follows.
+
 ## Water
 
 The sim takes the drawn muzzles through `Mario::set_emitters`, but the viewer's particles

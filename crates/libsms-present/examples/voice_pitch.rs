@@ -21,7 +21,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|_| std::path::PathBuf::from("assets"));
     let cue = std::env::args().nth(1).unwrap_or_else(|| "MSD_SE_MV24_JUMP_SPECIAL_01".into());
     let data = Arc::new(SoundData::load(&dir)?);
-    let mut sys = SoundSystem::new(data);
+    let mut sys = SoundSystem::new(data.clone());
     if sys.play(&cue, None, 0x4D41_5249).is_none() {
         return Err(format!("could not start {cue}").into());
     }
@@ -50,6 +50,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let r: Vec<f32> = stereo.chunks_exact(2).map(|f| f[1]).collect();
     let (pl, pr) = (pitch_up(&l, 1.14), pitch_up(&r, 1.14));
 
+    // The same pitch through the live path: `set_voice_pitch` bakes it into the voice wave.
+    // A fresh system, so the first voice is not still in this render.
+    let mut sys2 = SoundSystem::new(data.clone());
+    sys2.set_voice_pitch(1.14);
+    let mut live = Vec::new();
+    if sys2.play(&cue, None, 0x4D41_5249).is_none() {
+        return Err(format!("could not start {cue} again").into());
+    }
+    for _ in 0..36 {
+        sys2.frame();
+        sys2.render(&mut buf, RATE);
+        live.extend_from_slice(&buf);
+    }
+    live.truncate((last + 1).min(live.len() / 2) * 2);
+
     let out = std::path::Path::new("target");
     std::fs::create_dir_all(out)?;
     let base = "luigi_voice";
@@ -63,8 +78,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         out.join(format!("{base}_114.wav")),
         wav(&shifted, shifted.len() / 2),
     )?;
+    std::fs::write(
+        out.join(format!("{base}_live114.wav")),
+        wav(&live, live.len() / 2),
+    )?;
     println!(
-        "wrote target/{base}_orig.wav and target/{base}_114.wav ({:.2} s each, cue {cue})",
+        "wrote target/{base}_orig.wav, {base}_114.wav and {base}_live114.wav ({:.2} s each, cue {cue})",
         len_frames as f32 / RATE
     );
     Ok(())

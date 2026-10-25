@@ -450,6 +450,14 @@ impl Audio {
             .store(v.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
     }
 
+    /// Pitches Mario's voice cues by `ratio` with their length unchanged: 1.0 is the disc's
+    /// voice, and a skin can use it to tell itself apart (Luigi is Mario's voice up a little).
+    pub fn set_voice_pitch(&self, ratio: f32) {
+        if let Ok(mut sys) = self.sys.lock() {
+            sys.set_voice_pitch(ratio);
+        }
+    }
+
     /// The listener as a world-to-camera matrix (camera looking down -Z) and its position.
     pub fn set_listener(&self, view: Mat4, eye: Vec3) {
         if let Ok(mut sys) = self.sys.lock() {
