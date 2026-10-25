@@ -289,13 +289,15 @@ impl MarioModel {
         let lean_deg = lean_env.unwrap_or(45.0);
         let lean_on = lean_env.is_some() || look.is_some_and(|l| l.nozzle == NozzleKind::Spray);
         if lean_on {
-            let pivot = glam::Vec3::new(45.0, 0.0, 0.0);
+            // Measured layout: the collar and nozzle are null_pump_wA/wB and
+            // nozzle_center (joints 4, 5, 6), all at y ~= -40; the levers/grips at
+            // z +-20 are NOT part of the neck. Pivot on the collar base (x 37).
+            let pivot = glam::Vec3::new(37.0, -40.0, 0.0);
             let lean = Mat4::from_translation(pivot)
                 * Mat4::from_rotation_y(lean_deg.to_radians())
                 * Mat4::from_translation(-pivot);
-            for j in fludd_joints.iter_mut() {
-                let p = j.w_axis;
-                if p.x > 45.0 && p.y.abs() < 15.0 {
+            for (i, j) in fludd_joints.iter_mut().enumerate() {
+                if matches!(i, 4 | 5 | 6) {
                     *j = lean * *j;
                 }
             }
@@ -431,6 +433,9 @@ impl MarioModel {
 pub fn root_matrix(pos: Vec3, yaw: f32, scale: f32) -> Mat4 {
     Mat4::from_translation(pos) * Mat4::from_rotation_y(yaw) * Mat4::from_scale(Vec3::splat(scale))
 }
+
+
+
 
 
 
