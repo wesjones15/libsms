@@ -1092,6 +1092,22 @@ pub unsafe extern "C" fn sms_view_mario_voice(view: *mut SmsView, name: *const c
     }
 }
 
+/// Pitches Mario's voice cues with their length kept (Luigi's is Mario's up 14%: `ratio` 1.14);
+/// 1.0 leaves them alone. Additive to the ABI, like [`sms_view_mario_voice`].
+///
+/// # Safety
+/// `view` must be a live Mario view from sms_view_new.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_set_voice_pitch(view: *mut SmsView, ratio: f32) {
+    unsafe {
+        with_view(view, (), |v| {
+            if let Some(a) = &v.audio {
+                a.set_voice_pitch(ratio);
+            }
+        })
+    }
+}
+
 /// Writes up to `max` of this frame's instances; returns how many (with `out` null, how many
 /// there are).
 ///
