@@ -102,3 +102,35 @@ authored, un-leaned nozzle. `View::set_muzzles` (and `fx::FxLayer::set_muzzles`)
 matrices the host drew; the viewer passes Luigi's, so the mist and the water leave the leaned
 nozzle.
 
+
+## RoR2 skin: the next phase (handoff)
+
+Decided: the skin reads **Luigi's mesh from the Melee cache** and is only offered when the
+Melee mod/cache is present. libsms-present therefore gains a libssbm-assets dependency
+(same path the viewer already uses). Do not re-derive posing: port the viewer's proven code.
+
+Source of truth to port, not rewrite:
+- crates/viewer/src/luigi.rs — HSD load (Model::load_for(..., &fighter::LUIGI)), CPU
+  skinning, Retarget pose per Sunshine clip, lowest() for the feet anchor, chest()
+  (WaistN -> jnt_chest bind alignment), DObj alternatives (
+ormal_visible).
+- crates/viewer/src/fludd.rs — the pack itself: body/nozzles/clips, Spray lean, rod hide,
+  chest frame, muzzle matrices.
+- crates/viewer/src/main.rs — the per-frame order: pose -> feet anchor -> hang offset ->
+  draw Luigi -> draw his FLUDD at chest -> report muzzles (set_emitters/set_muzzles).
+
+Target: crates/libsms-present/src/view.rs. It hands the host vertices + model/material
+indices instead of drawing, so the port needs one new draw kind for HSD batches (plain
+textured, vertex colour, no TEV bake), appending to the existing positions/normals/uvs/
+colors vectors, and the host needs the matching material branch. View::skin
+(Skin::{Mario, Luigi}) and sms_view_skin(view, 0|1) are already in place (806e4e6).
+
+Then, in order:
+1. SmsViewSource/MarioDisplay pass the skin; the display actor draws Luigi in the
+   character-select scene.
+2. The first-run Portrait job renders that actor, giving the Luigi portrait with Mario's
+   framing and pose (it is the same sim state); assign it to SkinDef.icon.
+3. SkinDef registration gated on the Melee cache; the pause sheet shows it through
+   ControlSheet.Portrait (already added, ror2-common 14b019c).
+4. Secret Egg Lay: sms_sim_secret + MarioDriver dpad-up calling ror2-common's EggLay
+   service (19e66f), which the Melee plugin registers (848487a).
