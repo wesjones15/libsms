@@ -307,6 +307,16 @@ pub enum Cull {
 }
 
 #[derive(Debug, Clone)]
+pub struct Indirect {
+    /// J3DIndInitData, J3DMaterialFactory.hpp: coordinate/map and coordinate scales.
+    pub orders: Vec<[u8; 2]>,
+    pub scales: Vec<[u8; 2]>,
+    pub matrices: [[[f32; 3]; 2]; 3],
+    /// GX stage, format, bias, matrix, wrap S/T, add previous, LOD, alpha selection.
+    pub stages: Vec<[u8; 9]>,
+}
+
+#[derive(Debug, Clone)]
 pub struct Material {
     pub name: String,
     /// `J3DMaterial::mMaterialMode`: 1 opaque, 2 texture edge, 4 translucent.
@@ -319,6 +329,7 @@ pub struct Material {
     pub tex_gens: Vec<TexGen>,
     /// Per `GX_TEXMTXn` slot.
     pub tex_mtx: [Option<TexMtx>; 8],
+    pub indirect: Option<Indirect>,
     /// Per texture map: an index into [`Bmd::textures`].
     pub textures: [Option<u16>; 8],
     pub stages: Vec<TevStage>,
@@ -1176,6 +1187,37 @@ fn read_materials(d: &[u8]) -> Result<Vec<Material>, Error> {
                 (r.u8(o)? != 0, r.u8(o + 2)? != 0)
             }
         };
+        let ind = table(0x18)?;
+        let ind_at = ind + m * 0x138;
+        let indirect = if present(ind) && ind > table(0x14)? + 4 && r.u8(ind_at)? != 0 {
+            let count = r.u8(ind_at + 1)? as usize;
+            let mut orders = Vec::new();
+            let mut scales = Vec::new();
+            for i in 0..count.min(4) {
+                orders.push([r.u8(ind_at + 4 + i * 4)?, r.u8(ind_at + 5 + i * 4)?]);
+                scales.push([r.u8(ind_at + 0x68 + i * 4)?, r.u8(ind_at + 0x69 + i * 4)?]);
+            }
+            let mut matrices = [[[0.; 3]; 2]; 3];
+            for (i, matrix) in matrices.iter_mut().enumerate() {
+                let at = ind_at + 0x14 + i * 28;
+                let scale = 2f32.powi(r.u8(at + 24)? as i8 as i32);
+                for (j, v) in matrix.iter_mut().flatten().enumerate() {
+                    *v = r.f32(at + j * 4)? * scale;
+                }
+            }
+            let mut ind_stages = Vec::new();
+            for i in 0..stages.len() {
+                ind_stages.push(r.bytes(ind_at + 0x78 + i * 12, 9)?.try_into().unwrap());
+            }
+            Some(Indirect {
+                orders,
+                scales,
+                matrices,
+                stages: ind_stages,
+            })
+        } else {
+            None
+        };
         out.push(Material {
             name: names.get(m).cloned().unwrap_or_default(),
             mode: u8_at(0)?,
@@ -1186,6 +1228,7 @@ fn read_materials(d: &[u8]) -> Result<Vec<Material>, Error> {
             chans,
             tex_gens,
             tex_mtx,
+            indirect,
             textures,
             stages,
             tev_colors,

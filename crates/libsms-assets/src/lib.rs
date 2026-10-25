@@ -15,6 +15,7 @@ pub mod bmd;
 pub mod blo;
 pub mod btp;
 pub mod btk;
+pub mod brk;
 pub mod jpa;
 pub mod mario;
 pub mod pose;

@@ -315,6 +315,63 @@ pub struct Source<'a> {
 }
 
 impl Source<'_> {
+    /// GX 8-bit indirect displacement in texels. J3DIndTevStage::load; the M gate
+    /// uses a biased ABG sample and matrix 0, with no wrapping or previous offset.
+    fn indirect_uv(&self, mi: usize, stage: usize, u: f32, v: f32, size: [u32; 2]) -> [f32; 2] {
+        let m = &self.bmd.materials[mi];
+        let Some(ind) = &m.indirect else {
+            return [u, v];
+        };
+        let Some(s) = ind.stages.get(stage) else {
+            return [u, v];
+        };
+        if !(1..=3).contains(&s[3]) || s[1] != 0 || s[4..9] != [0; 5] {
+            return [u, v];
+        }
+        let Some(order) = ind.orders.get(s[0] as usize) else {
+            return [u, v];
+        };
+        let Some(texgen) = m.tex_gens.get(order[0] as usize) else {
+            return [u, v];
+        };
+        let Some(tex) = m
+            .textures
+            .get(order[1] as usize)
+            .copied()
+            .flatten()
+            .and_then(|id| self.tex(id as usize))
+        else {
+            return [u, v];
+        };
+        let uv = m
+            .tex_mtx
+            .get(texgen.matrix.wrapping_sub(30) as usize / 3)
+            .copied()
+            .flatten()
+            .map_or([u, v], |m| {
+                let r = m.srt_rows();
+                [
+                    r[0][0] * u + r[0][1] * v + r[0][2],
+                    r[1][0] * u + r[1][1] * v + r[1][2],
+                ]
+            });
+        let scale = ind.scales[s[0] as usize];
+        let c = sample(
+            &tex.image,
+            tex.wrap,
+            uv[0] * 2f32.powi(-(scale[0] as i32)),
+            uv[1] * 2f32.powi(-(scale[1] as i32)),
+        );
+        let abg = [c[3], c[2], c[1]];
+        let values: [f32; 3] = std::array::from_fn(|i| {
+            (abg[i] * 255.).round() - if s[2] & (1 << i) != 0 { 128. } else { 0. }
+        });
+        let matrix = ind.matrices[s[3] as usize - 1];
+        let offset: [f32; 2] = std::array::from_fn(|i| {
+            (0..3).map(|j| matrix[i][j] * values[j]).sum::<f32>() / size[i].max(1) as f32
+        });
+        [u + offset[0], v + offset[1]]
+    }
     fn tex(&self, i: usize) -> Option<&Tex> {
         self.textures.get(i).and_then(|t| t.as_ref())
     }
@@ -475,7 +532,9 @@ impl Source<'_> {
                                 ),
                                 None => (u, v),
                             };
-                            sample(&t.image, t.wrap, su, sv)
+                            let [iu, iv] =
+                                self.indirect_uv(mi, i, u, v, [t.image.width, t.image.height]);
+                            sample(&t.image, t.wrap, su + iu - u, sv + iv - v)
                         }
                         None => [1.0; 4],
                     },

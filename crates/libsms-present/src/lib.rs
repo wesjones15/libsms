@@ -10,6 +10,8 @@ pub mod democam;
 pub mod hud;
 pub mod life;
 pub mod particles;
+pub mod portal;
+pub mod plaza;
 pub mod screenfx;
 pub mod tev;
 pub mod view;
