@@ -1,4 +1,4 @@
-//! Mario as the game draws him, from the user's extracted `mario.szs`: the body skinned by the
+﻿//! Mario as the game draws him, from the user's extracted `mario.szs`: the body skinned by the
 //! clip the sim is playing, the hand models `changeHand` picks per clip, the cap on `M_head`
 //! (`TMarioCap`), FLUDD on `jnt_chest` and the current nozzle on FLUDD's `nozzle_center`
 //! (`TWaterGun::init`, WaterGun.cpp), and the eyes' blink pattern. FLUDD's and the nozzle's
@@ -288,7 +288,7 @@ impl MarioModel {
         if look.is_some_and(|l| l.nozzle == NozzleKind::Spray) {
             let pivot = glam::Vec3::new(45.0, 0.0, 0.0);
             let lean = Mat4::from_translation(pivot)
-                * Mat4::from_rotation_y((-45.0f32).to_radians())
+                * Mat4::from_rotation_y((45.0f32).to_radians())
                 * Mat4::from_translation(-pivot);
             for j in fludd_joints.iter_mut() {
                 let p = j.w_axis;
@@ -428,3 +428,5 @@ impl MarioModel {
 pub fn root_matrix(pos: Vec3, yaw: f32, scale: f32) -> Mat4 {
     Mat4::from_translation(pos) * Mat4::from_rotation_y(yaw) * Mat4::from_scale(Vec3::splat(scale))
 }
+
+
