@@ -1,7 +1,7 @@
 //! Interactive statue/M gate entrance preview. X replays, F full statue, C close,
 //! arrows orbit, Space pauses. --capture <folder> saves a deterministic 30 fps sequence.
 //! Source: MarioAutodemo.cpp::TMario::warpOut, successful-return branch (arg & 255 == 2).
-//! Poses are the original BCKs. The spatial jump arc is viewer choreography, not gameplay.
+//! Original BCKs, Bianco return position, and zero-speed fall from MarioPhysics::jumpProcess.
 #![allow(dead_code)]
 #[path = "../src/j3d.rs"]
 mod j3d;
@@ -45,7 +45,25 @@ const ACTIVATE: f32 = 1.0;
 // TMario::warpOut's ordinary gate delay is 180 ticks at 120 Hz. The original
 // appear clip scales the centre from ~zero at frame 59 to full at frame 89.
 const LAUNCH: f32 = ACTIVATE + 180. / 120.;
-const FLIGHT: f32 = 0.9;
+// dolpic1 scene.bin MarioPositionObj's Bianco return point (0,550,5250),
+// relative to the gate's placement (0,300,4941.47).
+const RETURN: G3 = G3::new(0., 250., 308.53);
+
+fn fall_at(seconds: f32, gravity: f32) -> (f32, f32) {
+    let mut height = RETURN.y;
+    let mut velocity = 0f32;
+    let mut ticks = 0;
+    // MarioPhysics.cpp::jumpProcess advances position before fallProcess applies gravity.
+    while height > 0. {
+        height = (height + velocity * 0.25).max(0.);
+        ticks += 1;
+        if ticks as f32 > seconds * 120. {
+            return (height, ticks as f32 / 120.);
+        }
+        velocity = (velocity - gravity).max(-75.);
+    }
+    (0., ticks as f32 / 120.)
+}
 
 fn config() -> Conf {
     Conf {
@@ -103,6 +121,11 @@ fn load_fx(dir: &Path) -> Particles {
         jpa.emitter.start_frame, jpa.emitter.lifetime
     );
     fx.add("ms_m_gout_gate", jpa);
+    // EmitterViewObj.cpp::TMarioParticleManager::perform runs one JPA calc for
+    // each SMSGetAnmFrameRate unit: two at 30 fps, matching the 60 Hz BCK clock.
+    // The shared particle scheduler currently supplies 30 Hz; use its existing
+    // playback-rate control for this source-timed entrance effect.
+    fx.set_speed("ms_m_gout_gate", 2.);
     fx
 }
 fn vertex(p: G3, uv: [f32; 2], color: Color) -> Vertex {
@@ -172,26 +195,26 @@ fn statue(dir: &Path) -> Vec<Mesh> {
         .collect()
 }
 
-/// Original animation poses, composed with an explicitly preview-only movement path.
-fn pose_at(time: f32, appear_frames: f32) -> (&'static str, f32, G3, bool) {
+/// MarioAutodemo::warpOut waits at the stage return point before falling and rolling.
+fn pose_at(time: f32, appear_frames: f32, gravity: f32) -> (&'static str, f32, G3, bool) {
     if time < LAUNCH {
         return (
             CLIPS[0],
             ((time - ACTIVATE) * 60.).clamp(0., appear_frames),
-            G3::new(0., 70., 4.),
+            RETURN,
             time >= ACTIVATE,
         );
     }
-    let air = (time - LAUNCH).clamp(0., FLIGHT);
-    let u = air / FLIGHT;
-    let position = G3::new(0., 70. * (1. - u) + 135. * 4. * u * (1. - u), 4. + 446. * u);
-    if time < LAUNCH + FLIGHT {
+    let air = (time - LAUNCH).max(0.);
+    let (height, duration) = fall_at(air, gravity);
+    let position = G3::new(RETURN.x, height, RETURN.z);
+    if height > 0. {
         (CLIPS[1], air * 60., position, true)
     } else {
         (
             CLIPS[2],
-            (time - LAUNCH - FLIGHT) * 60.,
-            G3::new(0., 0., 450.),
+            (time - LAUNCH - duration).max(0.) * 60.,
+            position,
             true,
         )
     }
@@ -318,7 +341,7 @@ async fn main() {
         } else {
             1.
         };
-        let eye = G3::new(10., 10., 23.).lerp(G3::new(0., 3.8, 11.5), camera_blend);
+        let eye = G3::new(10., 10., 23.).lerp(G3::new(5.5, 3.8, 11.5), camera_blend);
         let target = G3::new(0., 7.3, -2.5).lerp(G3::new(0., 1.8, 1.4), camera_blend);
         let eye = target + GMat::from_rotation_y(orbit).transform_vector3(eye - target);
         let camera = Camera3D {
@@ -347,7 +370,9 @@ async fn main() {
         gate.texture = Some(tex.clone());
         while (tick as f32) / 120. < time {
             let tick_time = tick as f32 / 120.;
-            if tick_time >= ACTIVATE && tick_time < LAUNCH + FLIGHT {
+            if tick_time >= ACTIVATE
+                && tick_time < LAUNCH + fall_at(10., assets.params.jump.gravity).1
+            {
                 for (i, name) in WINDS.iter().enumerate() {
                     fx.request(
                         i as u32,
@@ -359,11 +384,7 @@ async fn main() {
             // TMario::warpOut calls warpOutEffect when the appear clip starts,
             // before its delay/rolling phase. Trigger the burst at activation.
             if !launched && tick_time >= ACTIVATE {
-                fx.emit(
-                    "ms_m_gout_gate",
-                    GMat::from_translation(G3::new(0., 70., 0.)),
-                    1.,
-                );
+                fx.emit("ms_m_gout_gate", GMat::from_translation(RETURN), 1.);
                 launched = true;
             }
             fx.advance(tick);
@@ -394,8 +415,11 @@ async fn main() {
         gl_use_material(&alpha);
         draw_mesh(&gate);
         gl_use_default_material();
-        let (clip, clipframe, position, visible) =
-            pose_at(time, assets.clips.get(CLIPS[0]).unwrap().frames);
+        let (clip, clipframe, position, visible) = pose_at(
+            time,
+            assets.clips.get(CLIPS[0]).unwrap().frames,
+            assets.params.jump.gravity,
+        );
         if visible {
             sim.mario
                 .portrait_pose(Status::Jump, clip, clipframe, 0, false);
@@ -488,7 +512,7 @@ async fn main() {
         };
         draw_text(&label, 16., screen_height() - 36., 19., WHITE);
         draw_text(
-            "Source: MarioAutodemo.cpp::warpOut + ModelGate.cpp | jump path: viewer choreography",
+            "Source: warpOut | ms_m_gout_gate (0x40) | Bianco return point | original BCK reveal",
             16.,
             screen_height() - 13.,
             16.,
@@ -518,7 +542,7 @@ async fn main() {
 mod tests {
     use super::*;
     #[test]
-    fn original_reveal_finishes_at_the_portal_before_the_jump() {
+    fn original_reveal_finishes_at_the_return_point_before_falling() {
         let Some(dir) = libsms::assets::find(None) else {
             eprintln!("SKIP: Sunshine assets absent");
             return;
@@ -531,16 +555,20 @@ mod tests {
         assert_eq!(clip.frames, 89.);
         assert!(clip.sample(1, 59.).unwrap().scale.max_element() < 0.001);
         assert!(clip.sample(1, 89.).unwrap().scale.min_element() > 0.99);
-        let start = pose_at(ACTIVATE, clip.frames);
-        let end = pose_at(LAUNCH - 0.001, clip.frames);
+        let gravity = assets.params.jump.gravity;
+        let start = pose_at(ACTIVATE, clip.frames, gravity);
+        let end = pose_at(LAUNCH - 0.001, clip.frames, gravity);
         assert_eq!(start.0, CLIPS[0]);
         assert_eq!(end.0, CLIPS[0]);
         assert_eq!(
             start.2, end.2,
-            "materialization must finish at the M, before forward movement"
+            "materialization must finish at the airborne return point"
         );
-        assert_eq!(pose_at(LAUNCH + 0.05, clip.frames).0, CLIPS[1]);
-        assert_eq!(pose_at(LAUNCH + FLIGHT, clip.frames).0, CLIPS[2]);
+        assert_eq!(start.2, RETURN);
+        assert_eq!(pose_at(LAUNCH + 0.05, clip.frames, gravity).0, CLIPS[1]);
+        let landed = pose_at(LAUNCH + 1., clip.frames, gravity);
+        assert_eq!(landed.0, CLIPS[2]);
+        assert_eq!(landed.2, G3::new(RETURN.x, 0., RETURN.z));
         for name in CLIPS {
             assert!(assets.clips.get(name).is_some());
         }

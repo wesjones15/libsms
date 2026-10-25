@@ -3,13 +3,14 @@
 //! in the sim's world space, like the water's.
 //!
 //! The sim is `JPABaseEmitter::calc` and its helpers, once per 30 Hz game frame: emission
-//! (`calcCreateParticle`, `createParticle`), fields (`JPAFieldManager`; gravity and air),
+//! (`calcCreateParticle`, `createParticle`), fields (`JPAFieldManager`; gravity, air,
+//! magnet, Newton attraction and vortex),
 //! particle motion (`JPAParticle::calcVelocity`, `calcGlobalPosition`) and the draw-side
 //! per-particle work (`JPADraw::calcParticle` with the visitors `setDrawCalcVisitors` picks:
 //! scale, colour tables, alpha, spin). Shapes are built as `JPADrawExec*` draws them:
 //! billboards, directional quads and (crossed) stripes.
 //!
-//! Colour: every effect Mario uses adds light (`GX_BM_BLEND`, source alpha, one). TEV stage 0
+//! Colour: additive effects use `GX_BM_BLEND`, source alpha, one. TEV stage 0
 //! (`JPADrawSetupTev::setupTev`) mixes the prm and env colours with the texture colour `t`
 //! (`d + a (1 - c) + b c`, inputs per `JPABaseShape::unk48`), and its alpha is the texture's
 //! times prm's. That is a polynomial in `t` with colour coefficients, so each effect's texture
@@ -19,10 +20,12 @@
 //! the game's colour exactly, for any host shader that multiplies a texture by a vertex colour.
 //! A stripe with a second texture (`ETX1`, which reads the texture at other coordinates) can't
 //! be split like that; its whole TEV is baked into a texture each frame instead.
+//! Static random colour palettes with source-alpha blending use a single atlas so each
+//! overlapping particle correctly hides earlier particles instead of adding their colours.
 //!
 //! Not ported: child particles (`SSP1`), emitter keyframes other than draw scale, general
 //! indirect texture stages (projected scene refraction is handed to the host), the
-//! fields other than gravity and air. Source-alpha blending (the dust, smoke and stars) whose
+//! remaining field types. Source-alpha blending (the dust, smoke and stars) whose
 //! TEV mixes env in (`d + a (1 - c) + b c` with env as an input) is drawn exactly as a black
 //! coverage draw under the same additive basis images (`Paint::Basis::over`); one without env
 //! is drawn as see-through texture times prm colour.
@@ -343,6 +346,14 @@ struct Emitter {
 /// How an effect is drawn.
 #[derive(Debug, Clone)]
 enum Paint {
+    /// Static per-particle colour palettes baked into one atlas. Ordinary alpha
+    /// blending preserves painter order when the coloured particles overlap.
+    Palette {
+        texture: u32,
+        colors: Vec<([u8; 4], [u8; 4])>,
+        columns: u32,
+        tile: [u32; 2],
+    },
     /// Static basis textures (per main texture: the first of `count`, then with `over` the
     /// coverage mask), coefficients per particle. `over`: the game blends by source alpha
     /// and its TEV mixes env into the colour, which no single texture-times-colour draw can
@@ -557,7 +568,69 @@ impl Particles {
                 .ex_tex
                 .as_ref()
                 .is_some_and(|e| e.ind_mode == 1 && e.second_on());
-        let paint = if projected {
+        let palette = base.kind == 2
+            && base.color_mode == 3
+            && base.col_anm_type == 4
+            && !base.global_col_anm
+            && !base.tex_anm
+            && (base.prm_anm || base.env_anm)
+            && base.blend_mode == 1
+            && base.blend_src == 6
+            && base.blend_dst == 7;
+        let paint = if let Some(source) = jpa
+            .textures
+            .get(base.texture as usize)
+            .filter(|_| palette)
+            .map(|t| &t.image)
+        {
+            let mut colors = Vec::new();
+            for i in 0..=base.col_anm_max.max(0) as usize {
+                let pair = (
+                    base.prm_table.get(i).copied().unwrap_or(base.prm),
+                    base.env_table.get(i).copied().unwrap_or(base.env),
+                );
+                if !colors.contains(&pair) {
+                    colors.push(pair);
+                }
+            }
+            let columns = (colors.len() as f32).sqrt().ceil().max(1.) as u32;
+            let tile = [source.width + 2, source.height + 2];
+            let width = columns * tile[0];
+            let height = (colors.len() as u32).div_ceil(columns) * tile[1];
+            let mut rgba = vec![0u8; (width * height * 4) as usize];
+            for (i, (prm, env)) in colors.iter().enumerate() {
+                for y in 0..source.height {
+                    for x in 0..source.width {
+                        let src = ((y * source.width + x) * 4) as usize;
+                        let dst = (((i as u32 / columns * tile[1] + 1 + y) * width
+                            + i as u32 % columns * tile[0]
+                            + 1
+                            + x)
+                            * 4) as usize;
+                        for k in 0..3 {
+                            let t = source.rgba[src + k] as f32 / 255.;
+                            rgba[dst + k] =
+                                (env[k] as f32 * (1. - t) + prm[k] as f32 * t).round() as u8;
+                        }
+                        rgba[dst + 3] = (source.rgba[src + 3] as u32 * prm[3] as u32 / 255) as u8;
+                    }
+                }
+            }
+            let texture = self.textures.len() as u32;
+            self.textures.push(FxTexture {
+                width,
+                height,
+                rgba,
+                repeat: false,
+                version: 1,
+            });
+            Paint::Palette {
+                texture,
+                colors,
+                columns,
+                tile,
+            }
+        } else if projected {
             self.textures.push(refraction_image(&jpa));
             Paint::Refraction {
                 texture: self.textures.len() as u32 - 1,
@@ -581,7 +654,11 @@ impl Particles {
         } else {
             let over = base.blend_dst != 1 && base.tev().contains(&4);
             let count = if quadratic(base) { 3 } else { 2 };
-            let count = if base.blend_dst == 1 || over { count } else { 1 };
+            let count = if base.blend_dst == 1 || over {
+                count
+            } else {
+                1
+            };
             let mut first = HashMap::new();
             let mut wanted: Vec<u8> = base.tex_keys.clone();
             wanted.push(base.texture);
@@ -679,7 +756,9 @@ impl Particles {
         self.effects.iter().any(|e| {
             e.world_space
                 && match &e.paint {
-                    Paint::Baked { texture: t } | Paint::Refraction { texture: t } => *t == texture,
+                    Paint::Baked { texture: t }
+                    | Paint::Refraction { texture: t }
+                    | Paint::Palette { texture: t, .. } => *t == texture,
                     Paint::Basis { first, count, over } => first
                         .values()
                         .any(|&t| texture >= t && texture < t + count + *over as u32),
@@ -962,6 +1041,7 @@ impl Particles {
                             blend: blend::ADDITIVE,
                         });
                     }
+                    Paint::Palette { .. } => unreachable!("palette is only for billboards"),
                     Paint::Basis { first, count, over } => {
                         let Some(&t0) = first.get(&e.texture) else {
                             continue;
@@ -1006,6 +1086,62 @@ impl Particles {
                         }
                     }
                 }
+                continue;
+            }
+            if let Paint::Palette {
+                texture,
+                colors,
+                columns,
+                tile,
+            } = &fx.paint
+            {
+                let atlas = &self.textures[*texture as usize];
+                let first_vertex = self.vertices.len() as u32;
+                let order: Box<dyn Iterator<Item = &Particle>> = if base.list_order() {
+                    Box::new(e.particles.iter())
+                } else {
+                    Box::new(e.particles.iter().rev())
+                };
+                for particle in order {
+                    let p = sample_particle(particle, fraction);
+                    let Some(index) = colors
+                        .iter()
+                        .position(|c| c.0 == p.look.prm && c.1 == p.look.env)
+                    else {
+                        continue;
+                    };
+                    let pos = if p.follow {
+                        e.bound_slot
+                            .and_then(|slot| self.binds.get(&slot))
+                            .map(|m| {
+                                let mut bound = e.clone_bind();
+                                bound.bind(*m);
+                                p.local * e.global_scale + bound.global_params(jpa).pos
+                            })
+                            .unwrap_or(p.global)
+                    } else {
+                        p.global
+                    };
+                    let Some(corners) = particle_quad(e, &p, pos, jpa, right, up, 0) else {
+                        continue;
+                    };
+                    for (position, uv) in corners {
+                        self.vertices.push(FxVertex {
+                            pos: position,
+                            u: (index as u32 % columns * tile[0] + 1) as f32 / atlas.width as f32
+                                + uv[0] * (tile[0] - 2) as f32 / atlas.width as f32,
+                            v: (index as u32 / columns * tile[1] + 1) as f32 / atlas.height as f32
+                                + uv[1] * (tile[1] - 2) as f32 / atlas.height as f32,
+                            color: [1., 1., 1., p.look.alpha],
+                        });
+                    }
+                }
+                self.batches.push(FxBatch {
+                    texture: *texture,
+                    first_vertex,
+                    vertex_count: self.vertices.len() as u32 - first_vertex,
+                    blend: blend::ALPHA,
+                });
                 continue;
             }
             let Paint::Basis { first, count, over } = &fx.paint else {
@@ -1583,7 +1719,9 @@ impl Emitter {
             if jpa.emitter.key_anm_mask & (1u32 << key.kind) == 0 {
                 continue;
             }
-            let Some(v) = key.value(self.frame) else { continue };
+            let Some(v) = key.value(self.frame) else {
+                continue;
+            };
             match key.kind {
                 10 => self.draw_scale = v,
                 0 => self.rate = v,
@@ -1642,17 +1780,55 @@ impl Emitter {
                 p.base_vel += p.dir * p.moment;
             }
             for (push, f) in &fields {
-                let mut v = *push;
+                let mut v = match f.kind {
+                    0 | 1 => *push,
+                    // JPAField.cpp: JPAMagnetField / JPANewtonField::affect.
+                    2 | 3 => {
+                        let target = if f.status & 2 != 0 {
+                            Vec3::from(f.pos)
+                        } else {
+                            info.global_rot * Vec3::from(f.pos)
+                        };
+                        let from = if f.status & 2 != 0 { p.global } else { p.local };
+                        let delta = target - from;
+                        let distance = delta.length_squared();
+                        if f.status & 0x80 != 0 && distance >= f.max_distance * f.max_distance {
+                            continue;
+                        }
+                        let strength = if f.kind == 2 || f.status & 0x100 != 0 {
+                            f.magnitude
+                        } else {
+                            let radius = f.param[0] * f.param[0];
+                            f.magnitude
+                                * if distance > radius {
+                                    radius * 10. / distance
+                                } else {
+                                    10.
+                                }
+                        };
+                        delta.normalize_or_zero() * strength
+                    }
+                    // JPAVortexField::set/affect: tangent around the authored
+                    // axis, interpolating inner/outer speeds by squared radius.
+                    4 => {
+                        let axis = (info.rot * Vec3::from(f.dir)).normalize_or_zero();
+                        let radial = p.local - axis * axis.dot(p.local);
+                        let radius = f.pos[2] * f.pos[2];
+                        let share = if radius > 0. {
+                            radial.length_squared().min(radius) / radius
+                        } else {
+                            0.
+                        };
+                        radial.normalize_or_zero().cross(axis)
+                            * (f.magnitude * (1. - share) + f.magnitude_random * share)
+                    }
+                    _ => continue,
+                };
                 let scale = fade_scale(f, p.progress);
                 if scale <= 0.0 {
                     v = Vec3::ZERO;
                 } else if scale < 1.0 {
                     v *= scale;
-                }
-                // Gravity (0) and air (1) push alike here (air's cone and clamp aren't
-                // ported); the others aren't ported.
-                if f.kind > 1 {
-                    continue;
                 }
                 match f.add_type {
                     0 => p.field_accel += v,
@@ -2574,6 +2750,61 @@ mod tests {
     }
 
     #[test]
+    fn gate_particles_curl_then_converge_and_keep_opaque_palette_order() {
+        let Some(dir) = libsms::assets::find(None) else {
+            eprintln!("SKIP: Sunshine assets absent");
+            return;
+        };
+        let mut p = Particles::load(&dir, &["ms_m_gout_gate"]);
+        assert_eq!(
+            p.effects[0]
+                .jpa
+                .fields
+                .iter()
+                .map(|f| f.kind)
+                .collect::<Vec<_>>(),
+            [3, 2, 4]
+        );
+        assert!(matches!(p.effects[0].paint, Paint::Palette { .. }));
+        p.set_speed("ms_m_gout_gate", 2.);
+        p.emit("ms_m_gout_gate", Mat4::IDENTITY, 1.);
+        let mut first = None;
+        let mut spread = 0f32;
+        let mut late = 0f32;
+        for frame in 0..46 {
+            p.advance(frame * FRAME_TICKS);
+            if let Some(e) = p.emitters.first() {
+                if frame == 0 {
+                    first = Some(e.particles[0].local);
+                }
+                if let Some(q) = e.particles.first() {
+                    spread = spread.max((q.local - first.unwrap()).length());
+                }
+                if frame == 40 {
+                    let target = Vec3::new(0., 110., 350.);
+                    late = e
+                        .particles
+                        .iter()
+                        .map(|q| q.local.distance(target))
+                        .sum::<f32>()
+                        / e.particles.len() as f32;
+                }
+            }
+            p.build(Vec3::X, Vec3::Y);
+            assert!(
+                p.batches.iter().all(|b| b.blend == blend::ALPHA),
+                "opaque colors must occlude one another instead of adding white"
+            );
+        }
+        assert!(spread > 300., "particles never leave the gate");
+        assert!(late < 100., "particles missed Mario's return point: {late}");
+        assert!(
+            !p.active(),
+            "colored particles survive the completed 89-frame model reveal"
+        );
+    }
+
+    #[test]
     fn playback_speed_advances_motion_and_lifetime_together() {
         let mut original = puff();
         let mut fast = original.clone();
@@ -2748,7 +2979,7 @@ mod tests {
     }
 
     /// The bump stars (`ms_dmg_c`) mix env into their colour: orange edges (and red, late) with a
-    /// yellow and then pink core, drawn over a black coverage layer, not white texture times prm.
+    /// yellow and then pink core. Check the actual baked colour as well as the alpha blend.
     #[test]
     fn bump_stars_are_orange_then_pink() {
         let Some(dir) = libsms::assets::find(None) else {
@@ -2768,6 +2999,19 @@ mod tests {
             for b in &p.batches {
                 let verts = &p.vertices[b.first_vertex as usize..][..b.vertex_count as usize];
                 if b.blend == blend::ALPHA {
+                    if matches!(p.effects[0].paint, Paint::Palette { .. }) {
+                        assert!(verts.iter().all(|v| v.color[..3] == [1.; 3]));
+                        for pixel in p.textures[b.texture as usize].rgba.chunks_exact(4) {
+                            let [r, g, bl, a] = <[u8; 4]>::try_from(pixel).unwrap();
+                            if r < 15 || a < 128 {
+                                continue;
+                            }
+                            let (g, bl) = (g as f32 / r as f32, bl as f32 / r as f32);
+                            orange |= (0.45..0.56).contains(&g) && bl < 0.05;
+                            pink |= bl > g && bl > 0.4;
+                        }
+                        continue;
+                    }
                     // Coverage: black, and under (before) every colour layer.
                     assert!(!colour_seen, "coverage after colour");
                     assert!(verts.iter().all(|v| v.color[..3] == [0.0; 3]));
