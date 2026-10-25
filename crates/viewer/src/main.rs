@@ -1172,16 +1172,24 @@ async fn main() {
         }
 
         // Simulate. Water events are drained into droplets right after each frame's ticks.
-        // Host aim, the way the RoR2 adapter reports the crosshair: the right mouse button
-        // aims along the camera. `SMS_AIM=<deg>` holds an aim that far to Luigi's right (+)
-        // or left (-) of his facing, for captures.
-        let aim_deg = std::env::var("SMS_AIM")
-            .ok()
-            .and_then(|v| v.parse::<f32>().ok());
+        // Host aim, the way the RoR2 adapter reports it: `MarioDriver.Aim` sends
+        // `SetAim(1, crosshair)` while `AimAtCrosshair` is on, the spray trigger is down and
+        // the fitted nozzle is the Spray (`step.r_analog > 0 && fitted.nozzle == 1`), and
+        // `SetAim(0, ..)` otherwise. The viewer mirrors that condition with the camera as the
+        // crosshair. `SMS_AIM=<yaw>[,<pitch>]` overrides it in absolute degrees for captures.
+        let aim_env = std::env::var("SMS_AIM").ok().map(|v| {
+            let mut it = v.split(',').filter_map(|x| x.trim().parse::<f32>().ok());
+            (it.next().unwrap_or(0.0), it.next().unwrap_or(0.0))
+        });
         let pi = std::f32::consts::PI;
-        let aim = if let Some(deg) = aim_deg {
-            Some((to_angle(sim.mario.model_yaw as f32 + deg * 32768.0 / pi), 0))
-        } else if is_mouse_button_down(MouseButton::Right) {
+        let aim = if let Some((deg, pitch)) = aim_env {
+            Some((
+                to_angle(deg * 32768.0 / pi),
+                to_angle(pitch * 32768.0 / pi),
+            ))
+        } else if pad.r_analog > 0
+            && sim.mario.fludd.as_ref().is_some_and(|f| f.nozzle == NozzleKind::Spray)
+        {
             Some((
                 to_angle((cam_a + pi) * 32768.0 / pi),
                 to_angle(-cam_p * 32768.0 / pi),
