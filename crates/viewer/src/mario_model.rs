@@ -399,15 +399,7 @@ impl MarioModel {
                 let pose = Pose::new(&self.fludd.model.bmd, root * base, &fludd_joints);
                 // The thin waterline pipe is part of the tank shell; hide it rather
                 // than pitching the tank with the neck.
-                let fludd_hidden: Vec<usize> = self
-                    .fludd
-                    .model
-                    .bmd
-                    .draws
-                    .iter()
-                    .filter(|(m, _, _)| self.fludd.model.bmd.materials[*m].name.contains("waterline"))
-                    .map(|(_, s, _)| *s)
-                    .collect();
+                let fludd_hidden: Vec<usize> = vec![3];
                 let fludd_look = Look { hidden: fludd_hidden, ..Default::default() };
                 if shown("fludd") {
                     r.draw(
@@ -445,6 +437,10 @@ impl MarioModel {
 pub fn root_matrix(pos: Vec3, yaw: f32, scale: f32) -> Mat4 {
     Mat4::from_translation(pos) * Mat4::from_rotation_y(yaw) * Mat4::from_scale(Vec3::splat(scale))
 }
+
+
+
+
 
 
 
