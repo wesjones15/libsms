@@ -423,7 +423,13 @@ impl Source<'_> {
 
     /// Runs material `mi` with `tex(stage)` for each stage's texture read; the alpha test is
     /// folded into the alpha.
-    fn eval(&self, mi: usize, inputs: &Inputs, tex: &dyn Fn(usize) -> C4) -> C4 {
+    fn eval(
+        &self,
+        mi: usize,
+        inputs: &Inputs,
+        preserve_alpha: bool,
+        tex: &dyn Fn(usize) -> C4,
+    ) -> C4 {
         let m = &self.bmd.materials[mi];
         let ch = self.channels.get(mi).copied().unwrap_or([[1.0; 4]; 2]);
         let mut k = m.konst.map(|c| c.map(|v| v as f32 / 255.0));
@@ -467,7 +473,13 @@ impl Source<'_> {
         }
         let mut out = g.prev.map(|v| v.clamp(0.0, 1.0));
         if !m.alpha_compare.always_passes() {
-            out[3] = if alpha_passes(m, out[3]) { 1.0 } else { 0.0 };
+            out[3] = if !alpha_passes(m, out[3]) {
+                0.0
+            } else if preserve_alpha {
+                out[3]
+            } else {
+                1.0
+            };
         }
         out
     }
@@ -477,7 +489,7 @@ impl Source<'_> {
     /// materials), RGBA 0..1.
     pub fn flat_color(&self, mi: usize, inputs: &Inputs) -> C4 {
         let rd = self.reads(mi, inputs);
-        self.eval(mi, inputs, &|i| match rd.get(i) {
+        self.eval(mi, inputs, false, &|i| match rd.get(i) {
             Some(Read::Average(c)) => *c,
             Some(Read::Srtg { tex, channel }) => self.srtg(mi, *tex, *channel),
             Some(Read::Env { tex, .. }) => self.tex(*tex).map_or([1.0; 4], |t| t.average),
@@ -497,6 +509,27 @@ impl Source<'_> {
     /// largest of its textures' sizes (at most `max_size` a side), or failing that over its
     /// environment maps' own space ([`Baked::env`]). `None` for an untextured material.
     pub fn bake(&self, mi: usize, inputs: &Inputs, max_size: u32) -> Option<Baked> {
+        self.bake_with_alpha(mi, inputs, max_size, false)
+    }
+
+    /// Keep fractional TEV alpha after testing. Materials such as the M gate
+    /// multiply source colour by that alpha with a zero destination factor.
+    pub fn bake_preserving_alpha(
+        &self,
+        mi: usize,
+        inputs: &Inputs,
+        max_size: u32,
+    ) -> Option<Baked> {
+        self.bake_with_alpha(mi, inputs, max_size, true)
+    }
+
+    fn bake_with_alpha(
+        &self,
+        mi: usize,
+        inputs: &Inputs,
+        max_size: u32,
+        preserve_alpha: bool,
+    ) -> Option<Baked> {
         let rd = self.reads(mi, inputs);
         let uv_mapped = rd.iter().any(|r| matches!(r, Read::Uv { .. }));
         let mut size = (0u32, 0u32);
@@ -522,7 +555,7 @@ impl Source<'_> {
         for y in 0..h {
             for x in 0..w {
                 let (u, v) = ((x as f32 + 0.5) / w as f32, (y as f32 + 0.5) / h as f32);
-                let c = self.eval(mi, inputs, &|i| match rd.get(i) {
+                let c = self.eval(mi, inputs, preserve_alpha, &|i| match rd.get(i) {
                     Some(Read::Uv { tex, mtx }) => match self.tex(*tex) {
                         Some(t) => {
                             let (su, sv) = match mtx {

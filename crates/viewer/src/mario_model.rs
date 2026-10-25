@@ -55,6 +55,10 @@ pub struct MarioModel {
     /// [open, fists] x [right, left]
     hands: [[Part; 2]; 2],
     cap: Part,
+    /// TMarioCap::perform uses ma_cap3 during the successful gate-return landing.
+    return_cap: Option<Part>,
+    /// MarioDraw.cpp: the right hand carrying the cap before get2 frame 158.
+    return_hand: Option<Part>,
     fludd: Part,
     /// Spray, Hover, Rocket, Turbo, Yoshi (`dummy_wg`).
     nozzles: [Option<Part>; 5],
@@ -109,6 +113,8 @@ impl MarioModel {
             load_pair(&mut r, paths::HANDS_FIST)?,
         ];
         let cap = Part::load(&mut r, dir, paths::CAPS[0])?;
+        let return_cap = Part::load(&mut r, dir, paths::CAPS[1]).ok();
+        let return_hand = Part::load(&mut r, dir, "bmd/ma_hnd4r.bmd").ok();
         let fludd = Part::load(&mut r, dir, paths::FLUDD_BODY)?;
         let nozzles = [
             paths::NOZZLE_SPRAY,
@@ -174,6 +180,8 @@ impl MarioModel {
             body,
             hands,
             cap,
+            return_cap,
+            return_hand,
             fludd,
             nozzles,
             fludd_clips,
@@ -242,7 +250,8 @@ impl MarioModel {
         if !self.shirt {
             body_look.hidden.push(SHIRT_SHAPE);
         }
-        let hands = hands_for_clip(m.anim.clip);
+        let return_landing = m.anim.clip == "demo_gate_out_get2";
+        let hands = if return_landing { Hands::Fists } else { hands_for_clip(m.anim.clip) };
         if hands != Hands::Body {
             body_look.hidden.extend(BODY_HAND_SHAPES);
         }
@@ -327,9 +336,12 @@ impl MarioModel {
                 );
             }
             if let Some(head) = world(self.head).filter(|_| shown("cap")) {
-                let pose = Pose::new(&self.cap.model.bmd, head, &self.cap.bind);
+                let cap = if return_landing && m.anim.frame < 157. {
+                    self.return_cap.as_mut().unwrap_or(&mut self.cap)
+                } else { &mut self.cap };
+                let pose = Pose::new(&cap.model.bmd, head, &cap.bind);
                 r.draw(
-                    &mut self.cap.model,
+                    &mut cap.model,
                     &pose,
                     view,
                     proj,
@@ -346,7 +358,9 @@ impl MarioModel {
             if let Some(s) = set.filter(|_| shown("hands")) {
                 for side in 0..2 {
                     if let Some(at) = world(self.hand_joints[side]) {
-                        let part = &mut self.hands[s][side];
+                        let part = if return_landing && side == 0 && m.anim.frame < 158. {
+                            self.return_hand.as_mut().unwrap_or(&mut self.hands[s][side])
+                        } else { &mut self.hands[s][side] };
                         let pose = Pose::new(&part.model.bmd, at, &part.bind);
                         r.draw(
                             &mut part.model,

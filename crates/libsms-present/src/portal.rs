@@ -72,13 +72,24 @@ impl Portal {
             self.model.materials[0].mat_colors[0].map(|v| v as f32 / 255.),
             [1.; 4],
         ]];
-        tev::Source {
+        let mut baked = tev::Source {
             bmd: &self.model,
             textures: &self.textures,
             channels: &channels,
         }
-        .bake(0, &Inputs::default(), 512)
-        .expect("gate is texture mapped")
+        .bake_preserving_alpha(0, &Inputs::default(), 512)
+        .expect("gate is texture mapped");
+        // The source material is GX_BL_SRCALPHA / GX_BL_ZERO. Its surviving
+        // edge pixels replace the wall with C*A, leaving the dark M border.
+        // Encode that result plus the alpha-test coverage for ordinary hosts.
+        for p in baked.rgba.chunks_exact_mut(4) {
+            let alpha = p[3] as u32;
+            for c in &mut p[..3] {
+                *c = ((*c as u32 * alpha + 127) / 255) as u8;
+            }
+            p[3] = if alpha == 0 { 0 } else { 255 };
+        }
+        baked
     }
 }
 
