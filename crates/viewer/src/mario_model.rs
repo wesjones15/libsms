@@ -285,10 +285,13 @@ impl MarioModel {
         // Spray nozzle so they clear his head. The tank stays put: only joints above
         // the collar base and on the centreline rotate.
         let mut fludd_joints = fludd_joints;
-        if look.is_some_and(|l| l.nozzle == NozzleKind::Spray) {
+        let lean_env = std::env::var("SMS_LEAN").ok().and_then(|v| v.parse::<f32>().ok());
+        let lean_deg = lean_env.unwrap_or(45.0);
+        let lean_on = lean_env.is_some() || look.is_some_and(|l| l.nozzle == NozzleKind::Spray);
+        if lean_on {
             let pivot = glam::Vec3::new(45.0, 0.0, 0.0);
             let lean = Mat4::from_translation(pivot)
-                * Mat4::from_rotation_y((45.0f32).to_radians())
+                * Mat4::from_rotation_y(lean_deg.to_radians())
                 * Mat4::from_translation(-pivot);
             for j in fludd_joints.iter_mut() {
                 let p = j.w_axis;
@@ -428,5 +431,6 @@ impl MarioModel {
 pub fn root_matrix(pos: Vec3, yaw: f32, scale: f32) -> Mat4 {
     Mat4::from_translation(pos) * Mat4::from_rotation_y(yaw) * Mat4::from_scale(Vec3::splat(scale))
 }
+
 
 
