@@ -1,19 +1,19 @@
-﻿//! Mario as the game draws him, from the user's extracted `mario.szs`: the body skinned by the
+//! Mario as the game draws him, from the user's extracted `mario.szs`: the body skinned by the
 //! clip the sim is playing, the hand models `changeHand` picks per clip, the cap on `M_head`
 //! (`TMarioCap`), FLUDD on `jnt_chest` and the current nozzle on FLUDD's `nozzle_center`
 //! (`TWaterGun::init`, WaterGun.cpp), and the eyes' blink pattern. FLUDD's and the nozzle's
 //! clips come from the sim (`Mario::fludd_look`); the nozzle joints get the game's aiming
 //! callbacks, and the posed muzzles go back to the sim so water leaves the drawn nozzle.
 
-use std::collections::HashMap;
 use std::path::Path;
 
 use glam::{Mat4, Vec3};
-use libsms::{Clip, NozzleKind, Sim};
+use libsms::{Clip, Sim};
 use libsms_assets::btp::TexPattern;
 use libsms_assets::mario::{BODY_HAND_SHAPES, HIDDEN_SHAPE, Hands, SHIRT_SHAPE, hands_for_clip};
 use libsms_assets::{Bmd, Pose, paths};
 
+use crate::fludd::Fludd;
 use crate::j3d::{GpuModel, Lights, Look, Pass, Renderer};
 
 pub(crate) struct Part {
@@ -62,11 +62,8 @@ pub struct MarioModel {
     return_cap: Option<Part>,
     /// MarioDraw.cpp: the right hand carrying the cap before get2 frame 158.
     return_hand: Option<Part>,
-    fludd: Part,
-    /// Spray, Hover, Rocket, Turbo, Yoshi (`dummy_wg`).
-    nozzles: [Option<Part>; 5],
-    /// Every `watergun2/*/*.bck` by file stem: FLUDD's and the nozzles' clips.
-    fludd_clips: HashMap<String, Clip>,
+    /// The pack he wears (`watergun2/`), also worn by other characters.
+    fludd: Fludd,
     wink: Option<TexPattern>,
     eye_materials: Vec<usize>,
     hand_joints: [Option<usize>; 2],
@@ -81,7 +78,7 @@ impl MarioModel {
     pub fn draw_nozzle_group(&mut self, view: Mat4, proj: Mat4) {
         let lights = Lights::daylight(view);
         for (i, slot) in [1usize, 3, 2].into_iter().enumerate() {
-            let Some(part) = self.nozzles[slot].as_mut() else { continue };
+            let Some(part) = self.fludd.nozzles_mut()[slot].as_mut() else { continue };
             let bind_pose = Pose::new(&part.model.bmd, Mat4::IDENTITY, &part.bind);
             let mut lo = Vec3::splat(f32::INFINITY);
             let mut hi = Vec3::splat(f32::NEG_INFINITY);
@@ -118,49 +115,7 @@ impl MarioModel {
         let cap = Part::load(&mut r, dir, paths::CAPS[0])?;
         let return_cap = Part::load(&mut r, dir, paths::CAPS[1]).ok();
         let return_hand = Part::load(&mut r, dir, "bmd/ma_hnd4r.bmd").ok();
-        let fludd = Part::load(&mut r, dir, paths::FLUDD_BODY)?;
-        let nozzles = [
-            paths::NOZZLE_SPRAY,
-            paths::NOZZLE_HOVER,
-            paths::NOZZLE_ROCKET,
-            paths::NOZZLE_TURBO,
-            paths::NOZZLE_YOSHI,
-        ]
-        .map(|p| Part::load(&mut r, dir, p).ok());
-        // The nozzles ship an 8x8 stand-in for FLUDD's env-map texture; the game points it at
-        // FLUDD's own (`SMS_ChangeTextureAll(.., "H_watergun_main_dummy", wg_mdl1 texture 1)`,
-        // `TWaterGun::init`).
-        let mut nozzles = nozzles;
-        if let Some(&real) = fludd.model.textures.get(1) {
-            for part in nozzles.iter_mut().flatten() {
-                for (i, t) in part.model.bmd.textures.iter().enumerate() {
-                    if t.name == "H_watergun_main_dummy" {
-                        part.model.textures[i] = real;
-                    }
-                }
-            }
-        }
-        let mut fludd_clips = HashMap::new();
-        for folder in std::fs::read_dir(dir.join("watergun2"))
-            .into_iter()
-            .flatten()
-            .flatten()
-        {
-            for f in std::fs::read_dir(folder.path())
-                .into_iter()
-                .flatten()
-                .flatten()
-            {
-                let path = f.path();
-                if path.extension().and_then(|e| e.to_str()) != Some("bck") {
-                    continue;
-                }
-                let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-                if let Some(c) = std::fs::read(&path).ok().and_then(|d| Clip::parse(&d)) {
-                    fludd_clips.insert(stem.to_owned(), c);
-                }
-            }
-        }
+        let fludd = Fludd::load(dir)?;
         let wink = std::fs::read(dir.join(paths::WINK))
             .ok()
             .and_then(|d| TexPattern::parse(&d).ok());
@@ -187,8 +142,6 @@ impl MarioModel {
             return_cap,
             return_hand,
             fludd,
-            nozzles,
-            fludd_clips,
             wink,
             eye_materials,
             blink_at: 2.0,
@@ -267,87 +220,15 @@ impl MarioModel {
             ..Default::default()
         };
 
-        // FLUDD in model space: on the chest, tilted back as the chest leans
-        // (`TWaterGun::setBaseTRMtx`: `|m[1][0]| * (unk1D04 - unk1D06) + unk1D06`, 0 and
-        // -0x1800), posed by the sim's clip (`calcAnimation`). The nozzle sits on
-        // `nozzle_center` with its own clip and the aiming callbacks (`TWaterGun::init`).
+        // FLUDD in model space: on the chest. The pack owns its body, clips and nozzles and
+        // does the game's `setBaseTRMtx` chest tilt itself.
         let look = m.fludd_look();
-        let deg = |a: f32| a * std::f32::consts::PI / 32768.0;
         let fludd_base = look
             .and(self.chest)
             .and_then(|c| joints.get(c))
-            .map(|chest| {
-                let lean = chest.x_axis.truncate().normalize_or_zero().y.abs();
-                *chest * Mat4::from_rotation_z(deg(lean * 6144.0 - 6144.0))
-            });
-        let fludd_joints = self.fludd.posed(
-            look.and_then(|l| self.fludd_clips.get(l.body_clip)),
-            look.map_or(0.0, |l| l.body_frame),
-            |_| None,
-        );
-        // Luigi alt-skin: lean the blue collar, drum and nozzle to one side for the
-        // Spray nozzle so they clear his head. The tank stays put: only joints above
-        // the collar base and on the centreline rotate.
-        let mut fludd_joints = fludd_joints;
-        let lean_env = std::env::var("SMS_LEAN").ok().and_then(|v| v.parse::<f32>().ok());
-        let lean_deg = lean_env.unwrap_or(45.0);
+            .copied();
+        // Only a deployed FLUDD leans the Spray neck (Luigi's alt-skin).
         let spraying = m.fludd.as_ref().is_some_and(|f| f.housed < 0.5);
-        let lean_on = lean_env.is_some()
-            || (look.is_some_and(|l| l.nozzle == NozzleKind::Spray) && spraying);
-        if lean_on {
-            // Measured layout: the collar and nozzle are null_pump_wA/wB and
-            // nozzle_center (joints 4, 5, 6), all at y ~= -40; the levers/grips at
-            // z +-20 are NOT part of the neck. Pivot on the collar base (x 37).
-            let pivot = glam::Vec3::new(37.0, -40.0, 0.0);
-            let lean = Mat4::from_translation(pivot)
-                * Mat4::from_rotation_y(lean_deg.to_radians())
-                * Mat4::from_translation(-pivot);
-            for (i, j) in fludd_joints.iter_mut().enumerate() {
-                if matches!(i, 4 | 5 | 6 | 7) {
-                    *j = lean * *j;
-                }
-            }
-        }
-        let slot = look.map(|l| match l.nozzle {
-            NozzleKind::Spray => 0,
-            NozzleKind::Hover | NozzleKind::Underwater => 1,
-            NozzleKind::Rocket => 2,
-            NozzleKind::Turbo => 3,
-            // The water leaves Yoshi's mouth (`getEmitMtx`); FLUDD shows `dummy_wg`.
-            NozzleKind::Yoshi => 4,
-        });
-        let nozzle_at = fludd_base
-            .zip(self.fludd.model.bmd.joint("nozzle_center"))
-            .map(|(base, c)| base * fludd_joints[c]);
-        let mut muzzles = Vec::new();
-        let nozzle_joints = match (look, slot.and_then(|i| self.nozzles[i].as_ref())) {
-            (Some(l), Some(part)) => {
-                let extra = |name: &str| match name {
-                    // `NozzleCtrl`: the neck dips with the aim, never above level.
-                    "chn_muzzle_1" | "jnt_back_nozzle_neck" if l.gun_angle < 0.0 => {
-                        Some(Mat4::from_rotation_z(deg(l.gun_angle)))
-                    }
-                    // `WaterGunDivingCtrlL/R`: the hover jets lean with the steering.
-                    "jnt_nozzle_L" => Some(Mat4::from_rotation_z(deg(-l.tilt[0]))),
-                    "jnt_nozzle_R" => Some(Mat4::from_rotation_z(deg(-l.tilt[1]))),
-                    // `RotateCtrl`: the Turbo propeller.
-                    "chn_back_nozzle_prop" => Some(Mat4::from_rotation_x(deg(l.prop_angle))),
-                    _ => None,
-                };
-                let clip = l.nozzle_clip.and_then(|c| self.fludd_clips.get(c));
-                let js = part.posed(clip, l.nozzle_frame, extra);
-                if let Some(at) = nozzle_at.filter(|_| l.nozzle != NozzleKind::Yoshi) {
-                    for name in ["null_G_muzzle", "null_G_muzzle2"] {
-                        if let Some(j) = part.model.bmd.joint(name) {
-                            let mm = at * js[j];
-                            muzzles.push((mm.w_axis.truncate(), mm.x_axis.truncate()));
-                        }
-                    }
-                }
-                js
-            }
-            _ => Vec::new(),
-        };
 
         for pass in [Pass::Opaque, Pass::Translucent] {
             let r = &mut self.renderer;
@@ -401,40 +282,11 @@ impl MarioModel {
                     }
                 }
             }
-            if let Some(base) = fludd_base {
-                let pose = Pose::new(&self.fludd.model.bmd, root * base, &fludd_joints);
-                // The thin waterline pipe is part of the tank shell; hide it rather
-                // than pitching the tank with the neck.
-                let fludd_hidden: Vec<usize> = if lean_on { vec![3] } else { Vec::new() };
-                let fludd_look = Look { hidden: fludd_hidden, ..Default::default() };
-                if shown("fludd") {
-                    r.draw(
-                        &mut self.fludd.model,
-                        &pose,
-                        view,
-                        proj,
-                        &lights,
-                        &fludd_look,
-                        pass,
-                    );
-                }
-            }
-            if let (Some(at), Some(i)) = (nozzle_at, slot.filter(|_| shown("nozzle")))
-                && let Some(part) = self.nozzles[i].as_mut()
-            {
-                let pose = Pose::new(&part.model.bmd, root * at, &nozzle_joints);
-                r.draw(
-                    &mut part.model,
-                    &pose,
-                    view,
-                    proj,
-                    &lights,
-                    &Look::default(),
-                    pass,
-                );
-            }
         }
-        muzzles
+        fludd_base.map_or_else(Vec::new, |base| {
+            self.fludd
+                .draw(look, spraying, base, root, view, proj, (shown("fludd"), shown("nozzle")))
+        })
     }
 }
 

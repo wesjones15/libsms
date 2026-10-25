@@ -19,6 +19,7 @@
 //! code defaults and a plain capsule are used, and the HUD says so. `--demo` replays a script.
 
 mod coin;
+mod fludd;
 mod fx;
 mod j3d;
 mod luigi;
@@ -864,31 +865,25 @@ async fn main() {
     let mut audio = assets
         .as_ref()
         .and_then(|a| libsms_present::Audio::start(&a.dir, true));
-    // `--luigi`: draw Luigi instead of Mario.s body (FLUDD and effects stay Mario.s).
+    // `--luigi`: draw Luigi with his own FLUDD instead of Mario.
     let use_luigi = std::env::args().any(|s| s == "--luigi" || s == "--luigi-beside");
     let luigi_beside = std::env::args().any(|s| s == "--luigi-beside");
-    if use_luigi && !luigi_beside {
-        unsafe { std::env::set_var("SMS_HIDE", "body,cap,hands") };
-    }
     // The disc's Mario: body, hands, cap, FLUDD and nozzles with their materials.
     let mut mario_model = assets.as_ref().and_then(|a| {
         mario_model::MarioModel::load(&a.dir)
             .map_err(|e| eprintln!("Mario's model: {e}"))
             .ok()
     });
-    // Luigi owns his own FLUDD copy: hidden to FLUDD/nozzle, drawn at his root.
-    let mut luigi_fludd = if luigi_beside {
+    // Luigi owns a FLUDD of his own; it follows his chest, not Mario's.
+    let mut luigi_fludd = if use_luigi {
         assets.as_ref().and_then(|a| {
-            mario_model::MarioModel::load(&a.dir)
-                .map_err(|e| eprintln!("Luigi FLUDD: {e}"))
+            fludd::Fludd::load(&a.dir)
+                .map_err(|e| eprintln!("Luigi's FLUDD: {e}"))
                 .ok()
         })
     } else {
         None
     };
-    if let Some(f) = &mut luigi_fludd {
-        f.hide = "body,cap,hands".into();
-    }
     // Yoshi, his tongue and his egg.
     let mut luigi_model = if use_luigi {
         assets.as_ref().and_then(|a| {
@@ -1304,25 +1299,36 @@ async fn main() {
                 if !clean {
                     draw_shadow(&sim, sim.alpha());
                 }
-                let muzzles = if portrait.as_deref() == Some("air") {
+                let mut muzzles = if portrait.as_deref() == Some("air") {
                     model.draw_nozzle_group(view, proj);
                     Vec::new()
-                } else { {
+                } else if use_luigi && !luigi_beside {
+                    Vec::new()
+                } else {
                     let mario_root = if luigi_beside {
                         root * ::glam::Mat4::from_translation(::glam::Vec3::new(120.0, 0.0, 0.0))
                     } else {
                         root
                     };
                     model.draw(&sim, &joints, mario_root, view, proj, get_time() as f32)
-                } };
-                if let Some(f) = &mut luigi_fludd {
-                    f.draw(&sim, &joints, root, view, proj, get_time() as f32);
-                }
+                };
                 if let Some(l) = &mut luigi_model {
                     let name = sim.mario.anim.clip;
                     let frame = sim.mario.anim.frame;
                     if let Some(world) = l.pose(name, frame) {
                         l.draw(&world, root, view, proj);
+                        // Luigi's own FLUDD, on his chest.
+                        if let Some(f) = &mut luigi_fludd {
+                            let chest = l.chest(&world);
+                            let look = sim.mario.fludd_look();
+                            let deployed =
+                                sim.mario.fludd.as_ref().is_some_and(|f| f.housed < 0.5);
+                            let drawn =
+                                f.draw(look, deployed, chest, root, view, proj, (true, true));
+                            if !luigi_beside {
+                                muzzles = drawn;
+                            }
+                        }
                     }
                 }
                 if let Some(f) = &sim.mario.fludd {

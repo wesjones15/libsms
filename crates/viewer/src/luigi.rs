@@ -1,4 +1,4 @@
-﻿//! Luigi's HSD mesh (`PlLgNr.dat`) drawn beside Mario in the Sunshine viewer.
+//! Luigi's HSD mesh (`PlLgNr.dat`) drawn beside Mario in the Sunshine viewer.
 //!
 //! HSD is not J3D: its materials are not TEV, so this uses a small textured pipeline of its
 //! own (position, uv, vertex colour), keeps the mesh static on the GPU and skins it on the
@@ -63,6 +63,8 @@ pub struct Luigi {
     model: Model,
     rig: sms::Rig,
     retarget: sms::Retarget,
+    /// Mario's `jnt_chest` frame in Luigi's `WaistN` frame: FLUDD's chest transform.
+    chest_align: Mat4,
     bck_dir: PathBuf,
     clips: HashMap<String, sms::Clip>,
 }
@@ -74,6 +76,11 @@ impl Luigi {
             .map_err(|e| e.to_string())?;
         let rig = sms::Rig::from_file(&sms_dir.join("bmd/ma_mdl1.bmd")).map_err(|e| e.to_string())?;
         let retarget = sms::Retarget::new(&model, &rig);
+        // FLUDD rides the chest: the retarget maps `jnt_chest` (14) onto `WaistN` (5), so its
+        // bind rotations give the frame that carries FLUDD's Mario-space base to Luigi.
+        let chest_align = Mat4::from_mat3(
+            retarget.target_bind()[5].transpose() * retarget.source_bind()[14],
+        );
         let ctx = ctx();
         let shader = ctx
             .new_shader(
@@ -150,6 +157,7 @@ impl Luigi {
             model,
             rig,
             retarget,
+            chest_align,
             bck_dir: sms_dir.join("bck"),
             clips: HashMap::new(),
         })
@@ -220,6 +228,16 @@ impl Luigi {
 
     pub fn bind_world(&self) -> Vec<Mat4> {
         self.model.bind_world()
+    }
+
+    /// Where FLUDD straps on: `WaistN` turned into Mario's chest frame and scaled to Sunshine's
+    /// decomp units (Melee models are a tenth of one).
+    pub fn chest(&self, world: &[Mat4]) -> Mat4 {
+        let Some(chest) = world.get(5).copied() else {
+            return Mat4::IDENTITY;
+        };
+        let (_, r, t) = (chest * self.chest_align).to_scale_rotation_translation();
+        Mat4::from_rotation_translation(r, t * 10.0)
     }
 
     pub fn joint_count(&self) -> usize {

@@ -29,24 +29,20 @@ clears his head. No height change: Luigi keeps his authored height, `model_scali
 - Captures live under `libsms/target/`: `luigi_posed.png` (idle), `luigi_moves.png`
   (run/jump/dive/pound/spray), `spray_compare2.png` (lean A/B), `beside2.png` (both FLUDDs).
 
-## What is still a workaround
+## FLUDD
 
-`--luigi` hides Mario's body/cap/hands (`SMS_HIDE`) and reuses his FLUDD; `--luigi-beside`
-instantiates a second `MarioModel` as a FLUDD renderer. Both should go.
+`viewer/src/fludd.rs` is FLUDD as a component of its own: the pack
+(`watergun2/body/wg_mdl1.bmd`), all five nozzles, every `watergun2` clip, the Spray neck lean,
+the frame-rod hide and the nozzle aiming callbacks. Mario's model owns one (`MarioModel::fludd`)
+and so does Luigi's character: a host passes the chest frame the pack straps to, the sim's
+`FluddLook` and `housed < 0.5`, and gets the posed muzzles back for `set_emitters`.
 
-## Next change (additive, no extraction)
+- Mario: `chest = joints[jnt_chest]`.
+- Luigi: `Luigi::chest(world) = world[WaistN] * (lg_bind[5]^T * sms_bind[14])`, translation
+  x10 to Sunshine's decomp units (the retarget maps `jnt_chest` onto `WaistN`).
+- `--luigi` draws only Luigi plus his FLUDD; `--luigi-beside` draws Mario, Luigi and Luigi's
+  FLUDD as independent packs. `SMS_HIDE` and the second-`MarioModel` trick are gone from both.
 
-New `viewer/src/fludd.rs`:
+Tunables live at the top of `fludd.rs`: `LEAN_DEG` (45), `LEAN_PIVOT` (37, -40, 0),
+`LEAN_JOINTS` (4, 5, 6, 7) and `ROD_SHAPE` (3).
 
-- `pub struct Fludd { body: Part, nozzle: Part, clips }`, loaded from
-  `dir/watergun2/body/wg_mdl1.bmd`, `dir/watergun2/normal_wg/normal_wg.bmd`, and the
-  `wg_house` / `wg_pump` / `normal_wg_change_end` BCKs.
-- `pub fn draw(&mut self, look: &FluddLook, chest: Mat4, root: Mat4, view, proj)`:
-  pose the body, apply the +45 Spray lean to joints 4/5/6/7 about `(37,-40,0)`, hide shape 3
-  while leaning, pose and draw the nozzle on `nozzle_center`, all in the chest frame.
-- Mario keeps `MarioModel` as-is for now; Luigi uses `Fludd` directly with
-  `chest = retarget_world[5] * align * 10`.
-- `--luigi` then draws only Luigi + his `Fludd`; `--luigi-beside` draws Mario + Luigi + his
-  `Fludd`. `SMS_HIDE` and the second-`MarioModel` trick are deleted from these paths.
-
-Later, optionally, `MarioModel` can use the same `Fludd` (remove the duplicated code).
