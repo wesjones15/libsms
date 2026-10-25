@@ -741,7 +741,7 @@ pub unsafe extern "C" fn sms_view_model(
     // SAFETY: as documented.
     unsafe {
         with_view(view, 0, |v| {
-            if model == models::LUIGI {
+            if model == models::LUIGI && v.view.luigi.is_some() {
                 let (Some(l), Some(out)) = (&v.view.luigi, out.as_mut()) else {
                     return 0;
                 };
@@ -785,7 +785,7 @@ pub unsafe extern "C" fn sms_view_batches(
     // SAFETY: as documented.
     unsafe {
         with_view(view, 0, |v| {
-            if model == models::LUIGI {
+            if model == models::LUIGI && v.view.luigi.is_some() {
                 let Some(l) = &v.view.luigi else {
                     return 0;
                 };
@@ -853,7 +853,7 @@ pub unsafe extern "C" fn sms_view_indices(
     // SAFETY: as documented.
     unsafe {
         with_view(view, 0, |v| {
-            if model == models::LUIGI {
+            if model == models::LUIGI && v.view.luigi.is_some() {
                 let Some(l) = &v.view.luigi else {
                     return 0;
                 };
@@ -901,7 +901,7 @@ pub unsafe extern "C" fn sms_view_uvs(
     // SAFETY: as documented.
     unsafe {
         with_view(view, 0, |v| {
-            if model == models::LUIGI {
+            if model == models::LUIGI && v.view.luigi.is_some() {
                 let Some(l) = &v.view.luigi else {
                     return 0;
                 };
