@@ -892,6 +892,9 @@ async fn main() {
         s.mario.params = params.clone();
         s.mario.anims = anims.clone();
         s.mario.give_fludd();
+        // `SMS_SPRAY_DIVE=1`: the host extension the RoR2 mod uses — the Spray nozzle may fire
+        // during a B dive and the belly slide (`Options::spray_during_dive`).
+        s.mario.options.spray_during_dive = std::env::var_os("SMS_SPRAY_DIVE").is_some();
         s.mario.anim = libsms::AnimState::new(libsms::anim::clip::WAIT, &s.mario.anims);
         // Yoshi's egg on the far side of the start, facing it (`eggYoshi`).
         s.mario.add_egg(V3::new(0.0, 0.0, -700.0), 0);
@@ -997,6 +1000,21 @@ async fn main() {
             1.0 / 120.0
         } else { get_frame_time().min(0.1) };
         sim_secs += dt;
+
+        // `SMS_LOOP=slide`: with `SMS_PORTRAIT=slide`, start the slide again as soon as Mario
+        // gets up, so the slide spray (and FLUDD's pump) can be watched looping.
+        if std::env::var("SMS_LOOP").as_deref() == Ok("slide")
+            && portrait.as_deref() == Some("slide")
+            && sim.mario.status != Status::Catch
+        {
+            sim = mk();
+            sim.mario.limits.wet_slide = Some(libsms::WetSlide::timed(240, true));
+            sim.mario.launch(V3::new(0.0, 0.0, 45.0));
+            sim.mario
+                .portrait_pose(Status::Catch, libsms::anim::clip::DIVE, 50.0, 1, true);
+            sim.mario.vel = V3::new(0.0, 0.0, 45.0);
+            water.particles.clear();
+        }
 
         // Camera.
         if is_key_down(KeyCode::Left) {

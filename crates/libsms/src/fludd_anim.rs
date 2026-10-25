@@ -296,8 +296,17 @@ impl Mario {
                         self.upper_ctrl = FrameCtrl::new(info);
                     }
                 } else {
-                    // A host can permit Spray in the dive/slide without replacing its pose.
+                    // A host can permit Spray in the dive/slide without replacing Mario's pose
+                    // (`gMarioAnimeData` marks those clips 0xC8, `isPumpOK`). FLUDD's pack still
+                    // pulses: `TWaterGun::calcAnimation` mirrors this frame onto `wg_pump`, and
+                    // the pack clip needs no arm clip, so run the clock on the neutral `pump`
+                    // clip with the overlay left off — the pose stays Mario's own.
                     self.upper_on = false;
+                    if self.upper_clip != Some(crate::anim::clip::PUMP) {
+                        self.upper_clip = Some(crate::anim::clip::PUMP);
+                        self.upper_ctrl =
+                            FrameCtrl::new(self.anims.get(crate::anim::clip::PUMP));
+                    }
                 }
             }
             UpperState::HoldingObject => {

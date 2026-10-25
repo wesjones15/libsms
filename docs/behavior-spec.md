@@ -321,6 +321,10 @@ Slots: 0 Spray (`NozzleDeform.prm`), 1 Rocket, 2 Underwater, 3 Yoshi, 4 Hover, 5
   `MarioUpper.cpp::checkPumpEnable`'s pump-clip requirement for `sldct`. The dive/slide
   keeps its body pose without a pumping-arm overlay; trigger release, tank drain and
   nozzle switching still follow the normal FLUDD path. Other nozzles retain the game gate.
+  FLUDD's pack still pumps there: `TWaterGun::calcAnimation` mirrors the pack's frame from
+  Mario's upper frame ctrl, and `wg_pump` needs no arm clip, so the clock runs on the neutral
+  `pump` clip (23 frames, ping-pong) with `upper_on` left off. Both trigger histories (held
+  into the dive, or pressed during the slide) pulse; the arms stay in the slide pose.
   `WaterManager::spray_speed` separately accelerates the Spray's flight (core/viewer default
   1.0, RoR2 FFI 1.2). It advances the same discrete-gravity trajectory and airborne lifetime
   20% faster, keeping the arc and effective range within a ground-collision frame. Emission

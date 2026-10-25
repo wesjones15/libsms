@@ -48,6 +48,9 @@ pub mod clip {
     pub const BACK_DOWN: ClipName = "bkdwn";
     pub const FORE_DOWN: ClipName = "jfdwn";
     pub const SLIDE_FORE: ClipName = "sdwnf";
+    /// The neutral pump pose (`ma_pump`): the upper-body clip of every anim the table gives
+    /// `unk2` 0x44, and the clock FLUDD's pack mirrors.
+    pub const PUMP: ClipName = "pump";
     /// Holding the Shine Sprite over his head (`ANIM_DEMO_SHINE_GET`).
     pub const DEMO_SHINE_GET: ClipName = "demo_shine_get";
 }

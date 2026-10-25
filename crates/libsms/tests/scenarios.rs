@@ -477,6 +477,74 @@ fn spray_can_start_and_stop_during_a_belly_slide() {
 }
 
 #[test]
+fn the_pack_pumps_while_spraying_in_a_dive_or_belly_slide() {
+    // `spray_during_dive` lets the Spray fire where no arm pump clip exists (`sldct`'s
+    // `gMarioAnimeData` row is 0xC8): Mario keeps his pose, but FLUDD's pack still pulses —
+    // `TWaterGun::calcAnimation` mirrors the pump frame onto `wg_pump`.
+    for already_spraying in [false, true] {
+        let mut s = Scene::flat();
+        s.sim.mario.give_fludd();
+        s.sim.mario.options.spray_during_dive = true;
+        s.run_forward();
+        if already_spraying {
+            s.pad.r_analog = 255;
+        }
+        s.secs(1.0);
+        s.press_a();
+        s.step(10);
+        s.pad.b = true;
+        s.step(1);
+        s.pad.b = false;
+        s.pad.r_analog = 255;
+        assert!(s.until(600, |m| m.status == Status::Catch));
+        s.step(12); // the handles come out (10 ticks) before water and the pump clip show
+        let mut frames: Vec<f32> = Vec::new();
+        for _ in 0..40 {
+            s.step(1);
+            let m = s.mario();
+            let look = m.fludd_look().unwrap();
+            assert_eq!(look.body_clip, "wg_pump", "pack clip");
+            assert!(
+                m.upper_layer().is_none(),
+                "the dive/slide pose lost its arms"
+            );
+            frames.push(look.body_frame);
+        }
+        let mut uniq = frames.clone();
+        uniq.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        uniq.dedup();
+        assert!(
+            uniq.len() >= 8,
+            "the pack is frozen at {uniq:?} (held: {already_spraying})"
+        );
+        assert!(*uniq.last().unwrap() > 20.0, "the pump never reaches its end");
+    }
+}
+
+#[test]
+fn the_pack_folds_back_in_after_the_slide_spray_stops() {
+    let mut s = Scene::flat();
+    s.sim.mario.give_fludd();
+    s.sim.mario.options.spray_during_dive = true;
+    s.run_forward();
+    s.secs(1.0);
+    s.press_a();
+    s.step(10);
+    s.pad.b = true;
+    s.step(1);
+    s.pad.b = false;
+    s.pad.r_analog = 255;
+    assert!(s.until(600, |m| m.status == Status::Catch));
+    s.step(20);
+    assert_eq!(s.mario().fludd_look().unwrap().body_clip, "wg_pump");
+    s.pad.r_analog = 0;
+    // `HoldingPump` keeps it out for `mPumpWaitTime`, then `unk1CF8` (360 ticks) passes before
+    // the handles fold back over `wg_house` (0.005 a tick).
+    s.secs(6.0);
+    assert_eq!(s.mario().fludd_look().unwrap().body_clip, "wg_house");
+}
+
+#[test]
 fn dive_spray_exception_keeps_other_nozzles_and_default_rules_gated() {
     for (enabled, nozzle) in [
         (false, NozzleKind::Spray),
