@@ -32,6 +32,10 @@ pub const ROD_SHAPE: usize = 3;
 /// How fast the neck swings to the other side, degrees per second: about two frames for the
 /// full +45 to -45, quick because the water visibly breaks while it turns.
 pub const LEAN_RATE: f32 = 1800.0;
+/// How far off the facing the aim can go before the lean starts to fade out, and where it is
+/// gone: aiming behind, the swivelled head needs no clearance, so the neck is authored again.
+pub const LEAN_FADE_FROM: f32 = 120.0;
+pub const LEAN_FADE_TO: f32 = 180.0;
 
 /// One FLUDD: its body, its nozzles and every `watergun2` clip.
 pub struct Fludd {
@@ -154,11 +158,21 @@ impl Fludd {
         {
             self.side = if l.aim_turn > 0 { -1.0 } else { 1.0 };
         }
+        // Aiming behind him, the head swivels the nozzle round past his neck, so the neck has
+        // nothing to clear and goes back to the authored middle; the lean fades out over the
+        // last stretch (`LEAN_FADE_FROM`..`LEAN_FADE_TO`) so a sweep reads as one motion. It
+        // also takes the sign flip at a dead-behind aim out of the picture.
+        let clear = look
+            .filter(|l| l.aimed)
+            .map_or(1.0, |l| {
+                let deg = (l.aim_turn as f32 * 180.0 / 32768.0).abs();
+                ((LEAN_FADE_TO - deg) / (LEAN_FADE_TO - LEAN_FADE_FROM)).clamp(0.0, 1.0)
+            });
         // `SMS_LEAN=<deg>` forces an angle for A/B captures; 0 means "as authored" and keeps
         // the frame rod, which only has to go when the neck actually swings out.
         let target = match lean_env {
             Some(d) => d,
-            None if alt_skin && spraying => self.side * LEAN_DEG,
+            None if alt_skin && spraying => self.side * LEAN_DEG * clear,
             None => 0.0,
         };
         let step = LEAN_RATE * dt.max(0.0);

@@ -58,10 +58,15 @@ for captures. A cyan line from his chest draws the aim, a white one his facing.
 
 `FluddLook::aim_turn` is the aim relative to the model's facing. The lean follows it: aiming
 past his right shoulder leans the neck right, past the left leans it left, with a 512-unit
-(~6 deg) deadband so aiming straight ahead cannot flicker. The neck eases at `LEAN_RATE`
-instead of snapping, so the swing reads as a fast smear; the water keeps flowing through it.
-An aimed nozzle also swivels its head to the aim (`chn_muzzle_1`), matching
-`libsms-present`'s view, so the drawn spray points where the line does.
+(~6 deg) deadband so aiming straight ahead cannot flicker. Past 120 deg off the facing the
+lean fades out and is gone at 180: aiming behind, the swivelled head needs no clearance and
+the neck is authored again (which also removes the sign flip a dead-behind aim would have).
+The neck eases at `LEAN_RATE` instead of snapping, so the swing reads as a fast smear; the
+water keeps flowing through it. An aimed nozzle also swivels its head to the aim
+(`chn_muzzle_1`), matching `libsms-present`'s view, so the drawn spray points where the line
+does. Aim pitch (above/below) does not touch the lean; it only feeds the sim's `Aim.pitch`.
+In a spin `aim_now()` is None, so `aimed` is false and the neck keeps the side it last chose
+while the body turns.
 
 ## Anchoring (why he used to float)
 
