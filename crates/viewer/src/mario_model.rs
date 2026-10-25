@@ -297,7 +297,7 @@ impl MarioModel {
                 * Mat4::from_rotation_y(lean_deg.to_radians())
                 * Mat4::from_translation(-pivot);
             for (i, j) in fludd_joints.iter_mut().enumerate() {
-                if matches!(i, 4 | 5 | 6) {
+                if matches!(i, 3 | 4 | 5 | 6 | 7) {
                     *j = lean * *j;
                 }
             }
@@ -433,6 +433,12 @@ impl MarioModel {
 pub fn root_matrix(pos: Vec3, yaw: f32, scale: f32) -> Mat4 {
     Mat4::from_translation(pos) * Mat4::from_rotation_y(yaw) * Mat4::from_scale(Vec3::splat(scale))
 }
+
+
+
+
+
+
 
 
 
