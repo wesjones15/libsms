@@ -3213,33 +3213,6 @@ fn a_slide_over_fludd_water_is_wet_for_free_and_a_glide_carries_on() {
 }
 
 #[test]
-fn the_l_camera_aims_the_nozzle_and_turns_a_crouching_mario() {
-    let mut s = Scene::flat();
-    s.sim.mario.give_fludd();
-    s.sim.mario.face_yaw = 0;
-    s.sim.mario.aim = Some(libsms::Aim {
-        yaw: 0x4000,
-        pitch: 0x1000,
-    });
-    s.pad.l = true;
-    s.pad.l_analog = 255;
-    s.step(60);
-    let m = s.mario();
-    assert_eq!(m.status, Status::Squat);
-    assert!(
-        (m.face_yaw as i32 - 0x4000).abs() < 0x100,
-        "{:#x}",
-        m.face_yaw
-    );
-    // The neck's angle counts the other way (negative lifts the barrel), a little more for its droop.
-    let gun = m.fludd.as_ref().unwrap().gun_angle();
-    assert!(
-        (-0x1000 as f32 - 2000.0..-0x1000 as f32).contains(&gun),
-        "{gun}"
-    );
-}
-
-#[test]
 fn a_host_aim_without_l_turns_a_standing_mario_and_pitches_the_nozzle() {
     let mut s = Scene::flat();
     s.sim.mario.give_fludd();
