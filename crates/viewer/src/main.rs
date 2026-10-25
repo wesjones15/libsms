@@ -1,4 +1,4 @@
-﻿//! A running sample: libsms driving Mario through a small 3D obstacle course.
+//! A running sample: libsms driving Mario through a small 3D obstacle course.
 //!
 //! The course is the host: `World` implements `libsms::Host` with boxes and two ramps and turns
 //! FLUDD `WaterEmit` events into droplets. Everything about how Mario moves comes from the library.
@@ -876,6 +876,19 @@ async fn main() {
             .map_err(|e| eprintln!("Mario's model: {e}"))
             .ok()
     });
+    // Luigi owns his own FLUDD copy: hidden to FLUDD/nozzle, drawn at his root.
+    let mut luigi_fludd = if luigi_beside {
+        assets.as_ref().and_then(|a| {
+            mario_model::MarioModel::load(&a.dir)
+                .map_err(|e| eprintln!("Luigi FLUDD: {e}"))
+                .ok()
+        })
+    } else {
+        None
+    };
+    if let Some(f) = &mut luigi_fludd {
+        f.hide = "body,cap,hands".into();
+    }
     // Yoshi, his tongue and his egg.
     let mut luigi_model = if use_luigi {
         assets.as_ref().and_then(|a| {
@@ -1302,6 +1315,9 @@ async fn main() {
                     };
                     model.draw(&sim, &joints, mario_root, view, proj, get_time() as f32)
                 } };
+                if let Some(f) = &mut luigi_fludd {
+                    f.draw(&sim, &joints, root, view, proj, get_time() as f32);
+                }
                 if let Some(l) = &mut luigi_model {
                     let name = sim.mario.anim.clip;
                     let frame = sim.mario.anim.frame;
@@ -1583,6 +1599,7 @@ mod tests {
         assert!(water.particles.iter().any(|d| d.pos.z > 100.0));
     }
 }
+
 
 
 

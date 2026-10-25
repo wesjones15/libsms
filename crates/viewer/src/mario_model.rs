@@ -50,6 +50,9 @@ impl Part {
 pub struct MarioModel {
     /// Wearing the Shine Shirt (off at the start of the game).
     pub shirt: bool,
+    /// Parts to leave out, comma separated (`SMS_HIDE`); per instance so a second
+    /// copy can draw only FLUDD for another character.
+    pub hide: String,
     renderer: Renderer,
     body: Part,
     /// [open, fists] x [right, left]
@@ -173,6 +176,7 @@ impl MarioModel {
             .unwrap_or_default();
         Ok(MarioModel {
             shirt: false,
+            hide: std::env::var("SMS_HIDE").unwrap_or_default(),
             hand_joints: [b.joint("jnt_hand_R"), b.joint("jnt_hand_L")],
             head: b.joint("M_head"),
             chest: b.joint("jnt_chest"),
@@ -207,7 +211,7 @@ impl MarioModel {
     ) -> Vec<(Vec3, Vec3)> {
         let m = &sim.mario;
         // `SMS_HIDE=fludd,nozzle,cap,hands,body` leaves parts out (for checking placement).
-        let hide = std::env::var("SMS_HIDE").unwrap_or_default();
+        let hide = self.hide.clone();
         let shown = |part: &str| !hide.split(',').any(|h| h == part);
         let lights = Lights::daylight(view);
         let body_pose = Pose::new(&self.body.model.bmd, root, joints);
@@ -439,6 +443,7 @@ impl MarioModel {
 pub fn root_matrix(pos: Vec3, yaw: f32, scale: f32) -> Mat4 {
     Mat4::from_translation(pos) * Mat4::from_rotation_y(yaw) * Mat4::from_scale(Vec3::splat(scale))
 }
+
 
 
 
