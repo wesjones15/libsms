@@ -1,6 +1,6 @@
 # Mario statue entrance: viewer proof
 
-The entrance is still a prototype. No RoR2 code has changed and no build has been staged.
+The viewer proof is approved and connected to Mario's RoR2 stage-one pod. The adapter is build/boundary checked; in-game testing is pending.
 
 ## Identified assets
 
@@ -37,6 +37,12 @@ The colored Mario particles are the exact **particle emitter 0x40**, not a model
 
 Local reference `https://i.redd.it/m8q9ktlfj2we1.gif` shows the idle M's rippling surface and dark edge. It contains no Mario exit sequence.
 
-## Remaining entrance work
+## RoR2 adapter
 
-Connect the verified viewer assets to Mario's pod, retaining vanilla descent/impact audio, facing the camera toward the M, and timing X activation, Mario's exit and the existing arrival sting. In-game placement, camera framing, collision and timing are not yet played. The current GPU viewer's general J3D interpreter still lacks this indirect material; the interactive example uploads the shared CPU TEV bake onto the portal quad while using the existing GPU J3D renderer for Mario.
+`view::Entrance` shares the approved timeline with the interactive viewer and supplies statue, portal, Mario and particles through the existing model/animated-texture/FX readers. `sms_view_entrance_new/update/bounds` add an opaque entrance view without changing existing C struct layouts. The host's X reflection is compensated in the portal UVs so the M and Plaza still remain oriented correctly. The shared CPU presenter now includes the landing's held-cap/right-hand models.
+
+`ror2-mario/MarioStatuePod.cs` clones Mario's preferred pod (the stock SurvivorPod if unspecified) and retains its animator, animation-event fall/crash sounds, seat and network lifecycle. `MarioPodDescent` inherits the original descent; the landed interaction starts `MarioPodExit`, which keeps Mario seated/protected while native presentation plays. The camera faces the M. X plays the existing once-per-run sting; Mario says the existing jump woohoo when the model starts appearing. After the cap/landing clip, the server ejects him at the vanilla exit point and the ordinary Mario driver takes over. A short visibility bridge avoids a Commando flash or duplicate Mario. The statue stays behind with a pedestal collider bounded from its native geometry.
+
+The custom presentation is gated to stage one. Missing assets, disabled model drawing or an unavailable renderer retain the vanilla pod path. The first-run optional extraction includes the gate, four wind emitters, Plaza map/scene and all five still-shot prop models from the user's own disc; no extracted data is packaged. `portal_assets` lists the exact archive paths for inspection.
+
+`ror2-mario/tests/PortraitCheck` exercises the real DLL's idle/activation/reveal/landing, instance-key uniqueness, animated texture versions, particle expiration, collision clearance, finite geometry and completion. In-game descent alignment, camera framing, sound events and input/network lifecycle are **not yet played**. The GPU viewer's general J3D interpreter still lacks this indirect material; both hosts use the shared CPU TEV bake on the portal quad.

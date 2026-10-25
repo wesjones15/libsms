@@ -210,6 +210,7 @@ pub struct SmsView {
     pub(crate) audio: Option<Audio>,
     status: CString,
     poisoned: bool,
+    entrance: Option<libsms_present::view::Entrance>,
 }
 
 /// Presentation-only Air Pump still life. Uses the existing model/draw readers.
@@ -285,11 +286,106 @@ pub unsafe extern "C" fn sms_view_new_look(
             audio,
             status: CString::new(status).unwrap_or_default(),
             poisoned: false,
+            entrance: None,
         })
     });
     match made {
         Ok(Some(v)) => Box::into_raw(Box::new(v)),
         _ => std::ptr::null_mut(),
+    }
+}
+
+/// The approved statue/portal entrance using the ordinary model, texture and FX readers.
+/// # Safety
+/// `assets_dir` is a nul-terminated UTF-8 path.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_entrance_new(
+    assets_dir: *const c_char,
+    sound: u8,
+) -> *mut SmsView {
+    let ptr = unsafe { sms_view_new(assets_dir, sound) };
+    if ptr.is_null() {
+        return ptr;
+    }
+    let loaded = catch_unwind(AssertUnwindSafe(|| {
+        let dir = PathBuf::from(
+            unsafe { std::ffi::CStr::from_ptr(assets_dir) }
+                .to_string_lossy()
+                .into_owned(),
+        );
+        let v = unsafe { &mut *ptr };
+        v.entrance = Some(libsms_present::view::Entrance::load(&dir, &mut v.view).ok()?);
+        Some(())
+    }));
+    if !matches!(loaded, Ok(Some(()))) {
+        unsafe { sms_view_free(ptr) };
+        return std::ptr::null_mut();
+    }
+    ptr
+}
+
+/// 1 playing, 2 finished, 0 failure. `seconds` is idle time or time since activation.
+/// # Safety
+/// `view` is a live entrance view; `frame` readable and `position` writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_entrance_update(
+    view: *mut SmsView,
+    seconds: f32,
+    activated: u8,
+    frame: *const SmsViewFrame,
+    position: *mut SmsVec3,
+) -> u8 {
+    let (Some(f), Some(pos)) = (unsafe { frame.as_ref() }, unsafe { position.as_mut() }) else {
+        return 0;
+    };
+    if !seconds.is_finite() || !(0.0..=86400.0).contains(&seconds) {
+        return 0;
+    }
+    unsafe {
+        with_view(view, 0, |v| {
+            let Some(entrance) = &mut v.entrance else {
+                return 0;
+            };
+            let forward = Vec3::from(f.forward).normalize_or(Vec3::Z);
+            let right = Vec3::from(f.up).cross(forward).normalize_or(Vec3::X);
+            let up = forward.cross(right);
+            let done = entrance.update(&mut v.view, seconds, activated != 0, right, up);
+            let (_, _, feet, _) = libsms_present::view::entrance_pose(seconds, 1.);
+            *pos = feet.into();
+            if let Some(a) = &v.audio {
+                a.set_volume(f.volume);
+                a.set_listener(listener_view(f.eye.into(), forward, up), f.eye.into());
+            }
+            if done { 2 } else { 1 }
+        })
+    }
+}
+
+/// Native pedestal bounds for host collision, in portal-relative centimetres.
+/// # Safety
+/// `view` is a live entrance view; `lo` and `hi` are writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_entrance_bounds(
+    view: *mut SmsView,
+    lo: *mut SmsVec3,
+    hi: *mut SmsVec3,
+) -> u8 {
+    let (Some(lo), Some(hi)) = (unsafe { lo.as_mut() }, unsafe { hi.as_mut() }) else {
+        return 0;
+    };
+    unsafe {
+        with_view(view, 0, |v| {
+            let Some(e) = &v.entrance else {
+                return 0;
+            };
+            let (a, b) = e.pedestal_bounds(&v.view);
+            if !a.is_finite() || !b.is_finite() {
+                return 0;
+            }
+            *lo = a.into();
+            *hi = b.into();
+            1
+        })
     }
 }
 
@@ -458,13 +554,19 @@ pub unsafe extern "C" fn sms_view_camera_shot(
 /// # Safety
 /// `view` from [`sms_view_new`]; `name` a nul-terminated UTF-8 string; `pos` readable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sms_view_sound(view: *mut SmsView, name: *const c_char, pos: *const SmsVec3) -> u8 {
+pub unsafe extern "C" fn sms_view_sound(
+    view: *mut SmsView,
+    name: *const c_char,
+    pos: *const SmsVec3,
+) -> u8 {
     if name.is_null() {
         return 0;
     }
     // SAFETY: as documented.
-    let (Some(pos), Ok(name)) = (unsafe { pos.as_ref() }, unsafe { std::ffi::CStr::from_ptr(name) }.to_str())
-    else {
+    let (Some(pos), Ok(name)) = (
+        unsafe { pos.as_ref() },
+        unsafe { std::ffi::CStr::from_ptr(name) }.to_str(),
+    ) else {
         return 0;
     };
     let pos = Vec3::from(*pos);
@@ -472,7 +574,11 @@ pub unsafe extern "C" fn sms_view_sound(view: *mut SmsView, name: *const c_char,
         return 0;
     }
     // SAFETY: as documented.
-    unsafe { with_view(view, 0, |v| v.audio.as_ref().is_some_and(|a| a.play_at(name, pos)) as u8) }
+    unsafe {
+        with_view(view, 0, |v| {
+            v.audio.as_ref().is_some_and(|a| a.play_at(name, pos)) as u8
+        })
+    }
 }
 
 /// A held sound of a host object (the Shine's `MSD_SE_SHINE_EXIST` hum, which the game asks for
@@ -492,8 +598,10 @@ pub unsafe extern "C" fn sms_view_hold_sound(
         return 0;
     }
     // SAFETY: as documented.
-    let (Some(pos), Ok(name)) = (unsafe { pos.as_ref() }, unsafe { std::ffi::CStr::from_ptr(name) }.to_str())
-    else {
+    let (Some(pos), Ok(name)) = (
+        unsafe { pos.as_ref() },
+        unsafe { std::ffi::CStr::from_ptr(name) }.to_str(),
+    ) else {
         return 0;
     };
     let pos = Vec3::from(*pos);
@@ -501,7 +609,11 @@ pub unsafe extern "C" fn sms_view_hold_sound(
         return 0;
     }
     // SAFETY: as documented.
-    unsafe { with_view(view, 0, |v| v.audio.as_mut().is_some_and(|a| a.hold_at(name, pos)) as u8) }
+    unsafe {
+        with_view(view, 0, |v| {
+            v.audio.as_mut().is_some_and(|a| a.hold_at(name, pos)) as u8
+        })
+    }
 }
 
 /// Holds this view's sounds still while the host's game is paused (nonzero) and lets them go on
@@ -1606,7 +1718,11 @@ pub unsafe extern "C" fn sms_view_screenfx_picture(
 /// # Safety
 /// `view` from [`sms_view_new`]; `rgba` writable for `len` bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sms_view_screenfx_overlay(view: *mut SmsView, rgba: *mut u8, len: u32) -> u8 {
+pub unsafe extern "C" fn sms_view_screenfx_overlay(
+    view: *mut SmsView,
+    rgba: *mut u8,
+    len: u32,
+) -> u8 {
     // SAFETY: as documented.
     unsafe {
         with_view(view, 0, |v| {

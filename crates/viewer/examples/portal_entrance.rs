@@ -47,22 +47,10 @@ const ACTIVATE: f32 = 1.0;
 const LAUNCH: f32 = ACTIVATE + 180. / 120.;
 // dolpic1 scene.bin MarioPositionObj's Bianco return point (0,550,5250),
 // relative to the gate's placement (0,300,4941.47).
-const RETURN: G3 = G3::new(0., 250., 308.53);
+const RETURN: G3 = libsms_present::view::ENTRANCE_RETURN;
 
 fn fall_at(seconds: f32, gravity: f32) -> (f32, f32) {
-    let mut height = RETURN.y;
-    let mut velocity = 0f32;
-    let mut ticks = 0;
-    // MarioPhysics.cpp::jumpProcess advances position before fallProcess applies gravity.
-    while height > 0. {
-        height = (height + velocity * 0.25).max(0.);
-        ticks += 1;
-        if ticks as f32 > seconds * 120. {
-            return (height, ticks as f32 / 120.);
-        }
-        velocity = (velocity - gravity).max(-75.);
-    }
-    (0., ticks as f32 / 120.)
+    libsms_present::view::entrance_fall(seconds, gravity)
 }
 
 fn config() -> Conf {
@@ -196,28 +184,9 @@ fn statue(dir: &Path) -> Vec<Mesh> {
 }
 
 /// MarioAutodemo::warpOut waits at the stage return point before falling and rolling.
-fn pose_at(time: f32, appear_frames: f32, gravity: f32) -> (&'static str, f32, G3, bool) {
-    if time < LAUNCH {
-        return (
-            CLIPS[0],
-            ((time - ACTIVATE) * 60.).clamp(0., appear_frames),
-            RETURN,
-            time >= ACTIVATE,
-        );
-    }
-    let air = (time - LAUNCH).max(0.);
-    let (height, duration) = fall_at(air, gravity);
-    let position = G3::new(RETURN.x, height, RETURN.z);
-    if height > 0. {
-        (CLIPS[1], air * 60., position, true)
-    } else {
-        (
-            CLIPS[2],
-            (time - LAUNCH - duration).max(0.) * 60.,
-            position,
-            true,
-        )
-    }
+fn pose_at(time: f32, _appear_frames: f32, gravity: f32) -> (&'static str, f32, G3, bool) {
+    let (clip, frame, position, _) = libsms_present::view::entrance_pose(time - ACTIVATE, gravity);
+    (clip, frame, position, time >= ACTIVATE)
 }
 
 #[macroquad::main(config)]

@@ -30,6 +30,10 @@ use crate::screenfx::ScreenFx;
 use crate::particles::Particles;
 use crate::tev::{Baked, C4, Inputs, Source, Tex, env_uv};
 
+#[path = "entrance.rs"]
+mod entrance;
+pub use entrance::{Entrance, entrance_fall, entrance_pose, ENTRANCE_RETURN};
+
 /// Model indices.
 pub mod models {
     pub const BODY: u32 = 0;
@@ -295,6 +299,7 @@ pub struct View {
     /// The game's particle effects on Mario: dust, stars, smears, spray and pound flames.
     pub fx: Particles,
     shine: Option<Shine>,
+    return_parts: Option<[u32; 2]>,
     /// Movement effects and super-pound flames have independent host switches.
     pub movement_effects: bool,
     pub pound_flames: bool,
@@ -499,13 +504,17 @@ fn build(
     index: u32,
     textures: &mut Textures,
 ) -> Result<Model, String> {
-    let inputs = base_inputs(index);
     let batches: Vec<Batch> = bmd
         .batches()
         .map_err(|e| e.to_string())?
         .into_iter()
         .filter(|b| !b.indices.is_empty())
         .collect();
+    build_batches(bmd, batches, replace, index, textures)
+}
+
+fn build_batches(bmd: Bmd, batches: Vec<Batch>, replace: &dyn Fn(usize, &str) -> Option<Tex>, index: u32, textures: &mut Textures) -> Result<Model, String> {
+    let inputs = base_inputs(index);
     let images: Vec<Option<Tex>> = bmd
         .textures
         .iter()
@@ -911,6 +920,7 @@ impl View {
         }
         Ok(View {
             shine: None,
+            return_parts: None,
             hand_joints: [b.joint("jnt_hand_R"), b.joint("jnt_hand_L")],
             head: b.joint("M_head"),
             chest: b.joint("jnt_chest"),
@@ -983,6 +993,7 @@ impl View {
         let texture_ids = model.batch_texture.clone();
         Ok(View {
             shine: None,
+            return_parts: None,
             models: vec![model],
             textures,
             skeleton,
@@ -1061,6 +1072,7 @@ impl View {
             fx.set_world_space(name, true);
         }
         let mut view = View {
+            return_parts: None,
             shine: Some(Shine {
                 clips,
                 camera: DemoCamera::load(dir),
@@ -1325,7 +1337,8 @@ impl View {
         if !self.shirt {
             hidden.push(SHIRT_SHAPE);
         }
-        let hands = hands_for_clip(m.anim.clip);
+        let return_landing = m.anim.clip == "demo_gate_out_get2";
+        let hands = if return_landing { Hands::Fists } else { hands_for_clip(m.anim.clip) };
         if hands != Hands::Body {
             hidden.extend(BODY_HAND_SHAPES);
         }
@@ -1545,8 +1558,9 @@ impl View {
         let mut parts: Vec<(u32, Mat4, &[Mat4])> =
             vec![(models::BODY, Mat4::IDENTITY, &joints)];
         if let Some(h) = self.head.and_then(|h| joints.get(h)) {
+            let cap = if return_landing && m.anim.frame < 157. { self.return_parts.map_or(models::CAP, |p| p[0]) } else { models::CAP };
             parts.push((
-                models::CAP,
+                cap,
                 *h,
                 &self.models[models::CAP as usize].bind,
             ));
@@ -1558,6 +1572,7 @@ impl View {
         };
         if let Some(set) = set {
             for (model, joint) in set.into_iter().zip(self.hand_joints) {
+                let model = if return_landing && model == models::FIST[0] && m.anim.frame < 158. { self.return_parts.map_or(model, |p| p[1]) } else { model };
                 if let Some(at) = joint.and_then(|j| joints.get(j)) {
                     parts.push((model, *at, &self.models[model as usize].bind));
                 }

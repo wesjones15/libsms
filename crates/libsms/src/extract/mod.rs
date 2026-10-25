@@ -105,7 +105,7 @@ pub const EXTRACTS: [(&str, &str, &str); 8] = [
 /// the paths in them are alternatives in the same order (`|`): a USA disc keeps them in
 /// `common.szs` and `subtitle.szs`, a European one in a pair per language (`cmn2d_en.szs`,
 /// `subtitle_en.szs`).
-pub const OPTIONAL_EXTRACTS: [(&str, &str, &str); 9] = [
+pub const OPTIONAL_EXTRACTS: [(&str, &str, &str); 23] = [
     (
         "common.szs|cmn2d_en.szs",
         "2d/wipe_gameover.bti|wipe_gameover.bti",
@@ -156,6 +156,69 @@ pub const OPTIONAL_EXTRACTS: [(&str, &str, &str); 9] = [
         "scene/airport0.szs",
         "mapobj/shine_empty.bmd",
         "scene/mapobj/shine_empty.bmd",
+    ),
+    // ModelGate.cpp: Bianco M gate and Plaza map; all paths verified on the disc.
+    (
+        "scene/dolpic1.szs",
+        "map/map/gate/05_gate01.bmd",
+        "portal/05_gate01.bmd",
+    ),
+    (
+        "scene/dolpic1.szs",
+        "map/map/gate/05_gate01.btk",
+        "portal/05_gate01.btk",
+    ),
+    (
+        "scene/dolpic1.szs",
+        "map/map/gate/05_gate01.brk",
+        "portal/05_gate01.brk",
+    ),
+    (
+        "scene/dolpic1.szs",
+        "map/map/gate/ms_gatewind_a.jpa",
+        "portal/ms_gatewind_a.jpa",
+    ),
+    (
+        "scene/dolpic1.szs",
+        "map/map/gate/ms_gatewind_a2.jpa",
+        "portal/ms_gatewind_a2.jpa",
+    ),
+    (
+        "scene/dolpic1.szs",
+        "map/map/gate/ms_gatewind_a3.jpa",
+        "portal/ms_gatewind_a3.jpa",
+    ),
+    (
+        "scene/dolpic1.szs",
+        "map/map/gate/ms_gatewind_b.jpa",
+        "portal/ms_gatewind_b.jpa",
+    ),
+    ("scene/dolpic1.szs", "map/map/map.bmd", "portal/plaza.bmd"),
+    ("scene/dolpic1.szs", "map/scene.bin", "portal/scene.bin"),
+    (
+        "scene/dolpic1.szs",
+        "mapobj/efdokangate.bmd",
+        "portal/efdokangate.bmd",
+    ),
+    (
+        "scene/dolpic1.szs",
+        "mapobj/manhole.bmd",
+        "portal/manhole.bmd",
+    ),
+    (
+        "scene/dolpic1.szs",
+        "mapobj/monumentshine.bmd",
+        "portal/monumentshine.bmd",
+    ),
+    (
+        "scene/dolpic1.szs",
+        "mapobj/palmleaf.bmd",
+        "portal/palmleaf.bmd",
+    ),
+    (
+        "scene/dolpic1.szs",
+        "mapobj/palmnormal.bmd",
+        "portal/palmnormal.bmd",
     ),
 ];
 
