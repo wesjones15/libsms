@@ -35,6 +35,11 @@ const LUIGI_LEAN_FADE_TO: f32 = 180.0;
 /// Sunshine decomp cm (`SMS_HANG_OFFSET` in the viewer, default 8,6).
 pub const LUIGI_HANG_OFFSET: (f32, f32) = (8.0, 6.0);
 
+/// Luigi's HSD materials carry Melee's 0.70 diffuse colour, which the source's stage lighting
+/// makes up for and RoR2's does not. The Melee host brightens fighter bodies by this much
+/// (`Visuals.FighterBrightness`, default 1.5); Sunshine Luigi gets the same lift here.
+const LUIGI_BRIGHTNESS: f32 = 1.5;
+
 /// One HSD batch as the host reads it (mirrors the FFI's `SmsBatch` fields).
 pub struct HsdBatch {
     pub first_index: u32,
@@ -273,7 +278,13 @@ impl Luigi {
                 uvs.push([batch.vertices[idx].uv.x, batch.vertices[idx].uv.y]);
             }
             texture_ids.push(hb.texture);
-            colors.push(batch.color);
+            // Melee's 0.70 diffuse reads dark under RoR2's lighting; lift it like the Melee host does.
+            colors.push([
+                batch.color[0] * LUIGI_BRIGHTNESS,
+                batch.color[1] * LUIGI_BRIGHTNESS,
+                batch.color[2] * LUIGI_BRIGHTNESS,
+                batch.color[3],
+            ]);
         }
         (first_vertex, first_color)
     }
