@@ -865,8 +865,9 @@ async fn main() {
         .as_ref()
         .and_then(|a| libsms_present::Audio::start(&a.dir, true));
     // `--luigi`: draw Luigi instead of Mario.s body (FLUDD and effects stay Mario.s).
-    let use_luigi = std::env::args().any(|s| s == "--luigi");
-    if use_luigi {
+    let use_luigi = std::env::args().any(|s| s == "--luigi" || s == "--luigi-beside");
+    let luigi_beside = std::env::args().any(|s| s == "--luigi-beside");
+    if use_luigi && !luigi_beside {
         unsafe { std::env::set_var("SMS_HIDE", "body,cap,hands") };
     }
     // The disc's Mario: body, hands, cap, FLUDD and nozzles with their materials.
@@ -1293,7 +1294,14 @@ async fn main() {
                 let muzzles = if portrait.as_deref() == Some("air") {
                     model.draw_nozzle_group(view, proj);
                     Vec::new()
-                } else { model.draw(&sim, &joints, root, view, proj, get_time() as f32) };
+                } else { {
+                    let mario_root = if luigi_beside {
+                        root * ::glam::Mat4::from_translation(::glam::Vec3::new(120.0, 0.0, 0.0))
+                    } else {
+                        root
+                    };
+                    model.draw(&sim, &joints, mario_root, view, proj, get_time() as f32)
+                } };
                 if let Some(l) = &mut luigi_model {
                     let name = sim.mario.anim.clip;
                     let frame = sim.mario.anim.frame;
@@ -1575,6 +1583,8 @@ mod tests {
         assert!(water.particles.iter().any(|d| d.pos.z > 100.0));
     }
 }
+
+
 
 
 
