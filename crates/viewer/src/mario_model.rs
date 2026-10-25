@@ -281,6 +281,22 @@ impl MarioModel {
             look.map_or(0.0, |l| l.body_frame),
             |_| None,
         );
+        // Luigi alt-skin: lean the blue collar, drum and nozzle to one side for the
+        // Spray nozzle so they clear his head. The tank stays put: only joints above
+        // the collar base and on the centreline rotate.
+        let mut fludd_joints = fludd_joints;
+        if look.is_some_and(|l| l.nozzle == NozzleKind::Spray) {
+            let pivot = glam::Vec3::new(45.0, 0.0, 0.0);
+            let lean = Mat4::from_translation(pivot)
+                * Mat4::from_rotation_y((-45.0f32).to_radians())
+                * Mat4::from_translation(-pivot);
+            for j in fludd_joints.iter_mut() {
+                let p = j.w_axis;
+                if p.x > 45.0 && p.y.abs() < 15.0 {
+                    *j = lean * *j;
+                }
+            }
+        }
         let slot = look.map(|l| match l.nozzle {
             NozzleKind::Spray => 0,
             NozzleKind::Hover | NozzleKind::Underwater => 1,
