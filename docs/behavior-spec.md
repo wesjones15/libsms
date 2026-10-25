@@ -321,6 +321,14 @@ Slots: 0 Spray (`NozzleDeform.prm`), 1 Rocket, 2 Underwater, 3 Yoshi, 4 Hover, 5
   `MarioUpper.cpp::checkPumpEnable`'s pump-clip requirement for `sldct`. The dive/slide
   keeps its body pose without a pumping-arm overlay; trigger release, tank drain and
   nozzle switching still follow the normal FLUDD path. Other nozzles retain the game gate.
+  `WaterManager::spray_speed` separately accelerates the Spray's flight (core/viewer default
+  1.0, RoR2 FFI 1.2). It advances the same discrete-gravity trajectory and airborne lifetime
+  20% faster, keeping the arc and effective range within a ground-collision frame. Emission
+  count, attack, tank drain, recoil and surface-water drying are unchanged. Both renderers
+  stretch and interpolate with the actual velocity to retain stream coverage. This is a host
+  extension to `ModelWaterManager.cpp::move` / `calcDrawVtx`, not a new particle asset:
+  Spray is `TNozzleDeform::emit`, `NozzleDeform.prm` mType 0, with `timg/watermask.bti`.
+  Viewer comparison: `SMS_WATER_SPEED=1.2`, `SMS_WATER_REACH=2`.
 - **Trigger nozzles** (Rocket, Hover, Turbo; `TNozzleTrigger::movement`): while pumping,
   `fill += 150 * rLevel` each tick, `fill -= mInsidePressureDec`, clamp to `mInsidePressureMax`; on
   reaching max the nozzle goes `Active` for `mTriggerTime` ticks, then `Dead` until R is released.

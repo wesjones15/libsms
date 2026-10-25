@@ -332,7 +332,8 @@ impl WaterView {
                     if !water.drawn(p) {
                         continue;
                     }
-                    let v = vec3(p.vel.x, p.vel.y, p.vel.z) * S * water.extension(p);
+                    let velocity = p.velocity();
+                    let v = vec3(velocity.x, velocity.y, velocity.z) * S * water.extension(p);
                     let (vx, vy) = (v.dot(right), v.dot(up));
                     let len = (vx * vx + vy * vy).sqrt();
                     if len * 100.0 > 1.0 {

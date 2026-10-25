@@ -931,6 +931,13 @@ async fn main() {
         sim.mario.upper = libsms::UpperState::HoldingObject;
     }
     let mut water = WaterManager::new(&params);
+    // Viewer-first host tuning: same procedural water and disc type, faster flight only.
+    water.spray_speed = std::env::var("SMS_WATER_SPEED").ok().and_then(|v| v.parse().ok()).unwrap_or(1.0);
+    water.reach = std::env::var("SMS_WATER_REACH").ok().and_then(|v| v.parse().ok()).unwrap_or(1.0);
+    if std::env::var_os("SMS_WATER_SPEED").is_some() {
+        eprintln!("Spray: NozzleDeform.prm mType={}, speed={}x, reach={}x; WaterGun.cpp::TNozzleDeform::emit -> ModelWaterManager.cpp::makeEmit/move/calcDrawVtx",
+            params.nozzle(NozzleKind::Spray).particle_type, water.spray_speed, water.reach);
+    }
     let mut water_view = assets.as_ref().and_then(|a| water::WaterView::load(&a.dir));
     // The game's particle effects (nozzle mist, smoke, exhaust), run by libsms-present's View.
     let mut fx_layer = assets.as_ref().and_then(|a| fx::FxLayer::load(&a.dir));
@@ -1369,6 +1376,12 @@ async fn main() {
         // quits; for checking the renderer without a person at the window.
         frame_no += 1;
         if let Ok(path) = std::env::var("SMS_SHOT") {
+            if std::env::var_os("SMS_WATER_SPEED").is_some() {
+                draw_rectangle(0.0, screen_height() - 60.0, screen_width(), 60.0, Color::new(0.04, 0.05, 0.08, 0.95));
+                let label = format!("Spray mType {} | flight {:.2}x | reach {:.2}x", params.nozzle(NozzleKind::Spray).particle_type, water.spray_speed, water.reach);
+                draw_text(&label, 12.0, screen_height() - 40.0, 20.0, WHITE);
+                draw_text("WaterGun.cpp::TNozzleDeform::emit -> ModelWaterManager.cpp::makeEmit/move/calcDrawVtx", 12.0, screen_height() - 16.0, 16.0, WHITE);
+            }
             let at = std::env::var("SMS_SHOT_FRAME")
                 .ok()
                 .and_then(|v| v.parse().ok())

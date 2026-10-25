@@ -175,7 +175,8 @@ impl WaterLook {
                     if !water.drawn(p) {
                         continue;
                     }
-                    let mut c = p.pos + p.vel * frac;
+                    let velocity = p.velocity();
+                    let mut c = p.pos + velocity * frac;
                     // A drop is never drawn behind where it left the nozzle: the host draws a little
                     // behind the sim (negative `frac`), which would put a young drop inside FLUDD, and
                     // the tail of its stretched quad reaches back too. How far it has come bounds both.
@@ -190,7 +191,7 @@ impl WaterLook {
                         came = came.min((c - n).dot(heading).max(0.0));
                     }
                     let at = |x: f32, y: f32| c + right * x + up * y;
-                    let v = p.vel * water.extension(p);
+                    let v = velocity * water.extension(p);
                     let (vx, vy) = (v.dot(right), v.dot(up));
                     let len = (vx * vx + vy * vy).sqrt();
                     if len > 1.0 {
@@ -319,6 +320,40 @@ mod tests {
             }
         }
         assert!(drawn, "no drop was ever drawn");
+    }
+
+    #[test]
+    fn faster_spray_streaks_overlap_and_stay_in_front_of_the_muzzle() {
+        let mut water = WaterManager::new(&Params::default());
+        water.spray_speed = 1.2;
+        water.reach = 2.0;
+        let muzzle = Vec3::new(0.0, 150.0, 0.0);
+        let emit = WaterEmit {
+            nozzle: NozzleKind::Spray, pos: muzzle, dir: Vec3::Z,
+            power: 40.0, count: 3, attack: 1, hit_radius: 50.0, hit_height: 80.0,
+            inherit: Vec3::ZERO, size: 50.0, size_tremble: 0.0, dir_tremble: 0.0,
+            pow_tremble: 0.0, particle_type: 0, burst: false, spin: false,
+        };
+        for _ in 0..10 {
+            water.emit(&emit);
+            water.step(&FlatHost::default(), Vec3::ZERO);
+        }
+        let mut look = WaterLook::default();
+        look.nozzle = Some(muzzle);
+        look.build(&water, -0.5, Vec3::new(500.0, 150.0, 0.0), Vec3::Z, Vec3::Y, 0);
+        assert!(look.drop_quads > 10);
+        let mut spans: Vec<_> = look.vertices[..look.drop_quads as usize * 4].chunks_exact(4).map(|quad| {
+            let lo = quad.iter().map(|v| v.pos.z).fold(f32::MAX, f32::min);
+            let hi = quad.iter().map(|v| v.pos.z).fold(f32::MIN, f32::max);
+            (lo, hi)
+        }).collect();
+        spans.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let mut end = spans[0].1;
+        for &(lo, hi) in &spans[1..] {
+            assert!(lo <= end, "gap in faster stream: {end} to {lo}");
+            end = end.max(hi);
+        }
+        assert!(spans[0].0 >= muzzle.z - 0.01, "stream tail extends behind muzzle");
     }
 
     #[test]

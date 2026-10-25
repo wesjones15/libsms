@@ -74,7 +74,7 @@ pub struct Particle {
     pub pos: Vec3,
     /// Where it left the nozzle: a host drawing it never shows any of it behind this.
     pub spawn: Vec3,
-    /// Units per frame.
+    /// Units per original trajectory frame; use [`Self::velocity`] for world motion.
     pub vel: Vec3,
     pub size: f32,
     /// Frames left (`mParticleLifetimeSOA`).
@@ -84,12 +84,26 @@ pub struct Particle {
     pub attack: i16,
     /// [`WaterManager::reach`] when it left the nozzle (1 for all but Spray's).
     pub reach: f32,
+    /// Flight time scale captured from the Spray tuning; ignored on surfaces.
+    pub travel_speed: f32,
     /// From a light press's burst ([`WaterEmit::burst`]).
     pub burst: bool,
     /// From a spin's spray ([`WaterEmit::spin`]).
     pub spin: bool,
     /// The surface it sticks to: normal and whether it is wet (`isWaterSlip`).
     surface: Option<(Vec3, bool)>,
+}
+
+impl Particle {
+    /// World velocity per 30 Hz frame, including the host's faster Spray flight.
+    /// Renderers use it for interpolation and streak length to preserve stream coverage.
+    pub fn velocity(&self) -> Vec3 {
+        self.vel * self.flight_step()
+    }
+
+    fn flight_step(&self) -> f32 {
+        if self.state == State::Flying { self.travel_speed } else { 1.0 }
+    }
 }
 
 /// Something the host may show or play.
@@ -155,6 +169,9 @@ pub struct WaterManager {
     /// horizontal speed cap is this times its size, so a spray lands about this many times
     /// further. 1: the game's. The other nozzles' water is the game's.
     pub reach: f32,
+    /// Spray-only flight speed, independent of reach. Accelerates its trajectory and
+    /// airborne lifetime together, preserving its arc and range. 1: the game's.
+    pub spray_speed: f32,
     /// A light press's burst has been emitted: lay its wet circles at Mario's feet on the next step,
     /// facing this way (horizontal) with this particle type.
     stamp: Option<(Vec3, usize)>,
@@ -176,6 +193,7 @@ impl WaterManager {
             types: params.water_particles.clone(),
             events: Vec::new(),
             reach: 1.0,
+            spray_speed: 1.0,
             stamp: None,
             seed: 0x2545_F491,
         }
@@ -217,6 +235,11 @@ impl WaterManager {
             } else {
                 1.0
             };
+            let travel_speed = if w.nozzle == crate::params::NozzleKind::Spray && self.spray_speed.is_finite() {
+                self.spray_speed.clamp(1.0, 2.0)
+            } else {
+                1.0
+            };
             let speed = (self.rand11() * w.pow_tremble + w.power) * reach;
             let vel = dir.normalize() * speed + w.inherit;
             let size = self.rand11() * w.size_tremble + w.size;
@@ -230,6 +253,7 @@ impl WaterManager {
                 kind,
                 attack: w.attack,
                 reach,
+                travel_speed,
                 burst: w.burst,
                 spin: w.spin,
                 surface: None,
@@ -412,8 +436,12 @@ impl WaterManager {
             }
             match p.state {
                 State::Flying => {
-                    p.vel.y += gravity;
-                    p.pos += p.vel;
+                    // Host time scaling of ModelWaterManager.cpp::move. The half-step
+                    // correction follows the same discrete-gravity parabola at fractional
+                    // ages: x(t)=v*t, y(t)=v_y*t+g*t*(t+1)/2. At speed 1 this is the game.
+                    let dt = p.flight_step();
+                    p.pos += p.vel * dt + Vec3::Y * (gravity * dt * (dt + 1.0) * 0.5);
+                    p.vel.y += gravity * dt;
                 }
                 State::Ground => {
                     let (n, wet) = p.surface.unwrap_or((Vec3::Y, false));
@@ -545,7 +573,7 @@ impl WaterManager {
             let vanish = if wet { k::VANISH.0 } else { k::VANISH.1 };
             let last = match p.state {
                 State::Flying => {
-                    self.particles[i].life -= 1.0;
+                    self.particles[i].life -= p.flight_step();
                     continue;
                 }
                 State::Ground => {
@@ -782,6 +810,85 @@ mod tests {
                 .all(|&(id, pos, attack)| id == 7 && attack == 3 && pos.z < 200.0)
         );
         assert!(w.particles.is_empty());
+    }
+
+    #[test]
+    fn faster_spray_traverses_the_same_arc_and_lifetime_in_less_time() {
+        let params = Params::default();
+        let mut normal = WaterManager::new(&params);
+        let mut fast = WaterManager::new(&params);
+        normal.reach = 2.0;
+        fast.reach = 2.0;
+        fast.spray_speed = 1.2;
+        let mut drop = emit(Vec3::new(0.0, 0.2, 1.0).normalize());
+        drop.pos.y = 1500.0;
+        normal.emit(&drop);
+        fast.emit(&drop);
+        let host = FlatHost::default();
+        // Every five accelerated frames reaches the same trajectory age as six normal frames.
+        for _ in 0..4 {
+            for _ in 0..6 { normal.step(&host, Vec3::ZERO); }
+            for _ in 0..5 { fast.step(&host, Vec3::ZERO); }
+            let (a, b) = (normal.particles[0], fast.particles[0]);
+            assert!(a.pos.distance(b.pos) < 0.01, "arc changed: {:?} vs {:?}", a.pos, b.pos);
+            assert!((a.life - b.life).abs() < 0.01);
+            assert!(a.vel.distance(b.vel) < 0.001);
+            assert!(b.velocity().distance(a.velocity() * 1.2) < 0.001);
+        }
+    }
+
+    #[test]
+    fn faster_spray_lands_sooner_at_the_same_effective_range() {
+        let landing = |speed| {
+            let mut water = WaterManager::new(&Params::default());
+            water.reach = 2.0;
+            water.spray_speed = speed;
+            let mut drop = emit(Vec3::Z);
+            drop.pos.y = 180.0;
+            water.emit(&drop);
+            for frame in 1..180 {
+                water.step(&FlatHost::default(), Vec3::ZERO);
+                if let Some(pos) = water.events.iter().find_map(|e| match e {
+                    WaterEvent::SplashSound { pos, .. } => Some(*pos),
+                    _ => None,
+                }) { return (frame, pos.z); }
+            }
+            panic!("water never landed");
+        };
+        let (normal_time, normal_range) = landing(1.0);
+        let (fast_time, fast_range) = landing(1.2);
+        assert!(fast_time < normal_time);
+        assert!((normal_time as f32 / fast_time as f32 - 1.2).abs() < 0.06);
+        // Ground collision is sampled at 30 Hz: allow one accelerated frame of travel.
+        assert!((normal_range - fast_range).abs() <= 96.0, "range {normal_range} -> {fast_range}");
+    }
+
+    #[test]
+    fn spray_speed_keeps_damage_count_and_other_nozzles_unchanged() {
+        for nozzle in [NozzleKind::Spray, NozzleKind::Hover, NozzleKind::Rocket, NozzleKind::Turbo, NozzleKind::Yoshi] {
+            let mut normal = WaterManager::new(&Params::default());
+            let mut fast = WaterManager::new(&Params::default());
+            fast.spray_speed = 1.2;
+            let mut drop = emit(Vec3::Z);
+            drop.nozzle = nozzle;
+            drop.count = 8;
+            drop.attack = 3;
+            assert_eq!(normal.emit(&drop), fast.emit(&drop));
+            for _ in 0..30 {
+                normal.step(&EnemyAhead, Vec3::ZERO);
+                fast.step(&EnemyAhead, Vec3::ZERO);
+            }
+            let hits = |w: &WaterManager| w.events.iter().filter_map(|e| match e {
+                WaterEvent::Hit { id, attack, .. } => Some((*id, *attack)),
+                _ => None,
+            }).collect::<Vec<_>>();
+            assert_eq!(hits(&normal), vec![(7, 3); 8]);
+            assert_eq!(hits(&normal), hits(&fast));
+            if nozzle != NozzleKind::Spray {
+                assert_eq!(normal.particles, fast.particles);
+                assert_eq!(normal.events, fast.events);
+            }
+        }
     }
 
     #[test]

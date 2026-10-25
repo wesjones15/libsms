@@ -128,11 +128,12 @@ fn main() {
     println!();
 
     // Spray reach: standing, full R, aimed level; where the water lands.
-    for reach in [1.0f32, 1.5, 2.0] {
+    for (reach, speed) in [(1.0f32, 1.0), (1.5, 1.0), (2.0, 1.0), (2.0, 1.2)] {
         let (mut s, mut h) = (sim(), Log(vec![]));
         s.mario.give_fludd();
         let mut water = libsms::water::WaterManager::new(&s.mario.params);
         water.reach = reach;
+        water.spray_speed = speed;
         let (mut far, mut ticks, mut emitted, mut attack) = (0.0f32, 0u32, 0u32, 0i32);
         for _ in 0..3 * TICK_HZ {
             step(&mut s, &mut h, &spray, 1);
@@ -154,7 +155,7 @@ fn main() {
             }
         }
         println!(
-            "spray reach x{reach}: lands up to {far:.0} units ({:.1} heights); {:.0} particles/s, attack {:.1} each",
+            "spray reach x{reach}, flight x{speed}: lands up to {far:.0} units ({:.1} heights); {:.0} particles/s, attack {:.1} each",
             far / 160.0,
             emitted as f32 / 3.0,
             attack as f32 / emitted.max(1) as f32
