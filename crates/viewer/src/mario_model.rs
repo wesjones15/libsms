@@ -287,7 +287,9 @@ impl MarioModel {
         let mut fludd_joints = fludd_joints;
         let lean_env = std::env::var("SMS_LEAN").ok().and_then(|v| v.parse::<f32>().ok());
         let lean_deg = lean_env.unwrap_or(45.0);
-        let lean_on = lean_env.is_some() || look.is_some_and(|l| l.nozzle == NozzleKind::Spray);
+        let spraying = m.fludd.as_ref().is_some_and(|f| f.housed < 0.5);
+        let lean_on = lean_env.is_some()
+            || (look.is_some_and(|l| l.nozzle == NozzleKind::Spray) && spraying);
         if lean_on {
             // Measured layout: the collar and nozzle are null_pump_wA/wB and
             // nozzle_center (joints 4, 5, 6), all at y ~= -40; the levers/grips at
@@ -399,7 +401,7 @@ impl MarioModel {
                 let pose = Pose::new(&self.fludd.model.bmd, root * base, &fludd_joints);
                 // The thin waterline pipe is part of the tank shell; hide it rather
                 // than pitching the tank with the neck.
-                let fludd_hidden: Vec<usize> = vec![3];
+                let fludd_hidden: Vec<usize> = if lean_on { vec![3] } else { Vec::new() };
                 let fludd_look = Look { hidden: fludd_hidden, ..Default::default() };
                 if shown("fludd") {
                     r.draw(
@@ -437,6 +439,8 @@ impl MarioModel {
 pub fn root_matrix(pos: Vec3, yaw: f32, scale: f32) -> Mat4 {
     Mat4::from_translation(pos) * Mat4::from_rotation_y(yaw) * Mat4::from_scale(Vec3::splat(scale))
 }
+
+
 
 
 
