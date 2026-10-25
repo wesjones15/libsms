@@ -5,7 +5,7 @@
 //! HSD is not J3D: its materials are plain textured (no TEV), coloured by the source's
 //! per-vertex GX CLR0, which `Model::load_for` folds into the batch colour for untextured
 //! batches (`apply_untextured_color`). The host reads Luigi's static mesh through the same
-//! model readers as Mario's parts, as model index [`models::LUIGI`], and each frame the view
+//! model readers as Mario's parts, at the index after the J3D models, and each frame the view
 //! skins his 61 joints with the shared Sunshine clips through [`sms::Retarget`], anchoring his
 //! lowest point to Mario's (feet to feet, belly to belly) and leaning the shared FLUDD's Spray
 //! neck out of his head's way.
@@ -57,7 +57,7 @@ pub struct HsdBatch {
     src: usize,
 }
 
-/// Luigi's HSD mesh plus the FLUDD lean state, for [`models::LUIGI`].
+/// Luigi's HSD mesh plus the FLUDD lean state, drawn at the index after the J3D models.
 pub struct Luigi {
     model: hsd::Model,
     rig: sms::Rig,
@@ -71,7 +71,7 @@ pub struct Luigi {
     lean: f32,
     side: f32,
 
-    /// Static mesh for the host's model readers (model index [`models::LUIGI`]).
+    /// Static mesh for the host's model readers (at the index after the J3D models).
     pub batches: Vec<HsdBatch>,
     /// Flattened triangle indices into the concatenated vertex list (the FFI's convention).
     pub indices: Vec<u32>,

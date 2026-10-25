@@ -51,10 +51,7 @@ pub mod models {
     pub const NOZZLES: [u32; 5] = [7, 8, 9, 10, 11];
     /// The Turbo dash's water-boost cone, there when the disc's files are.
     pub const WATERBOOST: u32 = 12;
-    /// Luigi's HSD mesh (Melee assets), posed by the same Sunshine clips through the retarget,
-    /// wearing his own FLUDD. Only present when the Melee cache was loaded ([`View::set_luigi`]).
-    pub const LUIGI: u32 = 13;
-    pub const COUNT: usize = 14;
+    pub const COUNT: usize = 13;
 }
 
 /// Largest baked texture side.
@@ -1784,7 +1781,8 @@ impl View {
             });
         }
         // Luigi's HSD body: CPU-skinned into the same buffers as the parts, ×10 from Melee
-        // units into Sunshine's decomp units, drawn as one instance of model [`models::LUIGI`].
+        // units into Sunshine's decomp units, drawn as one instance at the index after the J3D
+        // models (dynamic, so the entrance's own extra models keep their earlier indices).
         if let (Some(luigi), Some(world)) = (self.luigi.as_ref(), luigi_world.as_ref()) {
             let (first_vertex, first_color) = luigi.skin_into(
                 world,
@@ -1794,10 +1792,11 @@ impl View {
                 &mut self.colors,
                 &mut self.texture_ids,
             );
+            let luigi_model = self.models.len() as u32;
             self.draws.push(Draw {
-                key: (models::LUIGI as u64) << 56,
-                model: models::LUIGI,
-                kind: models::LUIGI as u8,
+                key: (luigi_model as u64) << 56,
+                model: luigi_model,
+                kind: luigi_model as u8,
                 flags,
                 pos: draw_pos,
                 rot: draw_rot,
