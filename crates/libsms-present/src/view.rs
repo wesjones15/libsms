@@ -283,9 +283,23 @@ struct Shine {
     ticks: f32,
 }
 
+/// Which body the view draws.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Skin {
+    #[default]
+    Mario,
+    /// Luigi's HSD mesh (Melee assets), posed by the same Sunshine clips through the retarget,
+    /// with his own FLUDD.
+    Luigi,
+}
+
 pub struct View {
     pub models: Vec<Model>,
     pub textures: Textures,
+    /// Whose body the body draws are: Mario's own, or an alt-skin (Luigi's HSD mesh posed by
+    /// the same Sunshine clips and wearing his own FLUDD). Set by the host from the skin it
+    /// is drawing; the rest of the view (clips, FLUDD look, effects) is shared.
+    pub skin: Skin,
     skeleton: Skeleton,
     clips: ClipLibrary,
     fludd_clips: HashMap<String, Clip>,
@@ -935,6 +949,7 @@ impl View {
             fx_binds: (0..4).map(|s| (s, FxAt::Center)).collect(),
             host_muzzles: Vec::new(),
             hud: Hud::load(dir).ok(),
+            skin: Skin::Mario,
             hud_shown: false,
             life: [
                 LifeMeter::load(dir, 8, true).ok(),
@@ -1017,6 +1032,7 @@ impl View {
             fx_binds: Vec::new(),
             host_muzzles: Vec::new(),
             hud: None,
+            skin: Skin::Mario,
             hud_shown: false,
             life: [None, None],
             coins: [None, None, None],
@@ -1103,6 +1119,7 @@ impl View {
             fx_binds: Vec::new(),
             host_muzzles: Vec::new(),
             hud: None,
+            skin: Skin::Mario,
             hud_shown: false,
             life: [None, None],
             coins: [None, None, None],
@@ -1244,6 +1261,11 @@ impl View {
     /// Observe every sim tick (`Sim::advance_observed`), even without sound or rendering.
     /// Muzzle matrices a host posed itself (an alt-skin's FLUDD), in Mario's model space:
     /// from this frame on, the nozzle mist and the water leave those instead of this view's.
+    /// Whose body the view draws (a skin picks the mesh; the clips and FLUDD look are shared).
+    pub fn set_skin(&mut self, skin: Skin) {
+        self.skin = skin;
+    }
+
     pub fn set_muzzles(&mut self, muzzles: &[Mat4]) {
         self.host_muzzles.clear();
         self.host_muzzles.extend_from_slice(muzzles);

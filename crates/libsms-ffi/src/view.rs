@@ -213,6 +213,23 @@ pub struct SmsView {
     entrance: Option<libsms_present::view::Entrance>,
 }
 
+/// Whose body the view draws: 0 Mario, 1 Luigi (an alt-skin whose HSD model comes from the
+/// Melee cache; a host without that cache should stay on 0).
+/// # Safety
+/// `view` must be a live Mario view from sms_view_new.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_skin(view: *mut SmsView, skin: u32) {
+    unsafe {
+        with_view(view, (), |v| {
+            v.view.set_skin(if skin == 1 {
+                libsms_present::view::Skin::Luigi
+            } else {
+                libsms_present::view::Skin::Mario
+            })
+        })
+    }
+}
+
 /// Presentation-only Air Pump still life. Uses the existing model/draw readers.
 /// # Safety
 /// `view` must be a live Mario view from sms_view_new.
