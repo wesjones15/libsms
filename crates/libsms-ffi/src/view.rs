@@ -1463,8 +1463,8 @@ pub unsafe extern "C" fn sms_view_fx_texture_version(view: *mut SmsView, which: 
     }
 }
 
-/// Particle texture `which`, like [`sms_view_water_texture`] (wrap: repeat or clamp both
-/// ways, as `info` says). Returns 0 if there's no such texture or `len` is short.
+/// Particle texture `which`, with independent S/T wrap modes (0 repeat, 1 clamp,
+/// 2 mirror). Returns 0 if there's no such texture or `len` is short.
 ///
 /// # Safety
 /// As [`sms_view_texture`].
@@ -1483,12 +1483,12 @@ pub unsafe extern "C" fn sms_view_fx_texture(
                 return 0;
             };
             if let Some(info) = info.as_mut() {
-                let wrap = if t.repeat { 0 } else { 1 };
+                let wrap = t.wrap_modes();
                 *info = SmsTexture {
                     width: t.width,
                     height: t.height,
-                    wrap_s: wrap,
-                    wrap_t: wrap,
+                    wrap_s: wrap[0],
+                    wrap_t: wrap[1],
                     _pad: [0; 2],
                 };
             }

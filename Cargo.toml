@@ -9,6 +9,7 @@ edition = "2024"
 publish = false
 
 [workspace.dependencies]
+libcommon = { path = "../libcommon" }
 libsms = { path = "crates/libsms" }
 libsms-assets = { path = "crates/libsms-assets" }
 libsms-audio = { path = "crates/libsms-audio" }

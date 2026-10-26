@@ -183,16 +183,7 @@ fn raster(
             let c: Vec<f32> = (0..4)
                 .map(|k| w0 * t[0].color[k] + w1 * t[1].color[k] + w2 * t[2].color[k])
                 .collect();
-            let wrap = |f: f32, n: u32| -> usize {
-                let i = (f * n as f32).floor() as i64;
-                if tex.repeat {
-                    i.rem_euclid(n as i64) as usize
-                } else {
-                    i.clamp(0, n as i64 - 1) as usize
-                }
-            };
-            let o = (wrap(v, tex.height) * tex.width as usize + wrap(u, tex.width)) * 4;
-            let s = &tex.rgba[o..o + 4];
+            let s = tex.sample_nearest(u, v);
             // The native wave texture contains signed scene offsets under its disc mask.
             // Refract the opaque scene, rather than painting those normal channels as RGB.
             if mode == blend::REFRACTION {

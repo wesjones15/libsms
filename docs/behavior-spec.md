@@ -739,3 +739,40 @@ The export is additive and does not change ABI 30 struct layouts.
 ### Water-boost texture animation
 
 The Turbo cone now loads 01_waterboost.btk (MarioEffect.cpp setBtk). TTK1 reuses the BCK Hermite channel reader, applies named material SRT matrices, and advances its separate texture clock at 60 animation frames/second. Independently moving layers rebake into stable texture slots at 30 Hz; shared hosts upload only changed versions. Asset checks verify motion, looping and stable texture storage; in-game visual confirmation remains manual.
+
+### Coin pickup mirrors and child sparkle
+
+`TMario::emitGetCoinEffect` (MarioParticle.cpp:134; Particles.hpp:87-88) emits
+particle 0x37 (`ms_coinget_a`) and 0x38 (`ms_coinget_b`). Their parent textures
+store quadrants: GX mirror on S and T with 2x2 UV coverage assembles the full
+sparkles and ring. Particle textures now retain both wrap axes through basis
+baking, the unchanged `SmsTexture` ABI, the viewer and Unity's shared sampler mapping.
+`libcommon::texture` owns the sampler type, explicit GX/native wrap-code conversion,
+RGBA8 nearest sampling and per-neighbor addressing used by CPU bilinear sampling.
+The existing asset-reader `Wrap` path re-exports this type. libcommon is compiled
+into sms.dll through a sibling Cargo path dependency; no additional DLL is deployed.
+This also restores authored mirroring for `ms_m_sphipd_d` and `ms_shine_bow`.
+Eleven files in the local extracted particle bank contain mirrors; `ms_m_rocket_d`
+contains one at index 2, but uses clamped texture 0 without texture animation or children.
+
+SSP1 is read as `JPASweepShape` and simulated as a separate child list using
+`JPABaseEmitter::createChildParticle/doParticle/doChildParticle`,
+`JPAParticle::checkCreateChildParticle` and `JPADraw::initChild` as the spec.
+Children have source emission timing/step/rate, lifetime, inherited motion and
+optional fields, independent texture/size, optional RGB/alpha/scale inheritance,
+rotation and scale/alpha-out, and BSP1 child draw order. The existing quad and TEV
+paths draw them; palette children retain alpha compositing and painter order.
+Child stripe geometry and unsupported field kinds remain outside this pass.
+
+Coin B emits one texture-1 billboard at birth, lives 14 source frames and shrinks
+to zero. Its independent primary alpha is 200/255, with no inherited alpha or
+alpha-out; the newborn parent's zero alpha must not hide it. Both use the parent's
+mode-2 TEV color equation (`prm*(1-textureRGB)+textureRGB`) with source-alpha
+blending. This now uses the existing coverage/basis representation instead of
+approximating the equation with texture multiplication.
+
+`viewer --example coin_pickup` captures the exact assets at multiple source
+frames with the normal viewer shader/sampler. Native regressions check RGBA
+mirroring, child timing/inheritance/expiry and the real-disc child settings; the
+FFI check verifies mirrored parent and clamped child draw batches. Viewer checked;
+RoR2 in-game confirmation remains manual.

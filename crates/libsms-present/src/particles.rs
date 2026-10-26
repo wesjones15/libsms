@@ -23,7 +23,8 @@
 //! Static random colour palettes with source-alpha blending use a single atlas so each
 //! overlapping particle correctly hides earlier particles instead of adding their colours.
 //!
-//! Not ported: child particles (`SSP1`), emitter keyframes other than draw scale, general
+//! Child particles (`SSP1`) use their own lifetime, motion, texture and inherited draw
+//! parameters. Not ported: general
 //! indirect texture stages (projected scene refraction is handed to the host), the
 //! remaining field types. Source-alpha blending (the dust, smoke and stars) whose
 //! TEV mixes env in (`d + a (1 - c) + b c` with env as an input) is drawn exactly as a black
@@ -35,8 +36,9 @@ use std::f32::consts::TAU;
 use std::path::Path;
 
 use glam::{Mat3, Mat4, Vec3};
-use libsms_assets::jpa::{BaseShape, ExtraShape, Jpa};
-use libsms_assets::texture::{Texture, Wrap};
+use libcommon::texture::{Wrap, sample_rgba8_nearest};
+use libsms_assets::jpa::{BaseShape, ChildShape, ExtraShape, Jpa};
+use libsms_assets::texture::Texture;
 
 /// Game frames are four sim ticks (30 Hz).
 pub const FRAME_TICKS: u64 = 4;
@@ -91,8 +93,21 @@ pub struct FxTexture {
     pub width: u32,
     pub height: u32,
     pub rgba: Vec<u8>,
-    pub repeat: bool,
+    pub wrap: [Wrap; 2],
     pub version: u32,
+}
+
+impl FxTexture {
+    /// Host ABI sampler codes, shared with model textures: repeat/clamp/mirror.
+    pub fn wrap_modes(&self) -> [u8; 2] {
+        self.wrap.map(Wrap::to_host)
+    }
+
+    /// Shared nearest sampler for headless previews, including negative mirrored UVs.
+    pub fn sample_nearest(&self, u: f32, v: f32) -> [u8; 4] {
+        sample_rgba8_nearest(self.width, self.height, &self.rgba, self.wrap, u, v)
+            .expect("valid particle texture and finite UVs")
+    }
 }
 
 /// `JMath::TRandom_fast_`.
@@ -341,6 +356,7 @@ struct Emitter {
     texture: u8,
     /// Newest first, as `mParticleList` (particles are prepended).
     particles: Vec<Particle>,
+    children: Vec<Particle>,
 }
 
 /// How an effect is drawn.
@@ -377,6 +393,7 @@ struct Effect {
     name: String,
     jpa: Jpa,
     paint: Paint,
+    child_draw: Option<(Jpa, Paint)>,
     /// The file's own colours, kept after a skin tint so another skin can restore them.
     untinted: Option<Jpa>,
     world_space: bool,
@@ -418,16 +435,7 @@ fn sample(tex: &Texture, u: f32, v: f32) -> [f32; 4] {
     if w == 0 || h == 0 {
         return [1.0; 4];
     }
-    let wrap = |i: i32, n: i32, mode: Wrap| -> i32 {
-        match mode {
-            Wrap::Clamp => i.clamp(0, n - 1),
-            Wrap::Repeat => i.rem_euclid(n),
-            Wrap::Mirror => {
-                let p = i.rem_euclid(2 * n);
-                if p < n { p } else { 2 * n - 1 - p }
-            }
-        }
-    };
+    let wrap = |i: i32, n: i32, mode: Wrap| -> i32 { mode.index(i64::from(i), n as u32) as i32 };
     let x = u * w as f32 - 0.5;
     let y = v * h as f32 - 0.5;
     let (x0, y0) = (x.floor(), y.floor());
@@ -499,7 +507,7 @@ fn coverage_image(tex: &Texture) -> FxTexture {
         width: img.width,
         height: img.height,
         rgba,
-        repeat: tex.wrap_s != Wrap::Clamp || tex.wrap_t != Wrap::Clamp,
+        wrap: [tex.wrap_s, tex.wrap_t],
         version: 1,
     }
 }
@@ -509,7 +517,7 @@ fn coverage_image(tex: &Texture) -> FxTexture {
 /// rest.
 fn basis_images(tex: &Texture, count: u32) -> Vec<FxTexture> {
     let img = &tex.image;
-    let repeat = tex.wrap_s != Wrap::Clamp || tex.wrap_t != Wrap::Clamp;
+    let wrap = [tex.wrap_s, tex.wrap_t];
     (0..count)
         .map(|k| {
             let mut rgba = Vec::with_capacity(img.rgba.len());
@@ -532,7 +540,7 @@ fn basis_images(tex: &Texture, count: u32) -> Vec<FxTexture> {
                 width: img.width,
                 height: img.height,
                 rgba,
-                repeat,
+                wrap,
                 version: 1,
             }
         })
@@ -570,6 +578,10 @@ fn turn_green(jpa: &mut Jpa, rule: GreenRule) {
     swap(&mut base.env);
     for c in base.prm_table.iter_mut().chain(base.env_table.iter_mut()) {
         swap(c);
+    }
+    if let Some(child) = &mut jpa.child {
+        swap(&mut child.prm);
+        swap(&mut child.env);
     }
 }
 
@@ -638,7 +650,7 @@ fn bake_paint(textures: &mut Vec<FxTexture>, jpa: &Jpa) -> Paint {
             width,
             height,
             rgba,
-            repeat: false,
+            wrap: [Wrap::Clamp; 2],
             version: 1,
         });
         Paint::Palette {
@@ -662,14 +674,14 @@ fn bake_paint(textures: &mut Vec<FxTexture>, jpa: &Jpa) -> Paint {
             width: size,
             height: size,
             rgba: vec![0; (size * size * 4) as usize],
-            repeat: false,
+            wrap: [Wrap::Clamp; 2],
             version: 0,
         });
         Paint::Baked {
             texture: textures.len() as u32 - 1,
         }
     } else {
-        let over = base.blend_dst != 1 && base.tev().contains(&4);
+        let over = base.blend_dst != 1 && (base.tev().contains(&4) || base.color_mode == 2);
         let count = if quadratic(base) { 3 } else { 2 };
         let count = if base.blend_dst == 1 || over {
             count
@@ -693,7 +705,7 @@ fn bake_paint(textures: &mut Vec<FxTexture>, jpa: &Jpa) -> Paint {
                     width: tex.image.width,
                     height: tex.image.height,
                     rgba: tex.image.rgba.clone(),
-                    repeat: tex.wrap_s != Wrap::Clamp || tex.wrap_t != Wrap::Clamp,
+                    wrap: [tex.wrap_s, tex.wrap_t],
                     version: 1,
                 });
             } else {
@@ -705,6 +717,63 @@ fn bake_paint(textures: &mut Vec<FxTexture>, jpa: &Jpa) -> Paint {
         }
         Paint::Basis { first, count, over }
     }
+}
+
+/// Reuse parent TEV/blending for SSP1's separate geometry, texture and registers.
+fn bake_child_draw(textures: &mut Vec<FxTexture>, jpa: &Jpa) -> Option<(Jpa, Paint)> {
+    jpa.child.as_ref().map(|child| {
+        let mut draw = jpa.clone();
+        draw.child = None;
+        draw.base.kind = child.kind;
+        draw.base.dir_type = child.dir_type;
+        draw.base.rot_type = child.rot_type;
+        if child.inherit_flags & 1 == 0 {
+            draw.base.size_x = child.size_x;
+            draw.base.size_y = child.size_y;
+        }
+        draw.base.tiling = [1.0; 2];
+        draw.base.tex_scroll = false;
+        draw.base.tex_anm = false;
+        draw.base.tex_keys.clear();
+        draw.base.texture = child.texture;
+        draw.base.global_tex_anm = false;
+        draw.base.global_col_anm = false;
+        draw.base.prm_anm = true;
+        draw.base.env_anm = true;
+        draw.base.col_anm_type = 0;
+        if child.kind == 2 && draw.base.color_mode == 3 {
+            // Inherited birth colors remain fixed on each child. Reuse the
+            // palette atlas so alpha-blended children retain painter order.
+            draw.base.col_anm_type = 4;
+            let mut prm_table = Vec::new();
+            let mut env_table = Vec::new();
+            for i in 0..=jpa.base.col_anm_max.max(0) as usize {
+                let (mut prm, mut env) = (child.prm, child.env);
+                if child.inherit_flags & 4 != 0 {
+                    let parent_prm = jpa.base.prm_table.get(i).copied().unwrap_or(jpa.base.prm);
+                    let parent_env = jpa.base.env_table.get(i).copied().unwrap_or(jpa.base.env);
+                    for k in 0..3 {
+                        prm[k] = (parent_prm[k] as f32 * child.rgb_inherit) as u8;
+                        env[k] = (parent_env[k] as f32 * child.rgb_inherit) as u8;
+                    }
+                }
+                // Alpha inheritance/out is per particle, carried by vertex alpha.
+                prm[3] = 255;
+                env[3] = 255;
+                prm_table.push(prm);
+                env_table.push(env);
+            }
+            draw.base.prm_table = prm_table;
+            draw.base.env_table = env_table;
+        }
+        draw.extra = Some(ExtraShape {
+            rotate: child.rotate,
+            ..Default::default()
+        });
+        draw.ex_tex = None;
+        let paint = bake_paint(textures, &draw);
+        (draw, paint)
+    })
 }
 
 impl Particles {
@@ -730,11 +799,13 @@ impl Particles {
     /// Adds an effect under `name`.
     pub fn add(&mut self, name: &str, jpa: Jpa) {
         let paint = bake_paint(&mut self.textures, &jpa);
+        let child_draw = bake_child_draw(&mut self.textures, &jpa);
         self.by_name.insert(name.to_owned(), self.effects.len());
         self.effects.push(Effect {
             name: name.to_owned(),
             jpa,
             paint,
+            child_draw,
             untinted: None,
             world_space: false,
             fixed_height: false,
@@ -767,6 +838,10 @@ impl Particles {
             if matches!(self.effects[i].paint, Paint::Palette { .. }) {
                 let jpa = self.effects[i].jpa.clone();
                 self.effects[i].paint = bake_paint(&mut self.textures, &jpa);
+            }
+            if self.effects[i].child_draw.is_some() {
+                let jpa = self.effects[i].jpa.clone();
+                self.effects[i].child_draw = bake_child_draw(&mut self.textures, &jpa);
             }
         }
     }
@@ -824,15 +899,15 @@ impl Particles {
     /// World-anchored textures must not receive the host's current character draw offset.
     pub fn texture_world_space(&self, texture: u32) -> bool {
         self.effects.iter().any(|e| {
-            e.world_space
-                && match &e.paint {
-                    Paint::Baked { texture: t }
-                    | Paint::Refraction { texture: t }
-                    | Paint::Palette { texture: t, .. } => *t == texture,
-                    Paint::Basis { first, count, over } => first
-                        .values()
-                        .any(|&t| texture >= t && texture < t + count + *over as u32),
-                }
+            let owns = |paint: &Paint| match paint {
+                Paint::Baked { texture: t }
+                | Paint::Refraction { texture: t }
+                | Paint::Palette { texture: t, .. } => *t == texture,
+                Paint::Basis { first, count, over } => first
+                    .values()
+                    .any(|&t| texture >= t && texture < t + count + *over as u32),
+            };
+            e.world_space && (owns(&e.paint) || e.child_draw.as_ref().is_some_and(|(_, p)| owns(p)))
         })
     }
 
@@ -899,9 +974,9 @@ impl Particles {
 
     /// Any particles alive.
     pub fn active(&self) -> bool {
-        self.emitters
-            .iter()
-            .any(|e| !e.particles.is_empty() || e.status & ENABLE_DELETE == 0)
+        self.emitters.iter().any(|e| {
+            (!e.particles.is_empty() || !e.children.is_empty()) || e.status & ENABLE_DELETE == 0
+        })
     }
 
     /// Runs the game frames due at sim tick `tick` (one per [`FRAME_TICKS`]; at most four at
@@ -972,7 +1047,7 @@ impl Particles {
                 e.bind(m);
             }
             let effect = &effects[e.effect];
-            for p in &mut e.particles {
+            for p in e.particles.iter_mut().chain(&mut e.children) {
                 p.previous_local = p.local;
                 p.previous_global = p.global;
                 p.previous_look = p.look;
@@ -983,7 +1058,7 @@ impl Particles {
                 if !e.check_start_frame() {
                     continue;
                 }
-                if e.check_max_frame() && e.particles.is_empty() {
+                if e.check_max_frame() && e.particles.is_empty() && e.children.is_empty() {
                     return false;
                 }
                 e.calc(&effect.jpa);
@@ -1032,6 +1107,7 @@ impl Particles {
             env,
             texture: base.texture,
             particles: Vec::new(),
+            children: Vec::new(),
         }
     }
 
@@ -1063,242 +1139,269 @@ impl Particles {
             if !shown(&fx.name) {
                 continue;
             }
-            let jpa = &fx.jpa;
-            let base = &jpa.base;
-            if base.kind == 5 || base.kind == 6 {
-                let quads = stripe_quads(e, jpa);
-                if quads.is_empty() {
+            let children_first = fx.jpa.base.flags & 2 != 0;
+            for child_pass in [children_first, !children_first] {
+                let (jpa, paint, particles) = if child_pass {
+                    let Some((jpa, paint)) = &fx.child_draw else {
+                        continue;
+                    };
+                    (jpa, paint, &e.children)
+                } else {
+                    if fx.jpa.child.as_ref().is_some_and(|c| c.flags & 1 == 0) {
+                        continue;
+                    }
+                    (&fx.jpa, &fx.paint, &e.particles)
+                };
+                let base = &jpa.base;
+                // Child stripes need their own linked-list ribbon builder. Do not
+                // accidentally draw the parent's list as the child's geometry.
+                if child_pass && matches!(base.kind, 5 | 6) {
                     continue;
                 }
-                match &fx.paint {
-                    Paint::Refraction { texture } => {
-                        let first = self.vertices.len() as u32;
-                        for q in &quads {
-                            for (p, uv) in q {
-                                self.vertices.push(FxVertex {
-                                    pos: *p,
-                                    u: uv[0],
-                                    v: uv[1],
-                                    color: [1.0; 4],
+                if base.kind == 5 || base.kind == 6 {
+                    let quads = stripe_quads(e, jpa);
+                    if quads.is_empty() {
+                        continue;
+                    }
+                    match paint {
+                        Paint::Refraction { texture } => {
+                            let first = self.vertices.len() as u32;
+                            for q in &quads {
+                                for (p, uv) in q {
+                                    self.vertices.push(FxVertex {
+                                        pos: *p,
+                                        u: uv[0],
+                                        v: uv[1],
+                                        color: [1.0; 4],
+                                    });
+                                }
+                            }
+                            self.batches.push(FxBatch {
+                                texture: *texture,
+                                first_vertex: first,
+                                vertex_count: self.vertices.len() as u32 - first,
+                                blend: blend::REFRACTION,
+                            });
+                        }
+                        Paint::Baked { texture } => {
+                            let t = &self.textures[*texture as usize];
+                            baked.push((*texture, bake_stripe(e, jpa, t.width, t.height)));
+                            let first = self.vertices.len() as u32;
+                            for q in &quads {
+                                for (p, uv) in q {
+                                    self.vertices.push(FxVertex {
+                                        pos: *p,
+                                        u: uv[0],
+                                        v: uv[1],
+                                        color: [1.0; 4],
+                                    });
+                                }
+                            }
+                            self.batches.push(FxBatch {
+                                texture: *texture,
+                                first_vertex: first,
+                                vertex_count: self.vertices.len() as u32 - first,
+                                blend: blend::ADDITIVE,
+                            });
+                        }
+                        Paint::Palette { .. } => unreachable!("palette is only for billboards"),
+                        Paint::Basis { first, count, over } => {
+                            let Some(&t0) = first.get(&e.texture) else {
+                                continue;
+                            };
+                            let (prm, env) = registers(e, None, jpa);
+                            let colors = paint_colors(base, prm, env, *count);
+                            let m = stripe_tex_mtx(base, e.frame as i32);
+                            let additive = if *count == 1 {
+                                blend::ALPHA
+                            } else {
+                                blend::ADDITIVE
+                            };
+                            // The coverage goes first: the colour adds to what it leaves.
+                            let coverage = (t0 + *count, [0.0, 0.0, 0.0, prm[3]], blend::ALPHA);
+                            let layers = std::iter::once(coverage).filter(|_| *over).chain(
+                                colors
+                                    .iter()
+                                    .enumerate()
+                                    .take(*count as usize)
+                                    .filter(|(_, c)| {
+                                        *count == 1 || c[0] + c[1] + c[2] > 1.0 / 512.0
+                                    })
+                                    .map(|(k, c)| (t0 + k as u32, *c, additive)),
+                            );
+                            for (texture, color, blend) in layers {
+                                let first = self.vertices.len() as u32;
+                                for q in &quads {
+                                    for (p, uv) in q {
+                                        let uv = m.map_or(*uv, |m| tex_mtx_apply(m, *uv));
+                                        self.vertices.push(FxVertex {
+                                            pos: *p,
+                                            u: uv[0],
+                                            v: uv[1],
+                                            color,
+                                        });
+                                    }
+                                }
+                                self.batches.push(FxBatch {
+                                    texture,
+                                    first_vertex: first,
+                                    vertex_count: self.vertices.len() as u32 - first,
+                                    blend,
                                 });
                             }
                         }
-                        self.batches.push(FxBatch {
-                            texture: *texture,
-                            first_vertex: first,
-                            vertex_count: self.vertices.len() as u32 - first,
-                            blend: blend::REFRACTION,
-                        });
                     }
-                    Paint::Baked { texture } => {
-                        let t = &self.textures[*texture as usize];
-                        baked.push((*texture, bake_stripe(e, jpa, t.width, t.height)));
-                        let first = self.vertices.len() as u32;
-                        for q in &quads {
-                            for (p, uv) in q {
-                                self.vertices.push(FxVertex {
-                                    pos: *p,
-                                    u: uv[0],
-                                    v: uv[1],
-                                    color: [1.0; 4],
-                                });
-                            }
-                        }
-                        self.batches.push(FxBatch {
-                            texture: *texture,
-                            first_vertex: first,
-                            vertex_count: self.vertices.len() as u32 - first,
-                            blend: blend::ADDITIVE,
-                        });
-                    }
-                    Paint::Palette { .. } => unreachable!("palette is only for billboards"),
-                    Paint::Basis { first, count, over } => {
-                        let Some(&t0) = first.get(&e.texture) else {
+                    continue;
+                }
+                if let Paint::Palette {
+                    texture,
+                    colors,
+                    columns,
+                    tile,
+                } = paint
+                {
+                    let atlas = &self.textures[*texture as usize];
+                    let first_vertex = self.vertices.len() as u32;
+                    let order: Box<dyn Iterator<Item = &Particle>> = if base.list_order() {
+                        Box::new(particles.iter())
+                    } else {
+                        Box::new(particles.iter().rev())
+                    };
+                    for particle in order {
+                        let p = sample_particle(particle, fraction);
+                        let Some(index) = colors.iter().position(|c| {
+                            c.0[..3] == p.look.prm[..3] && c.1[..3] == p.look.env[..3]
+                        }) else {
                             continue;
                         };
-                        let (prm, env) = registers(e, None, jpa);
-                        let colors = paint_colors(base, prm, env, *count);
-                        let m = stripe_tex_mtx(base, e.frame as i32);
-                        let additive = if *count == 1 {
-                            blend::ALPHA
+                        let pos = if p.follow {
+                            e.bound_slot
+                                .and_then(|slot| self.binds.get(&slot))
+                                .map(|m| {
+                                    let mut bound = e.clone_bind();
+                                    bound.bind(*m);
+                                    p.local * e.global_scale + bound.global_params(jpa).pos
+                                })
+                                .unwrap_or(p.global)
                         } else {
-                            blend::ADDITIVE
+                            p.global
                         };
-                        // The coverage goes first: the colour adds to what it leaves.
-                        let coverage = (t0 + *count, [0.0, 0.0, 0.0, prm[3]], blend::ALPHA);
+                        let Some(corners) = particle_quad(e, &p, pos, jpa, right, up, 0) else {
+                            continue;
+                        };
+                        for (position, uv) in corners {
+                            self.vertices.push(FxVertex {
+                                pos: position,
+                                u: (index as u32 % columns * tile[0] + 1) as f32
+                                    / atlas.width as f32
+                                    + uv[0] * (tile[0] - 2) as f32 / atlas.width as f32,
+                                v: (index as u32 / columns * tile[1] + 1) as f32
+                                    / atlas.height as f32
+                                    + uv[1] * (tile[1] - 2) as f32 / atlas.height as f32,
+                                color: [
+                                    1.,
+                                    1.,
+                                    1.,
+                                    p.look.alpha * p.look.prm[3] as f32
+                                        / colors[index].0[3].max(1) as f32,
+                                ],
+                            });
+                        }
+                    }
+                    self.batches.push(FxBatch {
+                        texture: *texture,
+                        first_vertex,
+                        vertex_count: self.vertices.len() as u32 - first_vertex,
+                        blend: blend::ALPHA,
+                    });
+                    continue;
+                }
+                let Paint::Basis { first, count, over } = paint else {
+                    continue;
+                };
+                // Particles that follow the emitter sit where it is now (the host draws between
+                // game frames), not where it was at the last one.
+                let now = e.bound_slot.and_then(|s| self.binds.get(&s)).map(|m| {
+                    let mut b = e.clone_bind();
+                    b.bind(*m);
+                    b.global_params(jpa).pos
+                });
+                let order: Box<dyn Iterator<Item = &Particle>> = if base.list_order() {
+                    Box::new(particles.iter())
+                } else {
+                    Box::new(particles.iter().rev())
+                };
+                // One batch per (texture, basis image); particles append to theirs.
+                // The coverage draws (`over`) are flagged and go first.
+                let mut runs: Vec<(u32, bool, Vec<FxVertex>)> = Vec::new();
+                for p in order {
+                    let sampled = sample_particle(p, fraction);
+                    let p = &sampled;
+                    let tex = if base.global_tex_anm {
+                        e.texture
+                    } else {
+                        p.look.texture
+                    };
+                    let Some(&t0) = first.get(&tex) else {
+                        continue;
+                    };
+                    let pos = match now {
+                        Some(at) if p.follow => p.local * e.global_scale + at,
+                        _ => p.global,
+                    };
+                    let (prm, env) = registers(e, Some(p), jpa);
+                    let colors = paint_colors(base, prm, env, *count);
+                    // JPADrawExecDirectionalCross / RotDirectionalCross draw two perpendicular
+                    // quads. MS_M_WATSLIDE_C uses this for the wet slide's side spray.
+                    let passes = if base.kind == 4 { 2 } else { 1 };
+                    for pass in 0..passes {
+                        let Some(corners) = particle_quad(e, p, pos, jpa, right, up, pass) else {
+                            continue;
+                        };
+                        let coverage = (t0 + *count, true, [0.0, 0.0, 0.0, prm[3]]);
                         let layers = std::iter::once(coverage).filter(|_| *over).chain(
                             colors
                                 .iter()
                                 .enumerate()
                                 .take(*count as usize)
                                 .filter(|(_, c)| *count == 1 || c[0] + c[1] + c[2] > 1.0 / 512.0)
-                                .map(|(k, c)| (t0 + k as u32, *c, additive)),
+                                .map(|(k, c)| (t0 + k as u32, false, *c)),
                         );
-                        for (texture, color, blend) in layers {
-                            let first = self.vertices.len() as u32;
-                            for q in &quads {
-                                for (p, uv) in q {
-                                    let uv = m.map_or(*uv, |m| tex_mtx_apply(m, *uv));
-                                    self.vertices.push(FxVertex {
-                                        pos: *p,
-                                        u: uv[0],
-                                        v: uv[1],
-                                        color,
-                                    });
+                        for (texture, cover, c) in layers {
+                            let run = match runs.iter_mut().find(|r| r.0 == texture) {
+                                Some(r) => r,
+                                None => {
+                                    runs.push((texture, cover, Vec::new()));
+                                    runs.last_mut().unwrap()
                                 }
+                            };
+                            for (pos, uv) in &corners {
+                                run.2.push(FxVertex {
+                                    pos: *pos,
+                                    u: uv[0],
+                                    v: uv[1],
+                                    color: c,
+                                });
                             }
-                            self.batches.push(FxBatch {
-                                texture,
-                                first_vertex: first,
-                                vertex_count: self.vertices.len() as u32 - first,
-                                blend,
-                            });
                         }
                     }
                 }
-                continue;
-            }
-            if let Paint::Palette {
-                texture,
-                colors,
-                columns,
-                tile,
-            } = &fx.paint
-            {
-                let atlas = &self.textures[*texture as usize];
-                let first_vertex = self.vertices.len() as u32;
-                let order: Box<dyn Iterator<Item = &Particle>> = if base.list_order() {
-                    Box::new(e.particles.iter())
-                } else {
-                    Box::new(e.particles.iter().rev())
-                };
-                for particle in order {
-                    let p = sample_particle(particle, fraction);
-                    let Some(index) = colors
-                        .iter()
-                        .position(|c| c.0 == p.look.prm && c.1 == p.look.env)
-                    else {
-                        continue;
-                    };
-                    let pos = if p.follow {
-                        e.bound_slot
-                            .and_then(|slot| self.binds.get(&slot))
-                            .map(|m| {
-                                let mut bound = e.clone_bind();
-                                bound.bind(*m);
-                                p.local * e.global_scale + bound.global_params(jpa).pos
-                            })
-                            .unwrap_or(p.global)
-                    } else {
-                        p.global
-                    };
-                    let Some(corners) = particle_quad(e, &p, pos, jpa, right, up, 0) else {
-                        continue;
-                    };
-                    for (position, uv) in corners {
-                        self.vertices.push(FxVertex {
-                            pos: position,
-                            u: (index as u32 % columns * tile[0] + 1) as f32 / atlas.width as f32
-                                + uv[0] * (tile[0] - 2) as f32 / atlas.width as f32,
-                            v: (index as u32 / columns * tile[1] + 1) as f32 / atlas.height as f32
-                                + uv[1] * (tile[1] - 2) as f32 / atlas.height as f32,
-                            color: [1., 1., 1., p.look.alpha],
-                        });
-                    }
+                // The colour adds to what the coverage leaves of the scene, so it draws first.
+                runs.sort_by_key(|r| !r.1);
+                for (texture, cover, verts) in runs {
+                    let first = self.vertices.len() as u32;
+                    self.vertices.extend(verts);
+                    self.batches.push(FxBatch {
+                        texture,
+                        first_vertex: first,
+                        vertex_count: self.vertices.len() as u32 - first,
+                        blend: if *count == 1 || cover {
+                            blend::ALPHA
+                        } else {
+                            blend::ADDITIVE
+                        },
+                    });
                 }
-                self.batches.push(FxBatch {
-                    texture: *texture,
-                    first_vertex,
-                    vertex_count: self.vertices.len() as u32 - first_vertex,
-                    blend: blend::ALPHA,
-                });
-                continue;
-            }
-            let Paint::Basis { first, count, over } = &fx.paint else {
-                continue;
-            };
-            // Particles that follow the emitter sit where it is now (the host draws between
-            // game frames), not where it was at the last one.
-            let now = e.bound_slot.and_then(|s| self.binds.get(&s)).map(|m| {
-                let mut b = e.clone_bind();
-                b.bind(*m);
-                b.global_params(jpa).pos
-            });
-            let order: Box<dyn Iterator<Item = &Particle>> = if base.list_order() {
-                Box::new(e.particles.iter())
-            } else {
-                Box::new(e.particles.iter().rev())
-            };
-            // One batch per (texture, basis image); particles append to theirs.
-            // The coverage draws (`over`) are flagged and go first.
-            let mut runs: Vec<(u32, bool, Vec<FxVertex>)> = Vec::new();
-            for p in order {
-                let sampled = sample_particle(p, fraction);
-                let p = &sampled;
-                let tex = if base.global_tex_anm {
-                    e.texture
-                } else {
-                    p.look.texture
-                };
-                let Some(&t0) = first.get(&tex) else {
-                    continue;
-                };
-                let pos = match now {
-                    Some(at) if p.follow => p.local * e.global_scale + at,
-                    _ => p.global,
-                };
-                let (prm, env) = registers(e, Some(p), jpa);
-                let colors = paint_colors(base, prm, env, *count);
-                // JPADrawExecDirectionalCross / RotDirectionalCross draw two perpendicular
-                // quads. MS_M_WATSLIDE_C uses this for the wet slide's side spray.
-                let passes = if base.kind == 4 { 2 } else { 1 };
-                for pass in 0..passes {
-                    let Some(corners) = particle_quad(e, p, pos, jpa, right, up, pass) else {
-                        continue;
-                    };
-                    let coverage = (t0 + *count, true, [0.0, 0.0, 0.0, prm[3]]);
-                    let layers = std::iter::once(coverage).filter(|_| *over).chain(
-                        colors
-                            .iter()
-                            .enumerate()
-                            .take(*count as usize)
-                            .filter(|(_, c)| *count == 1 || c[0] + c[1] + c[2] > 1.0 / 512.0)
-                            .map(|(k, c)| (t0 + k as u32, false, *c)),
-                    );
-                    for (texture, cover, c) in layers {
-                        let run = match runs.iter_mut().find(|r| r.0 == texture) {
-                            Some(r) => r,
-                            None => {
-                                runs.push((texture, cover, Vec::new()));
-                                runs.last_mut().unwrap()
-                            }
-                        };
-                        for (pos, uv) in &corners {
-                            run.2.push(FxVertex {
-                                pos: *pos,
-                                u: uv[0],
-                                v: uv[1],
-                                color: c,
-                            });
-                        }
-                    }
-                }
-            }
-            // The colour adds to what the coverage leaves of the scene, so it draws first.
-            runs.sort_by_key(|r| !r.1);
-            for (texture, cover, verts) in runs {
-                let first = self.vertices.len() as u32;
-                self.vertices.extend(verts);
-                self.batches.push(FxBatch {
-                    texture,
-                    first_vertex: first,
-                    vertex_count: self.vertices.len() as u32 - first,
-                    blend: if *count == 1 || cover {
-                        blend::ALPHA
-                    } else {
-                        blend::ADDITIVE
-                    },
-                });
             }
         }
         for (t, rgba) in baked {
@@ -1478,7 +1581,7 @@ fn refraction_image(jpa: &Jpa) -> FxTexture {
         width: size,
         height: size,
         rgba,
-        repeat: false,
+        wrap: [Wrap::Clamp; 2],
         version: 1,
     }
 }
@@ -1705,6 +1808,7 @@ impl Emitter {
     fn clone_bind(&self) -> Emitter {
         Emitter {
             particles: Vec::new(),
+            children: Vec::new(),
             ..self.clone()
         }
     }
@@ -1841,79 +1945,7 @@ impl Emitter {
                 self.particles.remove(i);
                 continue;
             }
-            // `calcVelocity`.
-            p.field_vel = Vec3::ZERO;
-            if p.follow {
-                p.anchor = info.pos;
-            }
-            if p.moment != 0.0 {
-                p.base_vel += p.dir * p.moment;
-            }
-            for (push, f) in &fields {
-                let mut v = match f.kind {
-                    0 | 1 => *push,
-                    // JPAField.cpp: JPAMagnetField / JPANewtonField::affect.
-                    2 | 3 => {
-                        let target = if f.status & 2 != 0 {
-                            Vec3::from(f.pos)
-                        } else {
-                            info.global_rot * Vec3::from(f.pos)
-                        };
-                        let from = if f.status & 2 != 0 { p.global } else { p.local };
-                        let delta = target - from;
-                        let distance = delta.length_squared();
-                        if f.status & 0x80 != 0 && distance >= f.max_distance * f.max_distance {
-                            continue;
-                        }
-                        let strength = if f.kind == 2 || f.status & 0x100 != 0 {
-                            f.magnitude
-                        } else {
-                            let radius = f.param[0] * f.param[0];
-                            f.magnitude
-                                * if distance > radius {
-                                    radius * 10. / distance
-                                } else {
-                                    10.
-                                }
-                        };
-                        delta.normalize_or_zero() * strength
-                    }
-                    // JPAVortexField::set/affect: tangent around the authored
-                    // axis, interpolating inner/outer speeds by squared radius.
-                    4 => {
-                        let axis = (info.rot * Vec3::from(f.dir)).normalize_or_zero();
-                        let radial = p.local - axis * axis.dot(p.local);
-                        let radius = f.pos[2] * f.pos[2];
-                        let share = if radius > 0. {
-                            radial.length_squared().min(radius) / radius
-                        } else {
-                            0.
-                        };
-                        radial.normalize_or_zero().cross(axis)
-                            * (f.magnitude * (1. - share) + f.magnitude_random * share)
-                    }
-                    _ => continue,
-                };
-                let scale = fade_scale(f, p.progress);
-                if scale <= 0.0 {
-                    v = Vec3::ZERO;
-                } else if scale < 1.0 {
-                    v *= scale;
-                }
-                match f.add_type {
-                    0 => p.field_accel += v,
-                    1 => p.base_vel += v,
-                    _ => p.field_vel += v,
-                }
-            }
-            if p.air < 1.0 {
-                p.base_vel *= p.air;
-            }
-            p.field_vel += p.field_accel;
-            p.vel = (p.base_vel + p.field_vel) * p.weight;
-            if self.fixed_height {
-                p.vel.y = 0.0;
-            }
+            move_particle(p, &info, &fields, self.fixed_height);
             // `JPADraw::calcParticle`.
             p.look.angle = p.look.angle.wrapping_add(p.look.spin);
             calc_draw_particle(self.prm, self.env, p, jpa);
@@ -1922,14 +1954,142 @@ impl Emitter {
             if newborn {
                 p.previous_look = p.look;
             }
+            // JPAEmitter::doParticle spawns children after draw calc, before moving
+            // the parent. A zero-alpha newborn parent may still have an opaque child.
+            let spawn = jpa
+                .child
+                .as_ref()
+                .is_some_and(|c| {
+                    let time = if p.life > 1.0 {
+                        p.age / (p.life - 1.0)
+                    } else {
+                        1.0
+                    };
+                    time >= c.timing && (c.step == 0 || p.age as i32 % (c.step as i32 + 1) == 0)
+                })
+                .then_some(*p);
             // `calcGlobalPosition`.
             p.local += p.vel;
             // JPAParticle::calcGlobalPosition applies the global dynamics scale after
             // integrating in local space; fields and velocity shrink with the effect too.
             p.global = p.local * self.global_scale + p.anchor;
+            if let Some(parent) = spawn {
+                self.create_children(&parent, jpa.child.as_ref().unwrap(), jpa);
+            }
             i += 1;
         }
+        // Children keep the emitter alive after its parents expire. JPAEmitter::
+        // doChildParticle skips velocity integration on the birth frame only.
+        if let Some(c) = &jpa.child {
+            self.children.retain_mut(|p| {
+                let newborn = p.just_born;
+                if newborn {
+                    p.just_born = false;
+                } else {
+                    p.age += 1.0;
+                }
+                if p.age >= p.life {
+                    return false;
+                }
+                p.progress = p.age / p.life;
+                if !newborn {
+                    move_particle(
+                        p,
+                        &info,
+                        if c.fields { &fields } else { &[] },
+                        self.fixed_height,
+                    );
+                }
+                p.look.angle = p.look.angle.wrapping_add(p.look.spin);
+                if c.alpha_out {
+                    p.look.alpha = 1.0 - p.progress;
+                }
+                if c.scale_out {
+                    p.look.scale_x = p.look.base_scale * (1.0 - p.progress);
+                    p.look.scale_y = p.look.wave * (1.0 - p.progress);
+                }
+                if newborn {
+                    p.previous_look = p.look;
+                }
+                p.local += p.vel;
+                p.global = p.local * self.global_scale + p.anchor;
+                true
+            });
+        }
         self.frame += 1.0;
+    }
+
+    /// JPAEmitter::createChildParticle and JPADraw::initChild. The sweep shape's
+    /// inheritance bits select authored child values independently of the parent.
+    fn create_children(&mut self, parent: &Particle, c: &ChildShape, jpa: &Jpa) {
+        for _ in 0..c.rate.max(0) {
+            let mut p = *parent;
+            p.local = parent.local;
+            if c.pos_random != 0.0 {
+                p.local += rot_xy(self.rng.angle(), self.rng.angle())
+                    * Vec3::new(0.0, 0.0, self.rng.f() * c.pos_random);
+            }
+            p.base_vel = parent.base_vel * c.vel_inherit;
+            p.field_accel = parent.field_vel * c.vel_inherit;
+            if c.base_vel != 0.0 {
+                let speed = c.base_vel * (1.0 + c.vel_random * self.rng.rf());
+                let random = Vec3::new(self.rng.sf(), self.rng.sf(), self.rng.sf());
+                p.base_vel += set_length(random, speed);
+            }
+            p.field_vel = Vec3::ZERO;
+            p.vel = (p.base_vel + p.field_accel) * p.weight;
+            p.dir = Vec3::NEG_Y;
+            p.moment = c.moment;
+            p.age = 0.0;
+            p.life = c.lifetime as f32;
+            p.progress = 0.0;
+            p.just_born = true;
+            p.dead = false;
+            p.follow = !self.world_space && jpa.emitter.flags & 0x10 != 0;
+            let (mut prm, mut env) = (c.prm, c.env);
+            if c.inherit_flags & 4 != 0 {
+                for k in 0..3 {
+                    prm[k] = (parent.look.prm[k] as f32 * c.rgb_inherit) as u8;
+                    env[k] = (parent.look.env[k] as f32 * c.rgb_inherit) as u8;
+                }
+            }
+            if c.inherit_flags & 2 != 0 {
+                let alpha = parent.look.alpha * c.alpha_inherit;
+                prm[3] = (parent.look.prm[3] as f32 * alpha) as u8;
+                env[3] = (parent.look.env[3] as f32 * alpha) as u8;
+            }
+            let scale = if c.inherit_flags & 1 != 0 {
+                [
+                    parent.look.scale_x * c.scale_inherit,
+                    parent.look.scale_y * c.scale_inherit,
+                ]
+            } else {
+                [1.0; 2]
+            };
+            p.look = Look {
+                up: parent.look.up,
+                prm,
+                env,
+                alpha: 1.0,
+                scale_x: scale[0],
+                scale_y: scale[1],
+                base_scale: scale[0],
+                wave: scale[1],
+                loop_offset: 0,
+                angle: parent.look.angle,
+                spin: if c.rotate {
+                    (c.rotate_speed * 32768.0) as i32 as i16
+                } else {
+                    0
+                },
+                texture: c.texture,
+            };
+            p.global = p.local * self.global_scale + p.anchor;
+            p.previous_local = p.local;
+            p.previous_global = p.global;
+            p.previous_look = p.look;
+            self.children.insert(0, p);
+        }
     }
 
     /// The emitter-wide draw calc (`JPADraw::calc`): colour tables and texture keys animated
@@ -2260,6 +2420,87 @@ impl Emitter {
     }
 }
 
+/// JPAParticle::calcVelocity shared by parent and child lists.
+fn move_particle(
+    p: &mut Particle,
+    info: &Info,
+    fields: &[(Vec3, &libsms_assets::jpa::Field)],
+    fixed_height: bool,
+) {
+    p.field_vel = Vec3::ZERO;
+    if p.follow {
+        p.anchor = info.pos;
+    }
+    if p.moment != 0.0 {
+        p.base_vel += p.dir * p.moment;
+    }
+    for (push, f) in fields {
+        let mut v = match f.kind {
+            0 | 1 => *push,
+            // JPAField.cpp: JPAMagnetField / JPANewtonField::affect.
+            2 | 3 => {
+                let target = if f.status & 2 != 0 {
+                    Vec3::from(f.pos)
+                } else {
+                    info.global_rot * Vec3::from(f.pos)
+                };
+                let from = if f.status & 2 != 0 { p.global } else { p.local };
+                let delta = target - from;
+                let distance = delta.length_squared();
+                if f.status & 0x80 != 0 && distance >= f.max_distance * f.max_distance {
+                    continue;
+                }
+                let strength = if f.kind == 2 || f.status & 0x100 != 0 {
+                    f.magnitude
+                } else {
+                    let radius = f.param[0] * f.param[0];
+                    f.magnitude
+                        * if distance > radius {
+                            radius * 10. / distance
+                        } else {
+                            10.
+                        }
+                };
+                delta.normalize_or_zero() * strength
+            }
+            // JPAVortexField::set/affect: tangent around the authored
+            // axis, interpolating inner/outer speeds by squared radius.
+            4 => {
+                let axis = (info.rot * Vec3::from(f.dir)).normalize_or_zero();
+                let radial = p.local - axis * axis.dot(p.local);
+                let radius = f.pos[2] * f.pos[2];
+                let share = if radius > 0. {
+                    radial.length_squared().min(radius) / radius
+                } else {
+                    0.
+                };
+                radial.normalize_or_zero().cross(axis)
+                    * (f.magnitude * (1. - share) + f.magnitude_random * share)
+            }
+            _ => continue,
+        };
+        let scale = fade_scale(f, p.progress);
+        if scale <= 0.0 {
+            v = Vec3::ZERO;
+        } else if scale < 1.0 {
+            v *= scale;
+        }
+        match f.add_type {
+            0 => p.field_accel += v,
+            1 => p.base_vel += v,
+            _ => p.field_vel += v,
+        }
+    }
+    if p.air < 1.0 {
+        p.base_vel *= p.air;
+    }
+    p.field_vel += p.field_accel;
+    p.vel = (p.base_vel + p.field_vel) * p.weight;
+    if fixed_height {
+        p.vel.y = 0.0;
+    }
+}
+
 /// Presentation only: keep JPA's discrete integration, interpolate motion, size, alpha and
 /// spin for high refresh displays. Births begin at their emitted position, not Mario's.
 fn sample_particle(p: &Particle, t: f32) -> Particle {
@@ -2499,6 +2740,174 @@ fn scale_at(x: &ExtraShape, t: f32, is_x: bool, base: f32) -> f32 {
 mod tests {
     use super::*;
 
+    #[test]
+    fn mirrored_sampler_preserves_rgba_and_independent_axes() {
+        let tex = FxTexture {
+            width: 2,
+            height: 2,
+            rgba: vec![
+                10, 11, 12, 13, 20, 21, 22, 23, 30, 31, 32, 33, 40, 41, 42, 43,
+            ],
+            wrap: [Wrap::Mirror, Wrap::Clamp],
+            version: 1,
+        };
+        for (u, expected) in [
+            (-0.75, 20),
+            (-0.25, 10),
+            (0.25, 10),
+            (0.75, 20),
+            (1.25, 20),
+            (1.75, 10),
+            (2.25, 10),
+        ] {
+            assert_eq!(
+                tex.sample_nearest(u, -1.0),
+                [expected, expected + 1, expected + 2, expected + 3]
+            );
+            assert_eq!(tex.sample_nearest(u, 2.0)[3], expected + 23);
+        }
+    }
+
+    #[test]
+    fn all_current_mirrored_effect_layers_keep_both_sampler_axes() {
+        let Some(dir) = libsms::assets::find(None) else {
+            eprintln!("SKIP: no SMS assets");
+            return;
+        };
+        for name in [
+            "ms_coinget_a",
+            "ms_coinget_b",
+            "ms_m_sphipd_d",
+            "ms_shine_bow",
+        ] {
+            let fx = Particles::load(&dir, &[name]);
+            assert_eq!(fx.effects.len(), 1, "missing {name}");
+            assert!(
+                fx.effects[0]
+                    .jpa
+                    .textures
+                    .iter()
+                    .any(|t| t.wrap_s == Wrap::Mirror && t.wrap_t == Wrap::Mirror)
+            );
+            assert!(
+                fx.textures.iter().any(|t| t.wrap_modes() == [2, 2]),
+                "lost mirrored layer: {name}"
+            );
+        }
+        // Rocket D contains an unused mirrored texture at index 2, but its
+        // unanimated parent uses clamped texture 0 and has no child shape.
+        let rocket = Particles::load(&dir, &["ms_m_rocket_d"]);
+        assert_eq!(rocket.effects[0].jpa.base.texture, 0);
+        assert!(rocket.effects[0].jpa.child.is_none());
+        assert!(rocket.textures.iter().all(|t| t.wrap_modes() == [1,1]));
+    }
+
+    #[test]
+    fn children_follow_source_timing_inheritance_and_outlive_parent() {
+        let mut jpa = puff().effects[0].jpa.clone();
+        jpa.emitter.rate = 1.0;
+        jpa.emitter.max_frame = 1;
+        jpa.emitter.lifetime = 3;
+        jpa.child = Some(ChildShape {
+            kind: 2,
+            lifetime: 6,
+            rate: 1,
+            timing: 0.5,
+            step: 1,
+            flags: 1,
+            size_x: 2.0,
+            size_y: 3.0,
+            scale_out: true,
+            alpha_out: true,
+            inherit_flags: 7,
+            scale_inherit: 0.5,
+            alpha_inherit: 0.5,
+            rgb_inherit: 0.5,
+            vel_inherit: 1.0,
+            ..Default::default()
+        });
+        let mut fx = Particles::default();
+        fx.add("fixture", jpa);
+        fx.emit("fixture", Mat4::IDENTITY, 1.0);
+        for frame in 0..2 {
+            fx.advance(frame * 4);
+            assert!(fx.emitters[0].children.is_empty());
+        }
+        fx.advance(8);
+        let parent = fx.emitters[0].particles[0];
+        let child = fx.emitters[0].children[0];
+        assert_eq!(child.age, 0.0);
+        assert_eq!(
+            child.look.prm,
+            parent.look.prm.map(|v| (v as f32 * 0.5) as u8)
+        );
+        assert_eq!(child.look.scale_x, parent.look.scale_x * 0.5);
+        assert_eq!(child.base_vel, parent.base_vel);
+        fx.advance(12);
+        assert!(fx.emitters[0].particles.is_empty());
+        assert!(fx.active(), "child keeps emitter alive");
+        let child = fx.emitters[0].children[0];
+        assert!((child.look.alpha - 5.0 / 6.0).abs() < 1e-6);
+        assert!((child.look.scale_x - child.look.base_scale * 5.0 / 6.0).abs() < 1e-6);
+        for frame in 4..=8 {
+            fx.advance(frame * 4);
+        }
+        assert!(!fx.active());
+    }
+
+    #[test]
+    fn coin_child_sparkle_has_authored_opacity_texture_size_and_lifetime() {
+        let Some(dir) = libsms::assets::find(None) else {
+            eprintln!("SKIP: no SMS assets");
+            return;
+        };
+        let mut fx = Particles::load(&dir, &["ms_coinget_b"]);
+        let child = fx.effects[0].jpa.child.as_ref().expect("coin B SSP1");
+        assert_eq!(
+            (child.texture, child.lifetime, child.rate, child.step),
+            (1, 14, 1, 30)
+        );
+        assert_eq!(child.inherit_flags, 0);
+        assert_eq!(child.prm, [255, 200, 100, 200]);
+        assert!(child.scale_out && !child.alpha_out);
+        fx.emit(
+            "ms_coinget_b",
+            Mat4::from_translation(Vec3::new(300., 50., -800.)),
+            1.0,
+        );
+        fx.advance(0);
+        let e = &fx.emitters[0];
+        assert_eq!(e.particles[0].look.alpha, 0.0);
+        assert_eq!(e.children.len(), 1);
+        assert_eq!(
+            e.children[0].look.prm[3], 200,
+            "child is visible at birth despite transparent parent"
+        );
+        fx.build(Vec3::X, Vec3::Y);
+        let (draw, paint) = fx.effects[0].child_draw.as_ref().unwrap();
+        assert_eq!(draw.base.tiling, [1.0; 2]);
+        assert_eq!((draw.base.size_x, draw.base.size_y), (10.0, 8.5));
+        let Paint::Basis { first, .. } = paint else {
+            panic!("child paint")
+        };
+        assert_eq!(fx.textures[first[&1] as usize].wrap, [Wrap::Clamp; 2]);
+        assert!(fx.textures.iter().any(|t| t.wrap == [Wrap::Mirror; 2]));
+        let mut visible_child = false;
+        for frame in 1..=18 {
+            fx.advance(frame * 4);
+            if frame < 14 {
+                let p = &fx.emitters[0].children[0];
+                visible_child = true;
+                assert!((p.look.scale_x - (1.0 - frame as f32 / 14.)).abs() < 1e-6);
+                assert_eq!(p.look.prm[3], 200);
+                assert_eq!(p.look.alpha, 1.0);
+            } else if let Some(e) = fx.emitters.first() {
+                assert!(e.children.is_empty());
+            }
+        }
+        assert!(visible_child && !fx.active());
+    }
+
     fn puff() -> Particles {
         let mut p = Particles::default();
         p.add(
@@ -2526,7 +2935,7 @@ mod tests {
                 extra: None,
                 ex_tex: None,
                 keys: vec![],
-                has_children: false,
+                child: None,
                 textures: vec![Texture {
                     name: "white".into(),
                     format: 0,
@@ -2869,8 +3278,19 @@ mod tests {
         assert!(spread > 300., "particles never leave the gate");
         assert!(late < 100., "particles missed Mario's return point: {late}");
         assert!(
+            p.emitters.iter().all(|e| e.particles.is_empty()),
+            "parent palette particles survive the 89-frame reveal"
+        );
+        // SSP1 children emitted near the end retain their authored 16-frame
+        // lifetime after the 89-frame parent reveal (two source frames per step).
+        for frame in 46..56 {
+            p.advance(frame * FRAME_TICKS);
+            p.build(Vec3::X, Vec3::Y);
+            assert!(p.batches.iter().all(|b| b.blend == blend::ALPHA));
+        }
+        assert!(
             !p.active(),
-            "colored particles survive the completed 89-frame model reveal"
+            "child palette particles survive their authored lifetime"
         );
     }
 
@@ -3138,7 +3558,7 @@ mod tests {
                 extra: None,
                 ex_tex: None,
                 keys: vec![],
-                has_children: false,
+                child: None,
                 textures: vec![],
             },
         );
@@ -3161,7 +3581,7 @@ mod tests {
                 extra: None,
                 ex_tex: None,
                 keys: vec![],
-                has_children: false,
+                child: None,
                 textures: vec![],
             },
         );
@@ -3169,11 +3589,23 @@ mod tests {
         fx.retint_to_green(&["smear", "spark"], true, GreenRule::Red);
         let smear = base(&fx, "smear");
         assert_eq!(smear.prm, [39, 255, 15, 255], "the smear's red is green");
-        assert_eq!(smear.env, [39, 63, 255, 255], "its blue mixing colour is not");
+        assert_eq!(
+            smear.env,
+            [39, 63, 255, 255],
+            "its blue mixing colour is not"
+        );
         let spark = base(&fx, "spark");
         assert_eq!(spark.prm, [63, 87, 255, 255], "the spark's blue prm is not");
-        assert_eq!(spark.prm_table[0], [87, 255, 72, 183], "its red key is green");
-        assert_eq!(spark.prm_table[1], [63, 87, 255, 255], "its blue key is not");
+        assert_eq!(
+            spark.prm_table[0],
+            [87, 255, 72, 183],
+            "its red key is green"
+        );
+        assert_eq!(
+            spark.prm_table[1],
+            [63, 87, 255, 255],
+            "its blue key is not"
+        );
         assert_eq!(spark.env, [135, 231, 255, 255], "its light blue env is not");
         fx.retint_to_green(&["smear", "spark"], false, GreenRule::Red);
         assert_eq!(base(&fx, "smear").prm, [255, 39, 15, 255]);
@@ -3208,13 +3640,17 @@ mod tests {
                 extra: None,
                 ex_tex: None,
                 keys: vec![],
-                has_children: false,
+                child: None,
                 textures: vec![],
             },
         );
         fx.retint_to_green(&["flame"], true, GreenRule::Fire);
         let e = |fx: &Particles| fx.effects[fx.by_name["flame"]].jpa.base.clone();
-        assert_eq!(e(&fx).prm, [255, 255, 255, 255], "the white core stays white");
+        assert_eq!(
+            e(&fx).prm,
+            [255, 255, 255, 255],
+            "the white core stays white"
+        );
         assert_eq!(e(&fx).env, [144, 255, 0, 255], "orange becomes green");
         assert_eq!(e(&fx).env_table[0], [144, 255, 0, 255]);
         assert_eq!(e(&fx).env_table[1], [0, 255, 0, 255], "red becomes green");
@@ -3244,12 +3680,23 @@ mod tests {
             .expect("extract the disc");
         let mut fx = Particles::load(&cache, &["ms_m_blur2", "ms_m_blur2sp", "ms_m_blur3"]);
         for name in ["ms_m_blur2", "ms_m_blur2sp", "ms_m_blur3"] {
-            assert!(fx.has(name), "{name} is missing from the first-run extraction");
+            assert!(
+                fx.has(name),
+                "{name} is missing from the first-run extraction"
+            );
         }
         let prm = |fx: &Particles, name: &str| fx.effects[fx.by_name[name]].jpa.base.prm;
         assert_eq!(prm(&fx, "ms_m_blur3"), [255, 39, 15, 255], "the file's red");
-        fx.retint_to_green(&["ms_m_blur2", "ms_m_blur2sp", "ms_m_blur3"], true, GreenRule::Red);
-        assert_eq!(prm(&fx, "ms_m_blur3"), [39, 255, 15, 255], "green, in memory");
+        fx.retint_to_green(
+            &["ms_m_blur2", "ms_m_blur2sp", "ms_m_blur3"],
+            true,
+            GreenRule::Red,
+        );
+        assert_eq!(
+            prm(&fx, "ms_m_blur3"),
+            [39, 255, 15, 255],
+            "green, in memory"
+        );
         assert_eq!(
             fx.effects[fx.by_name["ms_m_blur2sp"]].jpa.base.prm_table[0],
             [87, 255, 72, 183],

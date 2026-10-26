@@ -15,7 +15,7 @@ use macroquad::models::{Mesh, Vertex, draw_mesh};
 use macroquad::prelude::*;
 use std::path::Path;
 
-const VERTEX: &str = r#"#version 100
+pub const VERTEX: &str = r#"#version 100
 attribute vec3 position;
 attribute vec2 texcoord;
 attribute vec4 color0;
@@ -29,7 +29,7 @@ void main() {
     uv = texcoord;
 }"#;
 
-const FRAGMENT: &str = r#"#version 100
+pub const FRAGMENT: &str = r#"#version 100
 varying lowp vec4 color;
 varying lowp vec2 uv;
 uniform sampler2D Texture;
@@ -46,6 +46,24 @@ pub struct FxLayer {
     refraction: Material,
     scene: Option<Texture2D>,
     wave_masks: Vec<Option<Texture2D>>,
+}
+
+/// Preserve the disc's independent sampler axes, including quadrant textures
+/// assembled by GX_MIRROR. Also used by the coin pickup capture example.
+pub fn upload_texture(t: &libsms_present::particles::FxTexture) -> Texture2D {
+    use libsms_assets::texture::Wrap;
+    use macroquad::miniquad::TextureWrap;
+    let tex = Texture2D::from_rgba8(t.width as u16, t.height as u16, &t.rgba);
+    tex.set_filter(FilterMode::Linear);
+    let wrap = |w| match w {
+        Wrap::Clamp => TextureWrap::Clamp,
+        Wrap::Repeat => TextureWrap::Repeat,
+        Wrap::Mirror => TextureWrap::Mirror,
+    };
+    unsafe { macroquad::window::get_internal_gl() }
+        .quad_context
+        .texture_set_wrap(tex.raw_miniquad_id(), wrap(t.wrap[0]), wrap(t.wrap[1]));
+    tex
 }
 
 impl FxLayer {
@@ -149,8 +167,7 @@ void main() {
             if slot.as_ref().is_some_and(|(v, _)| *v == t.version) {
                 continue;
             }
-            let tex = Texture2D::from_rgba8(t.width as u16, t.height as u16, &t.rgba);
-            tex.set_filter(FilterMode::Linear);
+            let tex = upload_texture(t);
             *slot = Some((t.version, tex));
             let rgba: Vec<u8> = t.rgba.chunks_exact(4).flat_map(|p| [255, 255, 255, p[2]]).collect();
             self.wave_masks[i] = Some(Texture2D::from_rgba8(t.width as u16, t.height as u16, &rgba));

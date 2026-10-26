@@ -7,6 +7,7 @@ Sibling of `../libpikmin`; same shape and rules.
 
 ## Layout
 This folder is the repo root. Sibling folders are read-only references:
+- `../libcommon/`: shared Rust texture wrapping/sampling; a sibling Cargo path dependency compiled into sms.dll.
 - `../sms-main/`: doldecomp/sms decomp, GMSP01 (PAL). READ-ONLY spec. Built against the user's
   PAL disc (`orig/GMSP01/*.iso`, main.dol SHA-1 OK). Game code is 85% fuzzy-matched, player character code is
   96-100% (`src/Player/`, `src/NPC/`).

@@ -4,7 +4,7 @@
 //! `FLD1` a field (`JPABaseField::loadFieldBlock`), `BSP1` the particles' shape and colours
 //! (`JPABaseShape`), `ESP1` their scale, alpha and spin over life (`JPAExtraShape`), `ETX1` the
 //! extra textures (`JPAExTexShape`), `KFA1` emitter keyframes and `SSP1` child particles
-//! (`JPASweepShape`, not read here)
+//! (`JPASweepShape`)
 //! and `TEX1` the textures (`JPATexture`: a name, then a `ResTIMG` at 0x20). Block offsets
 //! below are from each block's start, as the game reads them.
 //!
@@ -291,6 +291,72 @@ impl KeyFrame {
     }
 }
 
+/// `SSP1`, read as `JPASweepShape::JPASweepShape`. Children have their own
+/// geometry/texture and lifetime; TEV and blending come from the base shape.
+#[derive(Debug, Clone, Default)]
+pub struct ChildShape {
+    pub kind: u8,
+    pub dir_type: u8,
+    pub rot_type: u8,
+    pub lifetime: i16,
+    pub rate: i16,
+    pub timing: f32,
+    pub step: u8,
+    pub pos_random: f32,
+    pub base_vel: f32,
+    pub vel_inherit: f32,
+    pub vel_random: f32,
+    pub moment: f32,
+    pub fields: bool,
+    pub flags: u8,
+    pub scale_out: bool,
+    pub alpha_out: bool,
+    pub texture: u8,
+    pub scale_inherit: f32,
+    pub alpha_inherit: f32,
+    pub size_y: f32,
+    pub size_x: f32,
+    pub rotate_speed: f32,
+    pub rotate: bool,
+    pub inherit_flags: u8,
+    pub prm: [u8; 4],
+    pub env: [u8; 4],
+    pub rgb_inherit: f32,
+}
+
+fn read_child(b: Be) -> Result<ChildShape, Error> {
+    let rgba = |o| -> Result<[u8; 4], Error> { Ok(b.bytes(o, 4)?.try_into().unwrap()) };
+    Ok(ChildShape {
+        kind: b.u8(0x10)?,
+        dir_type: b.u8(0x11)?,
+        rot_type: b.u8(0x12)?,
+        lifetime: b.i16(0x14)?,
+        rate: b.i16(0x16)?,
+        timing: fx(b, 0x18)?,
+        step: b.u8(0x1A)?,
+        pos_random: b.f32(0x28)?,
+        base_vel: b.f32(0x2C)?,
+        vel_inherit: fx(b, 0x30)?,
+        vel_random: fx(b, 0x32)?,
+        moment: fx(b, 0x34)?,
+        fields: b.u8(0x36)? != 0,
+        flags: b.u8(0x44)?,
+        scale_out: b.u8(0x45)? != 0,
+        alpha_out: b.u8(0x46)? != 0,
+        texture: b.u8(0x47)?,
+        scale_inherit: fx(b, 0x48)?,
+        alpha_inherit: fx(b, 0x4A)?,
+        size_y: b.f32(0x4C)?,
+        size_x: b.f32(0x50)?,
+        rotate_speed: fx(b, 0x54)?,
+        rotate: b.u8(0x56)? != 0,
+        inherit_flags: b.u8(0x57)?,
+        prm: rgba(0x58)?,
+        env: rgba(0x5C)?,
+        rgb_inherit: fx(b, 0x60)?,
+    })
+}
+
 /// One `.jpa` file.
 #[derive(Debug, Clone)]
 pub struct Jpa {
@@ -300,8 +366,7 @@ pub struct Jpa {
     pub extra: Option<ExtraShape>,
     pub ex_tex: Option<ExTexShape>,
     pub keys: Vec<KeyFrame>,
-    /// An `SSP1` block was present (child particles, not supported).
-    pub has_children: bool,
+    pub child: Option<ChildShape>,
     pub textures: Vec<Texture>,
 }
 
@@ -322,7 +387,7 @@ impl Jpa {
             extra: None,
             ex_tex: None,
             keys: Vec::new(),
-            has_children: false,
+            child: None,
             textures: Vec::new(),
         };
         for _ in 0..blocks {
@@ -339,7 +404,7 @@ impl Jpa {
                 b"ESP1" => jpa.extra = Some(read_extra(b)?),
                 b"ETX1" => jpa.ex_tex = Some(read_ex_tex(b)?),
                 b"KFA1" => jpa.keys.push(read_key(b)?),
-                b"SSP1" => jpa.has_children = true,
+                b"SSP1" => jpa.child = Some(read_child(b)?),
                 b"TEX1" => {
                     let name = b.cstr(0xC)?;
                     jpa.textures.push(read_timg(b.0, 0x20, name)?);

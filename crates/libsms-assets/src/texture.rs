@@ -16,23 +16,8 @@ pub struct Image {
     pub rgba: Vec<u8>,
 }
 
-/// `GXTexWrapMode`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Wrap {
-    Clamp,
-    Repeat,
-    Mirror,
-}
-
-impl Wrap {
-    fn from_gx(v: u8) -> Wrap {
-        match v {
-            1 => Wrap::Repeat,
-            2 => Wrap::Mirror,
-            _ => Wrap::Clamp,
-        }
-    }
-}
+/// Shared GX sampler modes; re-exported to preserve existing asset reader APIs.
+pub use libcommon::texture::Wrap;
 
 /// A `ResTIMG` texture: the image plus its sampler settings.
 #[derive(Debug, Clone)]

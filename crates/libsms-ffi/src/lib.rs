@@ -1744,6 +1744,54 @@ mod tests {
                 fx.vertices > 0,
                 "coin pickup effects did not reach the host"
             );
+            let batches = view::sms_view_fx_batches(mario, &mut count);
+            let batches = std::slice::from_raw_parts(batches, count as usize);
+            let mut mirror = false;
+            let mut child = false;
+            for batch in batches {
+                let mut texture = view::SmsTexture::default();
+                assert_eq!(
+                    view::sms_view_fx_texture(
+                        mario,
+                        batch.texture,
+                        &mut texture,
+                        std::ptr::null_mut(),
+                        0
+                    ),
+                    1
+                );
+                mirror |= texture.wrap_s == 2 && texture.wrap_t == 2;
+                // The parent's two quarter textures mirror; only B's full
+                // child-star texture clamps, and it uses source-alpha blending.
+                child |= texture.wrap_s == 1
+                    && texture.wrap_t == 1
+                    && batch.blend == 1
+                    && batch.vertex_count > 0;
+            }
+            assert!(mirror, "host lost mirrored quadrant samplers");
+            assert!(child, "host lost SSP1 child-star draw");
+            view::with_view(mario, (), |v| {
+                for tick in (4..=56).step_by(4) {
+                    v.view.fx.advance(tick);
+                }
+                v.view.fx.build(Vec3::X, Vec3::Y);
+            });
+            let batches = view::sms_view_fx_batches(mario, &mut count);
+            for batch in std::slice::from_raw_parts(batches, count as usize) {
+                let mut texture = view::SmsTexture::default();
+                view::sms_view_fx_texture(
+                    mario,
+                    batch.texture,
+                    &mut texture,
+                    std::ptr::null_mut(),
+                    0,
+                );
+                assert_eq!(
+                    (texture.wrap_s, texture.wrap_t),
+                    (2, 2),
+                    "child star survived its 14-frame lifetime"
+                );
+            }
             view::sms_view_free(mario);
         }
     }

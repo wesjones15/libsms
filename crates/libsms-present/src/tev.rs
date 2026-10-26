@@ -55,11 +55,7 @@ impl Tex {
 }
 
 pub fn wrap(w: Wrap) -> u8 {
-    match w {
-        Wrap::Repeat => 0,
-        Wrap::Clamp => 1,
-        Wrap::Mirror => 2,
-    }
+    w.to_host()
 }
 
 /// A baked material: RGBA8, rows top first, sampled with the mesh's texture coordinates.
@@ -603,13 +599,8 @@ fn sample(img: &Image, wrap: [u8; 2], u: f32, v: f32) -> C4 {
     if w == 0 || h == 0 {
         return [1.0; 4];
     }
-    let fix = |i: i32, n: i32, mode: u8| match mode {
-        1 => i.clamp(0, n - 1),
-        2 => {
-            let p = i.rem_euclid(2 * n);
-            if p < n { p } else { 2 * n - 1 - p }
-        }
-        _ => i.rem_euclid(n),
+    let fix = |i: i32, n: i32, mode: u8| {
+        Wrap::from_host(mode).index(i64::from(i), n as u32) as i32
     };
     let texel = |x: i32, y: i32| {
         let (x, y) = (fix(x, w, wrap[0]), fix(y, h, wrap[1]));
