@@ -27,6 +27,10 @@ pub const LUIGI_ROD_SHAPE: usize = 3;
 /// How fast the neck swings to the other side, degrees per second: about two frames for the
 /// full +45 to -45, quick because the water visibly breaks while it turns.
 const LUIGI_LEAN_RATE: f32 = 1800.0;
+/// How far off the facing the aim can go before the lean starts to fade out, and where it is
+/// gone: aiming behind, the swivelled head needs no clearance, so the neck is authored again.
+const LUIGI_LEAN_FADE_FROM: f32 = 120.0;
+const LUIGI_LEAN_FADE_TO: f32 = 180.0;
 /// How much lower and further off the wall Luigi hangs than the feet anchor puts him, in
 /// Sunshine decomp cm (`SMS_HANG_OFFSET` in the viewer, default 8,6).
 pub const LUIGI_HANG_OFFSET: (f32, f32) = (8.0, 6.0);
@@ -161,7 +165,7 @@ impl Luigi {
             bck_dir: sms_dir.join("bck"),
             clips: HashMap::new(),
             lean: 0.0,
-            side: -1.0,
+            side: 1.0,
             batches,
             indices,
             vertex_count: uvs.len(),
@@ -221,11 +225,20 @@ impl Luigi {
         {
             self.side = if l.aim_turn > 0 { -1.0 } else { 1.0 };
         }
-        // Always lean fully while spraying (to the side the last aim picked). The RoR2 host's
-        // facing is the movement direction, not the camera, so gating on aim_turn made the neck
-        // drop out whenever Mario kited away from the locked target; the lean exists to clear
-        // his head, and the head swivel already handles where the nozzle points.
-        let target = if spraying { self.side * LUIGI_LEAN_DEG } else { 0.0 };
+        // Aiming behind him, the head swivels the nozzle round past his neck, so the neck has
+        // nothing to clear and goes back to the authored middle; the lean fades out over the
+        // last stretch (`LUIGI_LEAN_FADE_FROM`..`LUIGI_LEAN_FADE_TO`) so a sweep reads as one
+        // motion. It also takes the sign flip at a dead-behind aim out of the picture.
+        let clear = look.filter(|l| l.aimed).map_or(1.0, |l| {
+            let deg = (l.aim_turn as f32 * 180.0 / 32768.0).abs();
+            ((LUIGI_LEAN_FADE_TO - deg) / (LUIGI_LEAN_FADE_TO - LUIGI_LEAN_FADE_FROM))
+                .clamp(0.0, 1.0)
+        });
+        let target = if spraying {
+            self.side * LUIGI_LEAN_DEG * clear
+        } else {
+            0.0
+        };
         let step = LUIGI_LEAN_RATE * dt.max(0.0);
         self.lean += (target - self.lean).clamp(-step, step);
         let leaning = self.lean.abs() > 0.5;
