@@ -333,7 +333,7 @@ pub fn extract_extras(
     out: &Path,
     log: &mut dyn FnMut(&str),
 ) -> Result<usize, ExtractError> {
-    let mut disc = Disc::open(iso)?;
+    let disc = Disc::open(iso)?;
     let mut wrote = 0;
     // The archive read last: several pieces come out of one.
     let mut cache: Option<(&str, rarc::Archive)> = None;
@@ -347,6 +347,7 @@ pub fn extract_extras(
             if cache.as_ref().map(|c| c.0) != Some(arc_name) {
                 cache = disc
                     .read_file(&format!("data/{arc_name}"))
+                    .map_err(ExtractError::from)
                     .and_then(|raw| {
                         let bytes = if yaz0::is_yaz0(&raw) {
                             yaz0::decompress(&raw)?
@@ -391,7 +392,7 @@ pub fn extract_assets(
     out: &Path,
     log: &mut dyn FnMut(&str),
 ) -> Result<Report, ExtractError> {
-    let mut disc = Disc::open(iso)?;
+    let disc = Disc::open(iso)?;
     if !GAME_IDS.iter().any(|(id, _)| *id == disc.game_id) {
         return Err(ExtractError::WrongGame(disc.game_id.clone()));
     }
@@ -571,7 +572,7 @@ pub fn extract_assets(
 
 /// The Game ID of a plain or CISO image, without reading its file system.
 fn game_id_of(path: &Path) -> Option<String> {
-    gcm::open_image(path).ok().and_then(|mut r| {
+    gcm::open_image(path).ok().and_then(|r| {
         let mut id = [0u8; 6];
         r.read_at(0, &mut id).ok()?;
         Some(String::from_utf8_lossy(&id).into_owned())
@@ -635,7 +636,7 @@ fn walk(dir: &Path) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::gcm::tests::{Mem, disc_with};
+    use libcommon::disc::{image_from, synthetic::disc_with};
     use super::*;
 
     /// Yaz0 "compression" that stores everything as literals (valid, just not small).
@@ -673,7 +674,8 @@ mod tests {
         // A disc whose data/mario.szs is a Yaz0-wrapped RARC: read it back through all layers.
         let szs = yaz0_literal(&rarc::tests::sample());
         let img = disc_with(b"GMSP01", &[("data/mario.szs", &szs)]);
-        let mut disc = Disc::from_reader(Box::new(Mem(img))).unwrap();
+        let len = img.len() as u64;
+        let disc = Disc::from_reader(image_from(std::io::Cursor::new(img), len).unwrap()).unwrap();
         let raw = disc.read_file("data/mario.szs").unwrap();
         let arc = rarc::Archive::parse(yaz0::decompress(&raw).unwrap()).unwrap();
         assert_eq!(arc.file("sub/b.bin").unwrap(), [1, 2, 3]);

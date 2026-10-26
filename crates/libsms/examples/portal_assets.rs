@@ -2,7 +2,7 @@
 use libsms::extract::{Disc, rarc::Archive, yaz0};
 fn main() {
     let disc = std::env::args().nth(1).expect("portal_assets <disc.iso>");
-    let mut disc = Disc::open(std::path::Path::new(&disc)).unwrap();
+    let disc = Disc::open(std::path::Path::new(&disc)).unwrap();
     for file in ["data/scene/dolpic1.szs", "data/particle.szs"] {
         let raw = disc.read_file(file).unwrap();
         let raw = if yaz0::is_yaz0(&raw) {

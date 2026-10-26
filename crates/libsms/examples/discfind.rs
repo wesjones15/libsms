@@ -16,7 +16,7 @@ fn main() {
         println!("{n} written");
         return;
     }
-    let mut disc = Disc::open(std::path::Path::new(&a[0])).unwrap();
+    let disc = Disc::open(std::path::Path::new(&a[0])).unwrap();
     let word = a[1].to_lowercase();
     for p in disc.paths_under("data/") {
         if p.to_lowercase().contains(&word) {
