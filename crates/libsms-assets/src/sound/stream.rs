@@ -8,6 +8,7 @@
 
 use crate::Error;
 use crate::reader::Be;
+use libcommon::audio::afc::{History, Overflow, decode_frame4};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StreamHeader {
@@ -44,41 +45,6 @@ impl StreamHeader {
     }
 }
 
-/// `filter_table` (JAIGFrameStream.cpp), in 1/2048ths.
-const FILTER: [[i32; 2]; 16] = [
-    [0, 0],
-    [0x800, 0],
-    [0, 0x800],
-    [0x400, 0x400],
-    [0x1000, -0x800],
-    [0xE00, -0x600],
-    [0xC00, -0x400],
-    [0x1200, -0xA00],
-    [0x1068, -0x8C8],
-    [0x12C0, -0x8FC],
-    [0x1400, -0xC00],
-    [0x800, -0x800],
-    [0x400, -0x400],
-    [-0x400, 0x400],
-    [-0x400, 0],
-    [-0x800, 0],
-];
-
-/// One 9-byte frame of one channel; `h` is (last, before last).
-fn decode_frame(f: &[u8], h: &mut (i16, i16), out: &mut [i16; 16]) {
-    let [c1, c2] = FILTER[(f[0] & 0xF) as usize];
-    let shift = (f[0] >> 4) as u32;
-    for i in 0..16 {
-        let b = f[1 + i / 2];
-        let nib = if i % 2 == 0 { b >> 4 } else { b & 0xF };
-        let code = ((nib as i8) << 4 >> 4) as i32;
-        let s = (code << shift) + ((c1 * h.0 as i32 + c2 * h.1 as i32) >> 11);
-        let s = s as i16;
-        *h = (s, h.0);
-        out[i] = s;
-    }
-}
-
 impl Stream {
     pub fn decode(d: &[u8]) -> Result<Self, Error> {
         let header = StreamHeader::parse(d)?;
@@ -88,11 +54,11 @@ impl Stream {
         let mut stereo = Vec::with_capacity(n * 2);
         match header.format {
             4 => {
-                let (mut hl, mut hr) = ((0, 0), (0, 0));
+                let (mut hl, mut hr) = (History::default(), History::default());
                 let (mut l, mut r) = ([0i16; 16], [0i16; 16]);
                 for f in data.as_chunks::<18>().0 {
-                    decode_frame(&f[..9], &mut hl, &mut l);
-                    decode_frame(&f[9..], &mut hr, &mut r);
+                    decode_frame4(&f[..9], &mut hl, &mut l, Overflow::Wrap);
+                    decode_frame4(&f[9..], &mut hr, &mut r, Overflow::Wrap);
                     for i in 0..16 {
                         stereo.extend_from_slice(&[l[i], r[i]]);
                     }
@@ -119,10 +85,36 @@ mod tests {
     #[test]
     fn decoder_wraps_instead_of_clamping() {
         // Predictor 1 (x2048/2048), scale 12: nibble 7 = 0x7000, then 0x7000 + 0x7000 wraps.
-        let mut h = (0, 0);
+        let mut h = History::default();
         let mut out = [0i16; 16];
-        decode_frame(&[0xC1, 0x77, 0, 0, 0, 0, 0, 0, 0], &mut h, &mut out);
+        decode_frame4(&[0xC1, 0x77, 0, 0, 0, 0, 0, 0, 0], &mut h, &mut out, Overflow::Wrap);
         assert_eq!(out[0], 0x7000);
         assert_eq!(out[1], (0xE000u32 as u16) as i16);
     }
+}
+
+#[cfg(test)]
+mod baseline {
+    use super::super::adpcm::baseline::{fnv, random};
+    use super::*;
+
+    /// Whole-stream output over random data (the CPU decoder wraps), pinned before the
+    /// frame decoder moved to libcommon.
+    #[test]
+    fn decoded_stream_matches_baseline() {
+        let data = random(18 * 40);
+        let n = 16 * 40u32;
+        let mut d = vec![0u8; 0x20];
+        d[0..4].copy_from_slice(&(data.len() as u32).to_be_bytes());
+        d[4..8].copy_from_slice(&n.to_be_bytes());
+        d[10..12].copy_from_slice(&4u16.to_be_bytes());
+        d.extend_from_slice(&data);
+        let s = Stream::decode(&d).unwrap();
+        assert_eq!(s.stereo.len(), n as usize * 2);
+        println!("{:#x}", fnv(&s.stereo));
+        assert_eq!(fnv(&s.stereo), BASELINE);
+    }
+
+    // Recorded from the decoder before it moved to libcommon::audio::afc.
+    const BASELINE: u64 = 0xb248114cd89d3252;
 }
