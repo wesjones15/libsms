@@ -1,5 +1,5 @@
 //! J3DAnmTevRegKey / TRK1, per J3DAnmLoader::readAnmTevReg.
-use crate::{Bmd, Error, reader::Be};
+use crate::{Bmd, Error, reader::{Be, NameTable}};
 use libsms::skeleton::Track;
 
 pub struct Colors {

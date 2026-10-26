@@ -177,7 +177,7 @@ impl InitData {
     pub fn parse(d: &[u8]) -> Result<Self, Error> {
         let r = Be(d);
         let chunk =
-            |off: u32, size: u32| -> Result<&[u8], Error> { r.bytes(off as usize, size as usize) };
+            |off: u32, size: u32| -> Result<&[u8], Error> { Ok(r.bytes(off as usize, size as usize)?) };
         let mut sound_table = None;
         let mut banks = Vec::new();
         let mut wave_banks = Vec::new();

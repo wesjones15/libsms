@@ -7,7 +7,7 @@
 //! entry, frames past a track's end hold its last.
 
 use crate::Error;
-use crate::reader::Be;
+use crate::reader::{Be, NameTable};
 
 #[derive(Debug, Clone)]
 pub struct Track {

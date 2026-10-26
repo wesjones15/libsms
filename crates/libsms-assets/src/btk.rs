@@ -1,5 +1,5 @@
 //! J3DAnmTextureSRTKey (TTK1), per J3DAnmLoader / J3DAnimation on the disc.
-use crate::{Bmd, Error, reader::Be};
+use crate::{Bmd, Error, reader::{Be, NameTable}};
 use glam::{Vec2, Vec3};
 use libsms::skeleton::Track;
 

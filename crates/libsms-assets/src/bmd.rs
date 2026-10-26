@@ -19,7 +19,7 @@
 use glam::{Mat4, Vec2, Vec3, Vec4};
 
 use crate::Error;
-use crate::reader::Be;
+use crate::reader::{Be, NameTable};
 use crate::texture::{Texture, read_timg};
 
 /// GX vertex attributes (`GXAttr`).
