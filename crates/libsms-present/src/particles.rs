@@ -3166,4 +3166,37 @@ mod tests {
         fx.retint_red_to_green(&["smear"], true);
         assert_eq!(base(&fx, "smear").prm, [39, 255, 15, 255]);
     }
+
+    /// The green is not shipped: it comes from the user's own disc. A first run extracts
+    /// `particle.szs` from that disc, and the Luigi retint of those files turns the red green.
+    /// Set `SMS_DISC` to the Sunshine image the mod extracts on first launch.
+    #[test]
+    #[ignore = "requires SMS_DISC and extracts the user's disc into a temporary cache"]
+    fn a_first_run_extraction_holds_the_effects_the_luigi_tint_turns_green() {
+        let disc = std::env::var("SMS_DISC").expect("set SMS_DISC to a Sunshine ISO/GCM");
+        let cache = std::env::temp_dir().join(format!("sms-smear-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&cache);
+        struct Cleanup(std::path::PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _cleanup = Cleanup(cache.clone());
+        libsms::extract::extract_assets(std::path::Path::new(&disc), &cache, &mut |_| {})
+            .expect("extract the disc");
+        let mut fx = Particles::load(&cache, &["ms_m_blur2", "ms_m_blur2sp", "ms_m_blur3"]);
+        for name in ["ms_m_blur2", "ms_m_blur2sp", "ms_m_blur3"] {
+            assert!(fx.has(name), "{name} is missing from the first-run extraction");
+        }
+        let prm = |fx: &Particles, name: &str| fx.effects[fx.by_name[name]].jpa.base.prm;
+        assert_eq!(prm(&fx, "ms_m_blur3"), [255, 39, 15, 255], "the file's red");
+        fx.retint_red_to_green(&["ms_m_blur2", "ms_m_blur2sp", "ms_m_blur3"], true);
+        assert_eq!(prm(&fx, "ms_m_blur3"), [39, 255, 15, 255], "green, in memory");
+        assert_eq!(
+            fx.effects[fx.by_name["ms_m_blur2sp"]].jpa.base.prm_table[0],
+            [87, 255, 72, 183],
+            "the spark's red key is green too"
+        );
+    }
 }
