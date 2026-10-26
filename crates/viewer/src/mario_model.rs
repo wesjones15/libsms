@@ -23,8 +23,16 @@ pub(crate) struct Part {
 
 impl Part {
     pub(crate) fn load(r: &mut Renderer, dir: &Path, rel: &str) -> Result<Part, String> {
+        Self::load_edited(r, dir, rel, |_| {})
+    }
+
+    /// Like `load`, but `edit` changes the parsed model (a texture or a material's colour
+    /// register, as the NPC loaders do at runtime) before its textures go to the GPU.
+    pub(crate) fn load_edited(r: &mut Renderer, dir: &Path, rel: &str,
+        edit: impl FnOnce(&mut Bmd)) -> Result<Part, String> {
         let data = std::fs::read(dir.join(rel)).map_err(|e| format!("{rel}: {e}"))?;
-        let bmd = Bmd::parse(&data).map_err(|e| format!("{rel}: {e}"))?;
+        let mut bmd = Bmd::parse(&data).map_err(|e| format!("{rel}: {e}"))?;
+        edit(&mut bmd);
         let bind = bmd.bind_world();
         let model = r.load(bmd).map_err(|e| format!("{rel}: {e}"))?;
         Ok(Part { model, bind })

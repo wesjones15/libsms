@@ -27,6 +27,7 @@ mod luigi;
 mod mario_model;
 mod melee_peach;
 mod peach;
+mod pianta;
 mod props;
 mod stu;
 mod water;
@@ -813,7 +814,9 @@ fn window_conf() -> Conf {
     // `SMS_SQUARE=1`: a square window, for skill-portrait reference captures.
     let square = std::env::var_os("SMS_SQUARE").is_some();
     Conf {
-        window_title: if std::env::args().any(|a| a.starts_with("--peach")) {
+        window_title: if std::env::args().any(|a| a == "--pianta") {
+            "Pianta — Mario movement demo".to_owned()
+        } else if std::env::args().any(|a| a.starts_with("--peach")) {
             "Sunshine Peach — Mario movement demo".to_owned()
         } else { "libsms viewer".to_owned() },
         window_width: if square { 720 } else { 1280 },
@@ -876,6 +879,10 @@ async fn main() {
     let use_peach = compare_peach || args.iter().any(|s| s == "--peach");
     let use_melee_peach = compare_peach || args.iter().any(|s| s == "--peach-melee");
     let mut show_melee_peach = args.iter().any(|s| s == "--peach-melee");
+    // `--pianta`: the male Pianta, the female Pianta and Piantissimo wearing Mario's motion
+    // (Tab cycles; `SMS_PIANTA=0|1|2` picks the first).
+    let use_pianta = args.iter().any(|s| s == "--pianta");
+    let mut pianta_index: usize = std::env::var("SMS_PIANTA").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
     let luigi_beside = std::env::args().any(|s| s == "--luigi-beside");
     // Luigi's voice: Mario's, pitched up with the lines' length kept (the Melee trick).
     // `SMS_VOICE_PITCH=<ratio>` overrides it; 1.0 leaves Mario's voice alone.
@@ -895,7 +902,7 @@ async fn main() {
             .ok()
     });
     // Luigi owns a FLUDD of his own; it follows his chest, not Mario's.
-    let mut luigi_fludd = if use_luigi || use_peach || use_melee_peach {
+    let mut luigi_fludd = if use_luigi || use_peach || use_melee_peach || use_pianta {
         assets.as_ref().and_then(|a| {
             fludd::Fludd::load(&a.dir)
                 .map_err(|e| eprintln!("Luigi's FLUDD: {e}"))
@@ -926,6 +933,13 @@ async fn main() {
         Some(melee_peach::MeleePeach::load(&cache,&rig.as_ref().expect("Mario rig").skeleton)
             .expect("load Melee Peach's exact model"))
     } else { None };
+    let mut pianta_models = if use_pianta {
+        let a = assets.as_ref().expect("Pianta demo requires the Sunshine assets");
+        pianta::ensure_assets(&a.dir, &disc_dirs).expect("extract Piantissimo from your Sunshine disc");
+        pianta::Pianta::load_all(&a.dir, &rig.as_ref().expect("Mario rig").skeleton)
+            .expect("load the Pianta models")
+    } else { Vec::new() };
+    pianta_index = pianta_index.min(pianta_models.len().saturating_sub(1));
     let capture_pose = std::env::var("SMS_POSE").ok().map(|p| {
         let (name, frame) = p.split_once(',').expect("SMS_POSE=clip,frame");
         let frame = frame.parse::<f32>().expect("SMS_POSE frame must be a number");
@@ -1069,6 +1083,7 @@ async fn main() {
     loop {
         if is_key_pressed(KeyCode::Escape) { break; }
         if compare_peach && is_key_pressed(KeyCode::Tab) { show_melee_peach = !show_melee_peach; }
+        if use_pianta && is_key_pressed(KeyCode::Tab) { pianta_index = (pianta_index + 1) % pianta_models.len(); }
         let dt = if portrait.is_some() && std::env::var_os("SMS_SHOT").is_some() {
             1.0 / 120.0
         } else { get_frame_time().min(0.1) };
@@ -1396,7 +1411,7 @@ async fn main() {
                 let mut muzzle_mtx: Vec<::glam::Mat4> = if portrait.as_deref() == Some("air") {
                     model.draw_nozzle_group(view, proj);
                     Vec::new()
-                } else if (use_luigi && !luigi_beside) || use_peach || use_melee_peach {
+                } else if (use_luigi && !luigi_beside) || use_peach || use_melee_peach || use_pianta {
                     Vec::new()
                 } else {
                     let mario_root = if luigi_beside {
@@ -1422,6 +1437,15 @@ async fn main() {
                         let deployed = m.fludd.as_ref().is_some_and(|f| f.housed < 0.5);
                         muzzle_mtx = f.draw(m.fludd_look(), deployed, true, dt,
                             peach.chest(&world), root, view, proj, (true, true));
+                    }
+                }
+                if let Some(pianta) = pianta_models.get_mut(pianta_index) {
+                    let world = pianta.pose(&joints, model.lowest(&joints));
+                    pianta.draw(&world, root, view, proj);
+                    if let Some(f) = &mut luigi_fludd {
+                        let deployed = m.fludd.as_ref().is_some_and(|f| f.housed < 0.5);
+                        muzzle_mtx = f.draw(m.fludd_look(), deployed, true, dt,
+                            pianta.chest(&world), root, view, proj, (true, true));
                     }
                 }
                 if let Some(l) = &mut luigi_model {
@@ -1579,6 +1603,12 @@ async fn main() {
         // `SMS_SHOT=<png>` saves a screenshot after `SMS_SHOT_FRAME` frames (default 90) and
         // quits; for checking the renderer without a person at the window.
         frame_no += 1;
+        if let Some(p) = pianta_models.get(pianta_index) {
+            let pose = std::env::var("SMS_POSE").unwrap_or_else(|_| format!("{}, {:.1}", sim.mario.anim.clip, sim.mario.anim.frame));
+            draw_rectangle(0.0, screen_height() - 88.0, screen_width(), 24.0, Color::new(0.04,0.04,0.08,0.85));
+            draw_text(&format!("{} | Mario: {pose} | Tab: next | Esc: quit", p.label),
+                12.0, screen_height() - 71.0, 16.0, WHITE);
+        }
         if use_peach || use_melee_peach {
             let pose = std::env::var("SMS_POSE").unwrap_or_else(|_| format!("{}, {:.1}", sim.mario.anim.clip, sim.mario.anim.frame));
             draw_rectangle(0.0, screen_height() - 88.0, screen_width(), 24.0, Color::new(0.04,0.04,0.08,0.85));

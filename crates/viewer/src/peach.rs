@@ -22,7 +22,13 @@ pub struct Peach {
 /// Uses the existing ISO/Yaz0/RARC readers; data remains in the ignored local cache.
 pub fn ensure_assets(dir: &Path, disc_dirs: &[std::path::PathBuf]) -> Result<(), String> {
     let required = ["peach_model.bmd", "peach_hair_normal.bmd", "peach_hand1_l.bmd", "peach_hand1_r.bmd"];
-    let dest = dir.join("npc/peach");
+    extract_from_stage(&dir.join("npc/peach"), disc_dirs, "airport0.szs", "peach/", &required)
+}
+
+/// Copy `prefix`'s files out of a stage archive on the user's disc into the ignored cache
+/// at `dest`; skipped when `required` is already there.
+pub fn extract_from_stage(dest: &Path, disc_dirs: &[std::path::PathBuf], archive_name: &str,
+    prefix: &str, required: &[&str]) -> Result<(), String> {
     if required.iter().all(|p| dest.join(p).is_file()) { return Ok(()); }
     let mut candidates = Vec::new();
     if let Some(p) = std::env::var_os("SMS_DISC") { candidates.push(p.into()); }
@@ -38,26 +44,27 @@ pub fn ensure_assets(dir: &Path, disc_dirs: &[std::path::PathBuf]) -> Result<(),
     for path in candidates {
         let Ok(mut disc) = libsms::extract::Disc::open(&path) else { continue };
         if !disc.game_id.starts_with("GMS") { continue }
-        let Some(arc) = disc.paths_under("").into_iter().find(|p| p.ends_with("/airport0.szs")) else { continue };
+        let suffix = format!("/{archive_name}");
+        let Some(arc) = disc.paths_under("").into_iter().find(|p| p.ends_with(&suffix)) else { continue };
         let raw = disc.read_file(&arc).map_err(|e| e.to_string())?;
         let raw = if libsms::extract::yaz0::is_yaz0(&raw) {
             libsms::extract::yaz0::decompress(&raw).map_err(|e| e.to_string())?
         } else { raw };
         let archive = libsms::extract::rarc::Archive::parse(raw).map_err(|e| e.to_string())?;
-        for (rel, bytes) in archive.under("peach/") {
+        for (rel, bytes) in archive.under(prefix) {
             if !Path::new(rel).components().all(|c| matches!(c, std::path::Component::Normal(_))) {
-                return Err("invalid Peach archive path".into());
+                return Err("invalid archive path".into());
             }
             let output = dest.join(rel);
             std::fs::create_dir_all(output.parent().unwrap()).map_err(|e| e.to_string())?;
             std::fs::write(output, bytes).map_err(|e| e.to_string())?;
         }
         if required.iter().all(|p| dest.join(p).is_file()) {
-            eprintln!("Peach: {}:{} -> {} (TPeachManager::createModelData; 26 joints)", path.display(), arc, dest.display());
+            eprintln!("extracted {}:{}{} -> {}", path.display(), arc, prefix, dest.display());
             return Ok(());
         }
     }
-    Err("Peach needs your Sunshine ISO (pass --iso <path>) to extract airport0.szs".into())
+    Err(format!("needs your Sunshine ISO (pass --iso <path>) to extract {archive_name}"))
 }
 
 impl Peach {
