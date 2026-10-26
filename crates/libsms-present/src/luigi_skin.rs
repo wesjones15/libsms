@@ -161,7 +161,7 @@ impl Luigi {
             bck_dir: sms_dir.join("bck"),
             clips: HashMap::new(),
             lean: 0.0,
-            side: 1.0,
+            side: -1.0,
             batches,
             indices,
             vertex_count: uvs.len(),
