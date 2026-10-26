@@ -25,6 +25,8 @@ mod fx;
 mod j3d;
 mod luigi;
 mod mario_model;
+mod melee_peach;
+mod peach;
 mod props;
 mod stu;
 mod water;
@@ -811,7 +813,9 @@ fn window_conf() -> Conf {
     // `SMS_SQUARE=1`: a square window, for skill-portrait reference captures.
     let square = std::env::var_os("SMS_SQUARE").is_some();
     Conf {
-        window_title: "libsms viewer".to_owned(),
+        window_title: if std::env::args().any(|a| a.starts_with("--peach")) {
+            "Sunshine Peach — Mario movement demo".to_owned()
+        } else { "libsms viewer".to_owned() },
         window_width: if square { 720 } else { 1280 },
         window_height: 720,
         ..Default::default()
@@ -868,6 +872,10 @@ async fn main() {
         .and_then(|a| libsms_present::Audio::start(&a.dir, true));
     // `--luigi`: draw Luigi with his own FLUDD instead of Mario.
     let use_luigi = std::env::args().any(|s| s == "--luigi" || s == "--luigi-beside");
+    let compare_peach = args.iter().any(|s| s == "--peach-compare");
+    let use_peach = compare_peach || args.iter().any(|s| s == "--peach");
+    let use_melee_peach = compare_peach || args.iter().any(|s| s == "--peach-melee");
+    let mut show_melee_peach = args.iter().any(|s| s == "--peach-melee");
     let luigi_beside = std::env::args().any(|s| s == "--luigi-beside");
     // Luigi's voice: Mario's, pitched up with the lines' length kept (the Melee trick).
     // `SMS_VOICE_PITCH=<ratio>` overrides it; 1.0 leaves Mario's voice alone.
@@ -887,7 +895,7 @@ async fn main() {
             .ok()
     });
     // Luigi owns a FLUDD of his own; it follows his chest, not Mario's.
-    let mut luigi_fludd = if use_luigi {
+    let mut luigi_fludd = if use_luigi || use_peach || use_melee_peach {
         assets.as_ref().and_then(|a| {
             fludd::Fludd::load(&a.dir)
                 .map_err(|e| eprintln!("Luigi's FLUDD: {e}"))
@@ -906,6 +914,24 @@ async fn main() {
     } else {
         None
     };
+    let mut peach_model = if use_peach {
+        let a = assets.as_ref().expect("Peach demo requires the Sunshine assets");
+        peach::ensure_assets(&a.dir, &disc_dirs).expect("extract Peach from your Sunshine disc");
+        Some(peach::Peach::load(&a.dir, &rig.as_ref().expect("Mario rig").skeleton)
+            .expect("load the exact Sunshine Peach model"))
+    } else { None };
+    let mut melee_peach_model = if use_melee_peach {
+        let a = assets.as_ref().expect("Peach demo requires Sunshine assets");
+        let cache = melee_peach::ensure_assets(&a.dir, &disc_dirs).expect("extract Melee Peach from your disc");
+        Some(melee_peach::MeleePeach::load(&cache,&rig.as_ref().expect("Mario rig").skeleton)
+            .expect("load Melee Peach's exact model"))
+    } else { None };
+    let capture_pose = std::env::var("SMS_POSE").ok().map(|p| {
+        let (name, frame) = p.split_once(',').expect("SMS_POSE=clip,frame");
+        let frame = frame.parse::<f32>().expect("SMS_POSE frame must be a number");
+        assert!(rig.as_ref().is_some_and(|r| r.clips.get(name).is_some()), "unknown SMS_POSE clip: {name}");
+        (name.to_string(), frame)
+    });
     let mut yoshi_model = assets.as_ref().and_then(|a| {
         yoshi_model::YoshiModel::load(&a.dir)
             .map_err(|e| eprintln!("Yoshi's model: {e}"))
@@ -1041,6 +1067,8 @@ async fn main() {
         .unwrap_or((8.0, 6.0));
 
     loop {
+        if is_key_pressed(KeyCode::Escape) { break; }
+        if compare_peach && is_key_pressed(KeyCode::Tab) { show_melee_peach = !show_melee_peach; }
         let dt = if portrait.is_some() && std::env::var_os("SMS_SHOT").is_some() {
             1.0 / 120.0
         } else { get_frame_time().min(0.1) };
@@ -1341,9 +1369,16 @@ async fn main() {
                 let upper = m
                     .upper_layer()
                     .and_then(|(c, f)| Some((r.clips.get(c)?, f, r.skeleton.find("jnt_chest")?)));
-                let joints = r
+                let mut joints = r
                     .skeleton
                     .pose_layered(r.clips.get(m.anim.clip).map(|c| (c, m.anim.frame)), upper);
+                // Deterministic multi-frame retarget captures; ordinary play uses the sim's pose.
+                if let Some((name, frame)) = &capture_pose {
+                    joints = r.skeleton.pose(r.clips.get(name).expect("validated capture clip"), *frame);
+                }
+                let pose_name = capture_pose.as_ref().map_or(m.anim.clip,|(n,_)|n.as_str());
+                let pose_frame = capture_pose.as_ref().map_or(m.anim.frame,|(_,f)|*f);
+                let pose_phase = r.clips.get(pose_name).map_or(0.,|c|pose_frame.rem_euclid(c.frames.max(1.))/c.frames.max(1.));
                 let p = mq(m.prev_pos.lerp(m.pos, sim.alpha()));
                 let yaw = m.model_yaw as f32 * std::f32::consts::PI / 32768.0;
                 let root = mario_model::root_matrix(::glam::Vec3::new(p.x, p.y, p.z), yaw, S);
@@ -1361,7 +1396,7 @@ async fn main() {
                 let mut muzzle_mtx: Vec<::glam::Mat4> = if portrait.as_deref() == Some("air") {
                     model.draw_nozzle_group(view, proj);
                     Vec::new()
-                } else if use_luigi && !luigi_beside {
+                } else if (use_luigi && !luigi_beside) || use_peach || use_melee_peach {
                     Vec::new()
                 } else {
                     let mario_root = if luigi_beside {
@@ -1371,6 +1406,24 @@ async fn main() {
                     };
                     model.draw(&sim, &joints, mario_root, view, proj, get_time() as f32)
                 };
+                if let Some(peach) = peach_model.as_mut().filter(|_| !show_melee_peach) {
+                    let world = peach.pose(&joints, model.lowest(&joints),pose_name,pose_phase);
+                    peach.draw(&world, root, view, proj, get_time() as f32);
+                    if let Some(f) = &mut luigi_fludd {
+                        let deployed = m.fludd.as_ref().is_some_and(|f| f.housed < 0.5);
+                        muzzle_mtx = f.draw(m.fludd_look(), deployed, true, dt,
+                            peach.chest(&world), root, view, proj, (true, true));
+                    }
+                }
+                if let Some(peach) = melee_peach_model.as_mut().filter(|_| show_melee_peach) {
+                    let world = peach.pose(&joints, model.lowest(&joints),pose_name,pose_phase);
+                    peach.draw(&world, root, view, proj);
+                    if let Some(f) = &mut luigi_fludd {
+                        let deployed = m.fludd.as_ref().is_some_and(|f| f.housed < 0.5);
+                        muzzle_mtx = f.draw(m.fludd_look(), deployed, true, dt,
+                            peach.chest(&world), root, view, proj, (true, true));
+                    }
+                }
                 if let Some(l) = &mut luigi_model {
                     let name = sim.mario.anim.clip;
                     let frame = sim.mario.anim.frame;
@@ -1526,6 +1579,14 @@ async fn main() {
         // `SMS_SHOT=<png>` saves a screenshot after `SMS_SHOT_FRAME` frames (default 90) and
         // quits; for checking the renderer without a person at the window.
         frame_no += 1;
+        if use_peach || use_melee_peach {
+            let pose = std::env::var("SMS_POSE").unwrap_or_else(|_| format!("{}, {:.1}", sim.mario.anim.clip, sim.mario.anim.frame));
+            draw_rectangle(0.0, screen_height() - 88.0, screen_width(), 24.0, Color::new(0.04,0.04,0.08,0.85));
+            let identity = if show_melee_peach { "MELEE PEACH | PlPeNr.dat:PlyPeach5K_Share_joint | ftPeach/ftpeach.c" }
+                else { "SUNSHINE PEACH | 26 joints | airport0.szs:peach/peach_model.bmd | TPeachManager::createModelData" };
+            draw_text(&format!("{identity} | Mario: {pose} | Tab: swap Peach | Esc: quit"),
+                12.0, screen_height() - 71.0, 16.0, WHITE);
+        }
         if let Ok(path) = std::env::var("SMS_SHOT") {
             if std::env::var_os("SMS_WATER_SPEED").is_some() {
                 draw_rectangle(0.0, screen_height() - 60.0, screen_width(), 60.0, Color::new(0.04, 0.05, 0.08, 0.95));

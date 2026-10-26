@@ -56,11 +56,15 @@ struct GBatch {
     inverse: Vec<Mat4>,
 }
 
-pub struct Luigi {
+pub struct HsdRenderer {
     pipe: Pipeline,
     batches: Vec<GBatch>,
     scratch: Vec<f32>,
-    model: Model,
+    pub model: Model,
+}
+
+pub struct Luigi {
+    renderer: HsdRenderer,
     rig: sms::Rig,
     retarget: sms::Retarget,
     /// Mario's `jnt_chest` frame in Luigi's `WaistN` frame: FLUDD's chest transform.
@@ -76,13 +80,85 @@ impl Luigi {
             .map_err(|e| e.to_string())?;
         let rig = sms::Rig::from_file(&sms_dir.join("bmd/ma_mdl1.bmd")).map_err(|e| e.to_string())?;
         let retarget = sms::Retarget::new(&model, &rig);
-        // `SMS_LG_ALLPARTS=1` draws every DObj alternative (for checking what is hidden).
-        let all_parts = std::env::var_os("SMS_LG_ALLPARTS").is_some();
         // FLUDD rides the chest: the retarget maps `jnt_chest` (14) onto `WaistN` (5), so its
         // bind rotations give the frame that carries FLUDD's Mario-space base to Luigi.
         let chest_align = Mat4::from_mat3(
             retarget.target_bind()[5].transpose() * retarget.source_bind()[14],
         );
+        let renderer = HsdRenderer::new(model)?;
+        Ok(Luigi {
+            renderer,
+            rig,
+            retarget,
+            chest_align,
+            bck_dir: sms_dir.join("bck"),
+            clips: HashMap::new(),
+        })
+    }
+
+    pub fn draw(&mut self, world: &[Mat4], root: Mat4, view: Mat4, proj: Mat4) {
+        self.renderer.draw(world, root, view, proj);
+    }
+
+    /// Luigi.s joint matrices for a Sunshine clip (`wait`, `run1`, `jump`...).
+    pub fn pose(&mut self, clip_name: &str, frame: f32) -> Option<Vec<Mat4>> {
+        if !self.clips.contains_key(clip_name) {
+            let path = self.bck_dir.join(format!("ma_{clip_name}.bck"));
+            let clip = sms::Clip::from_file(&path).ok()?;
+            self.clips.insert(clip_name.to_string(), clip);
+        }
+        let clip = self.clips.get(clip_name)?;
+        Some(self.retarget.pose(&self.renderer.model, &self.rig, clip, frame))
+    }
+
+    /// The lowest skinned point of a pose from [`pose`], in Luigi's model units.
+    pub fn lowest(&self, world: &[Mat4]) -> f32 {
+        let mut low = f32::INFINITY;
+        for i in 0..self.renderer.model.batches.len() {
+            for (p, _) in self.renderer.model.skin(i, world) {
+                low = low.min(p.y);
+            }
+        }
+        low
+    }
+
+    pub fn bind_world(&self) -> Vec<Mat4> {
+        self.renderer.model.bind_world()
+    }
+
+    /// Where FLUDD straps on: `WaistN` turned into Mario's chest frame and scaled to Sunshine's
+    /// decomp units (Melee models are a tenth of one).
+    pub fn chest(&self, world: &[Mat4]) -> Mat4 {
+        let Some(chest) = world.get(5).copied() else {
+            return Mat4::IDENTITY;
+        };
+        let (_, r, t) = (chest * self.chest_align).to_scale_rotation_translation();
+        Mat4::from_rotation_translation(r, t * 10.0)
+    }
+
+    pub fn joint_count(&self) -> usize {
+        self.renderer.model.joints.len()
+    }
+}
+
+pub fn melee_dir() -> std::path::PathBuf {
+    std::env::var("SSBM_ASSETS")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("../libssbm/assets"))
+}
+
+
+
+
+
+
+
+
+
+
+impl HsdRenderer {
+    pub fn new(model: Model) -> Result<Self, String> {
+        let all_parts = std::env::var_os("SMS_LG_ALLPARTS").is_some();
         let ctx = ctx();
         let shader = ctx
             .new_shader(
@@ -158,17 +234,7 @@ impl Luigi {
                 inverse: inverse.clone(),
             });
         }
-        Ok(Luigi {
-            pipe,
-            batches,
-            scratch,
-            model,
-            rig,
-            retarget,
-            chest_align,
-            bck_dir: sms_dir.join("bck"),
-            clips: HashMap::new(),
-        })
+        Ok(Self { pipe, batches, scratch, model })
     }
 
     /// `world` is one model-space matrix per Luigi joint; `root` maps model space to the scene.
@@ -223,58 +289,4 @@ impl Luigi {
         ctx.end_render_pass();
     }
 
-    /// Luigi.s joint matrices for a Sunshine clip (`wait`, `run1`, `jump`...).
-    pub fn pose(&mut self, clip_name: &str, frame: f32) -> Option<Vec<Mat4>> {
-        if !self.clips.contains_key(clip_name) {
-            let path = self.bck_dir.join(format!("ma_{clip_name}.bck"));
-            let clip = sms::Clip::from_file(&path).ok()?;
-            self.clips.insert(clip_name.to_string(), clip);
-        }
-        let clip = self.clips.get(clip_name)?;
-        Some(self.retarget.pose(&self.model, &self.rig, clip, frame))
-    }
-
-    /// The lowest skinned point of a pose from [`pose`], in Luigi's model units.
-    pub fn lowest(&self, world: &[Mat4]) -> f32 {
-        let mut low = f32::INFINITY;
-        for i in 0..self.model.batches.len() {
-            for (p, _) in self.model.skin(i, world) {
-                low = low.min(p.y);
-            }
-        }
-        low
-    }
-
-    pub fn bind_world(&self) -> Vec<Mat4> {
-        self.model.bind_world()
-    }
-
-    /// Where FLUDD straps on: `WaistN` turned into Mario's chest frame and scaled to Sunshine's
-    /// decomp units (Melee models are a tenth of one).
-    pub fn chest(&self, world: &[Mat4]) -> Mat4 {
-        let Some(chest) = world.get(5).copied() else {
-            return Mat4::IDENTITY;
-        };
-        let (_, r, t) = (chest * self.chest_align).to_scale_rotation_translation();
-        Mat4::from_rotation_translation(r, t * 10.0)
-    }
-
-    pub fn joint_count(&self) -> usize {
-        self.model.joints.len()
-    }
 }
-
-pub fn melee_dir() -> std::path::PathBuf {
-    std::env::var("SSBM_ASSETS")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| std::path::PathBuf::from("../libssbm/assets"))
-}
-
-
-
-
-
-
-
-
-

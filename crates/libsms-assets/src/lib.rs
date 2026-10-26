@@ -19,6 +19,8 @@ pub mod brk;
 pub mod jpa;
 pub mod mario;
 pub mod pose;
+pub mod retarget;
+pub mod dress;
 mod reader;
 pub mod sound;
 pub mod texture;
