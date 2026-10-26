@@ -14,7 +14,13 @@ fn main() {
     } else {
         Look::Mario
     };
-    let v = View::load_look(&dir, look).expect("models");
+    let mut v = View::load_look(&dir, look).expect("models");
+    // `SKINS=1` also bakes the same-rig skins' bodies (Piantissimo).
+    if std::env::var_os("SKINS").is_some() {
+        for skin in libsms_present::view::Skin::ALL {
+            println!("skin {skin:?}: loaded {}", v.load_skin(skin, None));
+        }
+    }
     for (mi, m) in v.models.iter().enumerate() {
         for (bi, b) in m.batches.iter().enumerate() {
             let mat = &m.bmd.materials[b.material];

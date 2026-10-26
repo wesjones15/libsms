@@ -287,7 +287,8 @@ struct Shine {
     ticks: f32,
 }
 
-/// Which body the view draws.
+/// Which body the view draws. The ids (0, 1, 2) are the host ABI's (`sms_view_skin`); a new
+/// skin appends one. A skin's body is one of two kinds ([`SkinBody`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Skin {
     #[default]
@@ -295,7 +296,49 @@ pub enum Skin {
     /// Luigi's HSD mesh (Melee assets), posed by the same Sunshine clips through the retarget,
     /// with his own FLUDD.
     Luigi,
+    /// Piantissimo's `monteman_model.bmd`: Mario's 29 joints in Mario's order, so Mario's own
+    /// pose drives it as it does in the game (`TEnemyMario`, enemyMario.cpp), with Mario's FLUDD.
+    Piantissimo,
 }
+
+/// How a skin gets its body, so adding one is a row and not a code path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SkinBody {
+    /// Mario's own J3D body.
+    Mario,
+    /// A J3D model on Mario's exact skeleton (same joints, same parents): it is drawn instead
+    /// of `ma_mdl1.bmd` with Mario's joint matrices, no retarget and no cap or hands (the
+    /// model carries them). The file is under the Sunshine assets folder.
+    SameRig(&'static str),
+    /// A model from the Melee cache posed through the retarget ([`Luigi`]).
+    Hsd,
+}
+
+impl Skin {
+    /// Every skin, in ABI order.
+    pub const ALL: [Skin; 3] = [Skin::Mario, Skin::Luigi, Skin::Piantissimo];
+
+    pub const fn id(self) -> u32 {
+        self as u32
+    }
+
+    /// The skin for a host's id; anything unknown is Mario.
+    pub fn from_id(id: u32) -> Skin {
+        Skin::ALL.get(id as usize).copied().unwrap_or(Skin::Mario)
+    }
+
+    pub const fn body(self) -> SkinBody {
+        match self {
+            Skin::Mario => SkinBody::Mario,
+            Skin::Luigi => SkinBody::Hsd,
+            // `OPTIONAL_EXTRACTS`: mamma4.szs:map/map/pad/monteman_model.bmd.
+            Skin::Piantissimo => SkinBody::SameRig("npc/monteman/monteman_model.bmd"),
+        }
+    }
+}
+
+/// Texture-cache keys for same-rig bodies sit above any model index.
+const RIG_KEY_BASE: u32 = 0x1000;
 
 pub struct View {
     pub models: Vec<Model>,
@@ -363,6 +406,8 @@ pub struct View {
     pub texture_ids: Vec<i32>,
     /// Luigi's HSD mesh, when the Melee cache was loaded ([`Self::set_luigi`]).
     pub luigi: Option<Luigi>,
+    /// Same-rig skin bodies loaded into [`Self::models`] ([`Self::load_skin`]): skin, model.
+    rig_bodies: Vec<(Skin, u32)>,
     /// The Sunshine assets folder, kept for loading Luigi's rig and clips later.
     assets_dir: PathBuf,
 }
@@ -716,7 +761,8 @@ fn build_batches(bmd: Bmd, batches: Vec<Batch>, replace: &dyn Fn(usize, &str) ->
 /// (konst 0's alpha is the dirt level, `TMario::addDirty`).
 fn base_inputs(model: u32) -> Inputs {
     Inputs {
-        k0_alpha: matches!(model, models::BODY | models::CAP | 1..=4).then_some(0),
+        k0_alpha: (matches!(model, models::BODY | models::CAP | 1..=4) || model >= RIG_KEY_BASE)
+            .then_some(0),
         ..Inputs::default()
     }
 }
@@ -1022,6 +1068,7 @@ impl View {
             colors: Vec::new(),
             texture_ids: Vec::new(),
             luigi: None,
+            rig_bodies: Vec::new(),
             assets_dir: dir.to_path_buf(),
         })
     }
@@ -1102,6 +1149,7 @@ impl View {
             colors,
             texture_ids,
             luigi: None,
+            rig_bodies: Vec::new(),
             assets_dir: PathBuf::new(),
         })
     }
@@ -1191,6 +1239,7 @@ impl View {
             colors: Vec::new(),
             texture_ids: Vec::new(),
             luigi: None,
+            rig_bodies: Vec::new(),
             assets_dir: PathBuf::new(),
         };
         view.update_shine(0.0, Vec3::ZERO, 0, 0, 0.0, 1.0, false);
@@ -1323,6 +1372,45 @@ impl View {
     /// Loads Luigi's HSD mesh from the Melee cache (alongside the Sunshine assets this view was
     /// built from), making [`Skin::Luigi`] drawable. False when the cache is incomplete, so a
     /// host can offer the skin only then.
+    /// Makes `skin` drawable: Luigi reads the Melee cache at `melee_dir`; a same-rig skin loads
+    /// its model from the Sunshine assets (`melee_dir` unused). False when its files are
+    /// missing or its rig is not Mario's, so a host offers the skin only then.
+    pub fn load_skin(&mut self, skin: Skin, melee_dir: Option<&Path>) -> bool {
+        match skin.body() {
+            SkinBody::Mario => true,
+            SkinBody::Hsd => melee_dir.is_some_and(|d| self.set_luigi(d)),
+            SkinBody::SameRig(rel) => {
+                if self.rig_bodies.iter().any(|(s, _)| *s == skin) {
+                    return true;
+                }
+                let loaded = std::fs::read(self.assets_dir.join(rel))
+                    .ok()
+                    .and_then(|data| libsms::Skeleton::from_bmd(&data))
+                    .filter(|rig| rig.parents == self.skeleton.parents)
+                    .and_then(|_| load_bmd(&self.assets_dir, rel).ok())
+                    .and_then(|bmd| {
+                        build(bmd, &|_, _| None, RIG_KEY_BASE + skin.id(), &mut self.textures).ok()
+                    });
+                match loaded {
+                    Some(model) => {
+                        self.models.push(model);
+                        self.rig_bodies.push((skin, self.models.len() as u32 - 1));
+                        true
+                    }
+                    None => false,
+                }
+            }
+        }
+    }
+
+    /// The model a same-rig skin draws as its body, when that skin is current and loaded.
+    fn rig_body(&self) -> Option<(u32, u32)> {
+        self.rig_bodies
+            .iter()
+            .find(|(s, _)| *s == self.skin)
+            .map(|&(s, m)| (m, RIG_KEY_BASE + s.id()))
+    }
+
     pub fn set_luigi(&mut self, melee_dir: &Path) -> bool {
         match Luigi::load(melee_dir, &self.assets_dir, &mut self.textures) {
             Ok(luigi) => {
@@ -1496,7 +1584,11 @@ impl View {
         // the frame rod (shape 3) hides while it is swung out. The game's Mario keeps the
         // authored neck.
         let mut fludd_hidden: Vec<usize> = Vec::new();
-        if let Some(luigi) = self.luigi.as_mut() {
+        // Only Luigi's taller head needs it; a preloaded Luigi must not lean Mario's or another
+        // skin's neck.
+        if self.skin == Skin::Luigi
+            && let Some(luigi) = self.luigi.as_mut()
+        {
             let deployed = m.fludd.as_ref().is_some_and(|f| f.housed < 0.5);
             if luigi.lean_fludd(&mut fludd_joints, look, deployed, dt) {
                 fludd_hidden.push(LUIGI_ROD_SHAPE);
@@ -1711,8 +1803,12 @@ impl View {
         // Mario's own parts: body, cap and hands. Luigi's body is the HSD mesh drawn below; his
         // FLUDD and nozzle are the same models, on his chest.
         let luigi_body = self.skin == Skin::Luigi;
+        let rig_body = self.rig_body();
         let mut parts: Vec<(u32, Mat4, &[Mat4])> = Vec::new();
-        if !luigi_body {
+        if let Some((model, _)) = rig_body {
+            // A same-rig skin: its model on Mario's joints, cap and hands included.
+            parts.push((model, Mat4::IDENTITY, &joints));
+        } else if !luigi_body {
             parts.push((models::BODY, Mat4::IDENTITY, &joints));
             if let Some(h) = self.head.and_then(|h| joints.get(h)) {
                 let cap = if return_landing && m.anim.frame < 157. { self.return_parts.map_or(models::CAP, |p| p[0]) } else { models::CAP };
@@ -1784,16 +1880,17 @@ impl View {
                     });
                 }
                 // The material's texture for this draw (the eyes' blink frame), and colour.
-                let mut inputs = base_inputs(model);
+                let key = rig_body.filter(|(m, _)| *m == model).map_or(model, |(_, k)| k);
+                let mut inputs = base_inputs(key);
                 if model == models::BODY
                     && let Some(i) = body_inputs.get(&b.material)
                 {
                     inputs.tex = i.tex;
                 }
-                let tex = if inputs == base_inputs(model) {
+                let tex = if inputs == base_inputs(key) {
                     mdl.batch_texture[bi]
                 } else {
-                    self.textures.get(mdl, model, b.material, &inputs)
+                    self.textures.get(mdl, key, b.material, &inputs)
                 };
                 self.texture_ids.push(tex);
                 self.colors.push(mdl.batch_color[bi]);
@@ -2068,6 +2165,45 @@ mod tests {
                 assert!(p[2] >= p[0], "{p:?}");
             }
         }
+    }
+
+    #[test]
+    fn piantissimo_wears_marios_pose_on_his_own_model() {
+        let Some(mut v) = view() else {
+            eprintln!("skipping: no assets/");
+            return;
+        };
+        if !v.load_skin(Skin::Piantissimo, None) {
+            eprintln!("SKIP: Piantissimo's model absent (extract the optional pieces)");
+            return;
+        }
+        let (rig_model, _) = {
+            v.set_skin(Skin::Piantissimo);
+            v.rig_body().expect("his body is loaded")
+        };
+        let a = libsms::Assets::discover(None).unwrap();
+        let mut sim = Sim::new(a.params, a.anim_table, Vec3::ZERO, 0);
+        sim.mario.give_fludd();
+        let mut host = libsms::FlatHost::default();
+        let pad = libsms::Pad { stick: libsms::Vec2::new(0.0, 1.0), ..Default::default() };
+        for _ in 0..30 {
+            sim.advance(&mut host, &pad, i16::MIN, 1.0 / 60.0);
+            v.update(&mut sim, 1.0 / 60.0);
+        }
+        let models_drawn: Vec<u32> = v.draws.iter().map(|d| d.model).collect();
+        assert!(models_drawn.contains(&rig_model), "{models_drawn:?}");
+        assert!(!models_drawn.contains(&models::BODY), "Mario's body must not draw: {models_drawn:?}");
+        assert!(!models_drawn.contains(&models::CAP), "his cap is part of his model: {models_drawn:?}");
+        assert!(models_drawn.contains(&models::FLUDD), "FLUDD stays Mario's: {models_drawn:?}");
+        assert!(v.positions.iter().all(|p| p.is_finite()));
+        // Same joints as Mario, so he stands about as tall as Mario does.
+        let draw = v.draws.iter().find(|d| d.model == rig_model).unwrap();
+        let n = v.models[rig_model as usize].vertex_count;
+        let top = v.positions[draw.first_vertex as usize..][..n].iter().map(|p| p.y).fold(f32::MIN, f32::max);
+        assert!((100.0..260.0).contains(&top), "top of Piantissimo at {top}");
+        // The texture cache key must not collide with Mario's body (each is its own bake).
+        let total: usize = v.draws.iter().map(|d| v.models[d.model as usize].vertex_count).sum();
+        assert_eq!(v.positions.len(), total);
     }
 
     #[test]

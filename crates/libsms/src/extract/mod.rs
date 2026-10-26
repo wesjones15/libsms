@@ -105,7 +105,7 @@ pub const EXTRACTS: [(&str, &str, &str); 8] = [
 /// the paths in them are alternatives in the same order (`|`): a USA disc keeps them in
 /// `common.szs` and `subtitle.szs`, a European one in a pair per language (`cmn2d_en.szs`,
 /// `subtitle_en.szs`).
-pub const OPTIONAL_EXTRACTS: [(&str, &str, &str); 23] = [
+pub const OPTIONAL_EXTRACTS: [(&str, &str, &str); 24] = [
     (
         "common.szs|cmn2d_en.szs",
         "2d/wipe_gameover.bti|wipe_gameover.bti",
@@ -192,6 +192,13 @@ pub const OPTIONAL_EXTRACTS: [(&str, &str, &str); 23] = [
         "scene/dolpic1.szs",
         "map/map/gate/ms_gatewind_b.jpa",
         "portal/ms_gatewind_b.jpa",
+    ),
+    // Piantissimo's body (`TEnemyMario`, enemyMario.cpp): Mario's 29 joints in Mario's order, so
+    // Mario's pose drives it as it is (the Piantissimo alt-skin). Gelato Beach's race stage.
+    (
+        "scene/mamma4.szs",
+        "map/map/pad/monteman_model.bmd",
+        "npc/monteman/monteman_model.bmd",
     ),
     ("scene/dolpic1.szs", "map/map/map.bmd", "portal/plaza.bmd"),
     ("scene/dolpic1.szs", "map/scene.bin", "portal/scene.bin"),

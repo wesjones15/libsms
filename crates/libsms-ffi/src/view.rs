@@ -213,19 +213,43 @@ pub struct SmsView {
     entrance: Option<libsms_present::view::Entrance>,
 }
 
-/// Whose body the view draws: 0 Mario, 1 Luigi (an alt-skin whose HSD model comes from the
-/// Melee cache; a host without that cache should stay on 0).
+/// Whose body the view draws, by `libsms_present::view::Skin` id: 0 Mario, 1 Luigi (HSD model
+/// from the Melee cache), 2 Piantissimo (a J3D model on Mario's rig). A skin that was not loaded
+/// with [`sms_view_load_skin`] draws Mario's body; an unknown id is Mario.
 /// # Safety
 /// `view` must be a live Mario view from sms_view_new.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_view_skin(view: *mut SmsView, skin: u32) {
     unsafe {
         with_view(view, (), |v| {
-            v.view.set_skin(if skin == 1 {
-                libsms_present::view::Skin::Luigi
-            } else {
-                libsms_present::view::Skin::Mario
-            })
+            v.view.set_skin(libsms_present::view::Skin::from_id(skin))
+        })
+    }
+}
+
+/// Makes a skin drawable: Luigi reads the Melee cache at `dir`; Piantissimo (and any later
+/// same-rig skin) loads from the view's Sunshine assets and ignores `dir` (null is fine). 1 when
+/// its files were there and its rig fits; 0 otherwise, so a host can offer the skin only then.
+/// Load every skin before the host reads the model table (the table is one list).
+///
+/// # Safety
+/// `view` must be a live Mario view from sms_view_new; `dir` null or a nul-terminated UTF-8 path.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_load_skin(
+    view: *mut SmsView,
+    skin: u32,
+    dir: *const c_char,
+) -> u8 {
+    let dir = (!dir.is_null()).then(|| {
+        unsafe { std::ffi::CStr::from_ptr(dir) }
+            .to_string_lossy()
+            .into_owned()
+    });
+    unsafe {
+        with_view(view, 0, |v| {
+            let path = dir.as_deref().map(std::path::Path::new);
+            v.view
+                .load_skin(libsms_present::view::Skin::from_id(skin), path) as u8
         })
     }
 }
