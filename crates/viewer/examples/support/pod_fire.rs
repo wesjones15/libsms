@@ -84,7 +84,7 @@ impl Fire {
                 .iter()
                 .zip(&self.uvs)
                 .map(|(p, uv)| {
-                    let v = vec3(p.x * xy, -(p.z - 1.2) * z, -p.y * xy) * 3.5 + center;
+                    let v = vec3(p.x * xy * 3.5, -(p.z - 1.2) * z * 1.75, -p.y * xy * 3.5) + center;
                     Vertex::new(v.x, v.y, v.z, uv.x, uv.y, Color::new(1., 1., 1., alpha))
                 })
                 .collect();

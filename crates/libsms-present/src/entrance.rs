@@ -162,7 +162,7 @@ impl Entrance {
         if texture < 0 {
             return Err("portal has no texture".into());
         }
-        model.batch_blend.fill(blend::CUTOUT);
+        model.batch_blend.fill(if fast { blend::TRANSLUCENT } else { blend::CUTOUT });
         model.batch_lit.fill(0);
         view.models.push(model);
         view.textures.list[texture as usize] = frames

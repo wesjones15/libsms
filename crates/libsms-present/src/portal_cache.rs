@@ -9,7 +9,7 @@ use std::{
     sync::{Arc, Mutex, OnceLock, Weak},
 };
 
-pub const SIZE: u32 = 128;
+pub const SIZE: u32 = 256;
 pub const FPS: f32 = 15.;
 pub const EXIT_FPS: f32 = 30.;
 pub const REVEAL: f32 = 0.8;
@@ -18,7 +18,7 @@ pub const HOP: f32 = 0.8;
 pub const LAND: f32 = 0.15;
 pub const COMPLETE: f32 = REVEAL + HOP + LAND;
 pub const CLOSE: f32 = COMPLETE + 0.14;
-const MAGIC: &[u8; 8] = b"SMSPOD03";
+const MAGIC: &[u8; 8] = b"SMSPOD04";
 const PIXELS: usize = (SIZE * SIZE * 4) as usize;
 const HEADER: usize = 20;
 
@@ -50,7 +50,7 @@ fn cache_path(dir: &Path) -> Result<PathBuf, String> {
     }
     Ok(dir
         .join("portal/cache")
-        .join(format!("entrance-v3-{hash:016x}.bin")))
+        .join(format!("entrance-v4-{hash:016x}.bin")))
 }
 
 pub fn complete(dir: &Path) -> bool {
@@ -84,7 +84,7 @@ pub fn prepare(dir: &Path) -> Result<PathBuf, String> {
         return Ok(path);
     }
     let mut portal = Portal::load(dir).map_err(|e| e.to_string())?;
-    portal.set_interior(&plaza::plaza_still(dir, 256).map_err(|e| e.to_string())?);
+    portal.set_interior(&plaza::plaza_still(dir, (SIZE * 2) as usize).map_err(|e| e.to_string())?);
     let idle = (portal.loop_frames() / 60. * FPS).ceil().max(1.) as u32;
     let exit = (CLOSE * EXIT_FPS).ceil() as u32 + 1;
     fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
@@ -102,16 +102,84 @@ pub fn prepare(dir: &Path) -> Result<PathBuf, String> {
             let t = (i - idle) as f32 / EXIT_FPS;
             (t, activation(t))
         };
-        let image = portal.image_sized(time * 60., a, SIZE);
-        if image.rgba.len() != PIXELS {
-            return Err("unexpected portal cache dimensions".into());
-        }
-        f.write_all(&image.rgba).map_err(|e| e.to_string())?;
+        f.write_all(&smooth_frame(&mut portal, time * 60., a)?)
+            .map_err(|e| e.to_string())?;
     }
     f.sync_all().map_err(|e| e.to_string())?;
     drop(f);
     fs::rename(&temp, &path).map_err(|e| e.to_string())?;
     Ok(path)
+}
+
+// Rasterize the original TEV at 2x, then retain coverage from its alpha-tested edge.
+// Store straight-alpha RGB: transparent subpixels must not darken the dark M border
+// a second time when the host blends the fractional-coverage output pixel.
+fn smooth_frame(portal: &mut Portal, frame: f32, activation: f32) -> Result<Vec<u8>, String> {
+    let high = portal.image_sized(frame, activation, SIZE * 2);
+    if high.width != SIZE * 2 || high.height != SIZE * 2 {
+        return Err("portal supersampling requires a 512-square interior".into());
+    }
+    let mut rgba = vec![0; PIXELS];
+    for y in 0..SIZE as usize {
+        for x in 0..SIZE as usize {
+            let mut sum = [0u32; 3];
+            let mut covered = 0;
+            for dy in 0..2 {
+                for dx in 0..2 {
+                    let at = ((y * 2 + dy) * high.width as usize + x * 2 + dx) * 4;
+                    if high.rgba[at + 3] == 0 {
+                        continue;
+                    }
+                    covered += 1;
+                    for c in 0..3 {
+                        sum[c] += high.rgba[at + c] as u32;
+                    }
+                }
+            }
+            let at = (y * SIZE as usize + x) * 4;
+            if covered != 0 {
+                for c in 0..3 {
+                    rgba[at + c] = ((sum[c] + covered / 2) / covered) as u8;
+                }
+                rgba[at + 3] = ((covered * 255 + 2) / 4) as u8;
+            }
+        }
+    }
+    Ok(rgba)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn cached_gate_has_smooth_coverage_but_an_opaque_interior() {
+        let Some(dir) = libsms::assets::find(None) else {
+            eprintln!("SKIP: Sunshine assets absent");
+            return;
+        };
+        if !dir.join("portal/05_gate01.bmd").is_file() {
+            eprintln!("SKIP: M gate absent");
+            return;
+        }
+        let mut portal = Portal::load(&dir).unwrap();
+        portal.set_interior(&plaza::plaza_still(&dir, (SIZE * 2) as usize).unwrap());
+        for activation in [0., 1.] {
+            let image = smooth_frame(&mut portal, 0., activation).unwrap();
+            assert_eq!(image.len(), PIXELS);
+            assert!(
+                image.chunks_exact(4).any(|p| p[3] > 0 && p[3] < 255),
+                "no antialiased edge coverage"
+            );
+            assert!(
+                image.chunks_exact(4).any(|p| p[3] == 255),
+                "M interior became translucent"
+            );
+            assert!(
+                image.chunks_exact(4).any(|p| p[3] == 0),
+                "outside M became an opaque square"
+            );
+        }
+    }
 }
 
 pub struct Frames {
