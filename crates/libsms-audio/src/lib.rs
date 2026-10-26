@@ -30,4 +30,4 @@ pub mod osc;
 mod track;
 
 pub use engine::{Engine, NoSync, SyncHandler};
-pub use jai::{SoundHandle, SoundSystem};
+pub use jai::{SoundHandle, SoundSystem, VoiceSet};

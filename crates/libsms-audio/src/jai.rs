@@ -381,6 +381,31 @@ impl SyncHandler for Jai {
     }
 }
 
+/// Whose voice answers the Mario voice cues, as `TMario::getVoiceStatus` picks it for the
+/// player type (Mario 0, Shadow Mario 2, Piantissimo 6) and `MSound::startMarioVoice` applies it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum VoiceSet {
+    #[default]
+    Mario,
+    /// Piantissimo (status 6). The game gives him one voice, `MSD_SE_NPC_VA_MTMAN_JUMP1`, for
+    /// the five jump cues (`MV21` small .. `MV25A` huge) and makes every other Mario voice
+    /// silent. This keeps the swap and lets the rest fall back to Mario's own lines.
+    Piantissimo,
+    /// Piantissimo exactly as the game has him: the jump voice and nothing else.
+    PiantissimoStrict,
+}
+
+/// The cue standing in for each Mario jump voice when the voice set is Piantissimo's
+/// (`MSound::startMarioVoice`, `param_3 == 6`).
+const PIANTISSIMO_JUMP_CUE: &str = "MSD_SE_NPC_VA_MTMAN_JUMP1";
+const PIANTISSIMO_JUMP_VOICES: [&str; 5] = [
+    "MSD_SE_MV21_JUMP_SMALL_01",
+    "MSD_SE_MV22_JUMP_MID_01",
+    "MSD_SE_MV23_JUMP_LARGE_01",
+    "MSD_SE_MV24_JUMP_SPECIAL_01",
+    "MSD_SE_MV25A_JUMP_HUGE_01",
+];
+
 /// The game-facing sound system.
 pub struct SoundSystem {
     pub engine: Engine,
@@ -402,6 +427,8 @@ pub struct SoundSystem {
     pub player: Vec3,
     /// Mario's health for voice selection (8 = full; 2 and below are the tired voices).
     pub health: i16,
+    /// Whose voice the Mario voice cues play (`TMario::getVoiceStatus`).
+    voice_set: VoiceSet,
     stream: Option<StreamPlay>,
     voice: Option<SoundHandle>,
     out: std::collections::VecDeque<f32>,
@@ -458,6 +485,7 @@ impl SoundSystem {
             prev_camera: Vec3::ZERO,
             player: Vec3::ZERO,
             health: 8,
+            voice_set: VoiceSet::Mario,
             stream: None,
             voice: None,
             out: Default::default(),
@@ -504,6 +532,15 @@ impl SoundSystem {
 
     /// Pitches Mario's voice cues (SE category 7) by `ratio` with their length unchanged.
     /// 1.0 is the disc's own voice; a skin can use it to tell itself apart.
+    /// Chooses whose voice the Mario cues play (a skin's: Piantissimo swaps the jump voices).
+    pub fn set_voice_set(&mut self, set: VoiceSet) {
+        self.voice_set = set;
+    }
+
+    pub fn voice_set(&self) -> VoiceSet {
+        self.voice_set
+    }
+
     pub fn set_voice_pitch(&mut self, ratio: f32) {
         self.data.set_voice_pitch(ratio);
     }
@@ -1328,6 +1365,17 @@ impl SoundSystem {
     /// Mario's voice (`MSound::startMarioVoice`): tired variants at low health and random
     /// alternates, one voice at a time.
     pub fn mario_voice(&mut self, name: &str) -> Option<SoundHandle> {
+        if self.voice_set != VoiceSet::Mario {
+            if PIANTISSIMO_JUMP_VOICES.contains(&name) {
+                if let Some(sid) = self.id(PIANTISSIMO_JUMP_CUE) {
+                    let h = self.play_se(sid, Some(self.player), 0x4D41_5249)?;
+                    self.voice = Some(h);
+                    return Some(h);
+                }
+            } else if self.voice_set == VoiceSet::PiantissimoStrict {
+                return None;
+            }
+        }
         let health = self.health;
         let mut r = |p: f32| self.rng.ufloat_1() < p;
         let tired = health <= 2;

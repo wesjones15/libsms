@@ -474,6 +474,13 @@ impl Audio {
         }
     }
 
+    /// Whose voice the Mario cues play (a skin's: see `Skin::voice_set`).
+    pub fn set_voice_set(&self, set: libsms_audio::VoiceSet) {
+        if let Ok(mut sys) = self.sys.lock() {
+            sys.set_voice_set(set);
+        }
+    }
+
     /// The listener as a world-to-camera matrix (camera looking down -Z) and its position.
     pub fn set_listener(&self, view: Mat4, eye: Vec3) {
         if let Ok(mut sys) = self.sys.lock() {

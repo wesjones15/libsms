@@ -43,7 +43,9 @@ normal model.
   Luigi and may be null for the rest. 1 when its files were there. Load every skin a view will
   show before the host reads the model table (`ModelView` fixes it at creation).
 - `sms_view_set_luigi` stays for existing callers.
-- `sms_view_set_voice_pitch(view, ratio)`: a skin's voice (Piantissimo and Mario: 1).
+- `sms_view_set_voice_pitch(view, ratio)`: pitch (Luigi 1.14; Piantissimo and Mario 1).
+- `sms_view_voice_set(view, set)`: 0 Mario's voice, 1 Piantissimo's, 2 Piantissimo strict.
+  `sms_view_skin` already picks 0 or 1 from the skin (`Skin::voice_set`).
 
 ## What a skin gets for free vs what Luigi needed
 
@@ -53,7 +55,7 @@ normal model.
 | pose | retarget + feet anchor + hang offset | none: Mario's joints |
 | FLUDD | own pack, Spray neck leans past the head | Mario's, unchanged |
 | particles | red effects turned green | Mario's |
-| voice | Mario's, +14% | Mario's |
+| voice | Mario's, +14% | his jump voice for Mario's five jump cues; Mario's lines otherwise (see Voice) |
 | unlock | 2401 coins held | none (available from the start) |
 | secret move | Egg Lay (dpad up) | none |
 
@@ -61,10 +63,38 @@ Per-skin FLUDD, tint, voice and unlock are `Skin` / `SkinSpec` data, not branche
 host: Luigi's lean runs only when the current skin is Luigi, even if his mesh is preloaded
 (the statue entrance preloads every skin).
 
+## Voice
+
+The game picks whose voice speaks per player type: `TMario::getVoiceStatus` (MarioSound.cpp)
+returns 0 for Mario, 2 for Shadow Mario, **6 for Piantissimo**, and `MSound::startMarioVoice`
+(MSound.cpp) applies it. For status 6 it replaces only the five jump cues (`MV21` small,
+`MV22` mid, `MV23` large, `MV24` special, `MV25A` huge) with `MSD_SE_NPC_VA_MTMAN_JUMP1` and
+returns without playing anything for every other voice. Voices keyed in animations
+(`MAnmSound::startAnimSound`, category 7) go through the same function with the status in the
+sound flags (`0x60000000`), so they follow the same rule.
+
+libsms does it at the one place every Mario voice already passes, `SoundSystem::mario_voice`,
+with `VoiceSet::{Mario, Piantissimo, PiantissimoStrict}`:
+
+- `Piantissimo` (what the skin selects): the jump cues play his cue; every other voice falls
+  back to Mario's own line, because "silent" would leave him mute for hurt, dive, death and
+  spin voices.
+- `PiantissimoStrict` (RoR2 config `Sound.PiantissimoGameVoice`): the game's behaviour, his
+  jump voice and nothing else.
+
+Tests: `libsms-audio/tests/voice_set.rs` (his cue is in the banks and differs from Mario's wave;
+fallback vs strict). Gaps are listed below.
+
 ## Not done / not verified
 
 - Not played in game; only the headless view test, the ABI check through the real DLL
   (`PortraitCheck`), and baked-texture captures were run. Piantissimo's FLUDD sits on Mario's
   chest; whether Spray's neck clears his tall cap in play is unchecked.
 - Blink: Mario's wink pattern is not applied to Piantissimo's face.
+- Voice gaps: he has one voice cue (`MSD_SE_NPC_VA_MTMAN_JUMP1`), so damage, dive, death, fall,
+  spin, ledge, wake and tired lines are Mario's (silent in strict mode). `MTMAN_JUMP2` exists in
+  the banks but the game never plays it, so it is unused here too. His race dialogue lines
+  (`MSD_SE_NPC_VM_MTMAN_NORMAL` / `_LOST`, Talk2D2.cpp) are text-box voices with no RoR2 event.
+  The jump cue does not use Mario's tired-voice or random-alternate picks, as in the game, and
+  the pitch is not applied (it is 1 for him anyway). Not heard in game; checked headlessly.
 - Multiplayer puppets still draw Mario's body for other players (as Luigi does).

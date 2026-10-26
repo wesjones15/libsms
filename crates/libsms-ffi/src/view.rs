@@ -222,7 +222,33 @@ pub struct SmsView {
 pub unsafe extern "C" fn sms_view_skin(view: *mut SmsView, skin: u32) {
     unsafe {
         with_view(view, (), |v| {
-            v.view.set_skin(libsms_present::view::Skin::from_id(skin))
+            let skin = libsms_present::view::Skin::from_id(skin);
+            v.view.set_skin(skin);
+            // The skin's voice: Piantissimo's jump cue replaces Mario's jump voices.
+            if let Some(audio) = &v.audio {
+                audio.set_voice_set(skin.voice_set());
+            }
+        })
+    }
+}
+
+/// Overrides whose voice the Mario cues play: 0 Mario's, 1 Piantissimo's jump voice with Mario's
+/// lines for the rest (what [`sms_view_skin`] picks for him), 2 Piantissimo exactly as the game
+/// has him (the jump voice and nothing else). Call after [`sms_view_skin`].
+///
+/// # Safety
+/// `view` must be a live Mario view from sms_view_new.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_voice_set(view: *mut SmsView, set: u32) {
+    unsafe {
+        with_view(view, (), |v| {
+            if let Some(audio) = &v.audio {
+                audio.set_voice_set(match set {
+                    1 => libsms_present::view::VoiceSet::Piantissimo,
+                    2 => libsms_present::view::VoiceSet::PiantissimoStrict,
+                    _ => libsms_present::view::VoiceSet::Mario,
+                });
+            }
         })
     }
 }

@@ -301,6 +301,8 @@ pub enum Skin {
     Piantissimo,
 }
 
+pub use libsms_audio::VoiceSet;
+
 /// How a skin gets its body, so adding one is a row and not a code path.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SkinBody {
@@ -325,6 +327,15 @@ impl Skin {
     /// The skin for a host's id; anything unknown is Mario.
     pub fn from_id(id: u32) -> Skin {
         Skin::ALL.get(id as usize).copied().unwrap_or(Skin::Mario)
+    }
+
+    /// Whose voice the skin speaks with: Piantissimo's jump voice replaces Mario's jump cues
+    /// (`MSound::startMarioVoice`, voice status 6); the rest keep Mario's lines.
+    pub const fn voice_set(self) -> VoiceSet {
+        match self {
+            Skin::Piantissimo => VoiceSet::Piantissimo,
+            _ => VoiceSet::Mario,
+        }
     }
 
     pub const fn body(self) -> SkinBody {
