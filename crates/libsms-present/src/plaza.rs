@@ -126,6 +126,34 @@ mod tests {
         for b in &statue {
             assert!(b.indices.iter().all(|&i| (i as usize) < b.vertices.len()));
         }
+        // The map's baked statue shadow and a floor triangle sit inside the same box and
+        // once came along: they made the host's pedestal collider 10.3 x 11 m instead of
+        // the pedestal's own 8 x 8 m, and drew as a dark plate and a floor chip.
+        let pose = Pose::new(
+            &model,
+            Mat4::from_translation(Vec3::new(0., -300., -4941.47)),
+            &model.bind_world(),
+        );
+        let (mut lo, mut hi) = (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY));
+        for b in statue.iter().filter(|b| b.shape != 23) {
+            for tri in b.indices.chunks_exact(3) {
+                let [a, c, d] =
+                    [tri[0], tri[1], tri[2]].map(|i| pose.skin(&b.vertices[i as usize]).0);
+                let n = (c - a).cross(d - a).normalize_or_zero();
+                assert!(
+                    !(n.y.abs() > 0.99 && (a + c + d).y / 3. < 10.),
+                    "ground-level decal in the pedestal selection"
+                );
+                for p in [a, c, d] {
+                    lo = lo.min(p);
+                    hi = hi.max(p);
+                }
+            }
+        }
+        assert!(
+            (hi.x - lo.x) < 810. && (hi.z - lo.z) < 810.,
+            "pedestal footprint is not the pedestal's: {lo:?}..{hi:?}"
+        );
     }
 }
 
@@ -179,23 +207,50 @@ pub fn render(
 
 /// The statue and its pedestal are baked into the map. Select their bounded
 /// triangles, preserving their original materials, UVs and vertex colours.
+///
+/// That box also catches two things baked into the same map that are not the pedestal:
+/// the statue's ground shadow (`_m00kage_1`, a flat mesh at the plaza floor, the map's
+/// pre-baked `TMapObj` shadow) and stray plaza floor (`_m00yuka`). Drawn with the statue
+/// they hang a dark plate and a floor chip off its base, and their flat spread widened the
+/// host's pedestal collider from the pedestal's own 8 x 8 m to 10.3 x 11 m. Reject any
+/// ground-level horizontal triangle: a solid pedestal or sculpture has none that matters
+/// (the pedestal's own underside goes too, and is never visible).
 pub fn statue_batches(model: &Bmd) -> Result<Vec<libsms_assets::Batch>, Error> {
     let lo = Vec3::new(-650., 299.9, 3900.);
     let hi = Vec3::new(750., 2000., 5100.);
+    let all = model.batches()?;
+    // The decals sit on the selection's foot, so find that before dropping any triangles.
+    let mut foot = f32::INFINITY;
+    let mut picks: Vec<Vec<[u32; 3]>> = Vec::with_capacity(all.len());
+    for b in &all {
+        let mut tris = Vec::new();
+        for tri in b.indices.chunks_exact(3) {
+            let t = [tri[0], tri[1], tri[2]];
+            if t.iter().all(|&i| {
+                let p = b.vertices[i as usize].position;
+                p.cmpge(lo).all() && p.cmple(hi).all()
+            }) {
+                foot = foot.min(
+                    t.iter()
+                        .map(|&i| b.vertices[i as usize].position.y)
+                        .fold(f32::INFINITY, f32::min),
+                );
+                tris.push(t);
+            }
+        }
+        picks.push(tris);
+    }
     let mut selected = Vec::new();
-    for mut b in model.batches()? {
-        let indices: Vec<_> = b
-            .indices
-            .chunks_exact(3)
-            .filter(|tri| {
-                tri.iter().all(|&i| {
-                    let p = b.vertices[i as usize].position;
-                    p.cmpge(lo).all() && p.cmple(hi).all()
-                })
-            })
-            .flatten()
-            .copied()
-            .collect();
+    for (mut b, tris) in all.into_iter().zip(picks) {
+        let mut indices = Vec::new();
+        for t in tris {
+            let [a, c, d] = t.map(|i| b.vertices[i as usize].position);
+            let normal = (c - a).cross(d - a).normalize_or_zero();
+            if normal.y.abs() > 0.99 && (a + c + d).y / 3. < foot + 10. {
+                continue;
+            }
+            indices.extend_from_slice(&t);
+        }
         if indices.is_empty() {
             continue;
         }
