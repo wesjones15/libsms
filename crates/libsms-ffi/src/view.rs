@@ -338,6 +338,18 @@ pub unsafe extern "C" fn sms_view_entrance_new(
     assets_dir: *const c_char,
     sound: u8,
 ) -> *mut SmsView {
+    unsafe { make_entrance(assets_dir, sound, false) }
+}
+
+/// Short game entrance. The original `sms_view_entrance_new` remains available unchanged.
+/// # Safety
+/// `assets_dir` is a nul-terminated UTF-8 path with a worker-prepared portal cache.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_entrance_fast_new(assets_dir: *const c_char, sound: u8) -> *mut SmsView {
+    unsafe { make_entrance(assets_dir, sound, true) }
+}
+
+unsafe fn make_entrance(assets_dir: *const c_char, sound: u8, fast: bool) -> *mut SmsView {
     let ptr = unsafe { sms_view_new(assets_dir, sound) };
     if ptr.is_null() {
         return ptr;
@@ -349,7 +361,7 @@ pub unsafe extern "C" fn sms_view_entrance_new(
                 .into_owned(),
         );
         let v = unsafe { &mut *ptr };
-        v.entrance = Some(libsms_present::view::Entrance::load(&dir, &mut v.view).ok()?);
+        v.entrance = Some(if fast { libsms_present::view::Entrance::load_fast(&dir, &mut v.view).ok()? } else { libsms_present::view::Entrance::load(&dir, &mut v.view).ok()? });
         Some(())
     }));
     if !matches!(loaded, Ok(Some(()))) {
@@ -384,12 +396,16 @@ pub unsafe extern "C" fn sms_view_entrance_update(
             let forward = Vec3::from(f.forward).normalize_or(Vec3::Z);
             let right = Vec3::from(f.up).cross(forward).normalize_or(Vec3::X);
             let up = forward.cross(right);
-            let done = entrance.update(&mut v.view, seconds, activated != 0, right, up);
-            let (_, _, feet, _) = libsms_present::view::entrance_pose(seconds, 1.);
+            let fast = entrance.is_fast();
+            let done = if fast { entrance.update_fast(&mut v.view, seconds, activated, right, up) } else { entrance.update(&mut v.view, seconds, activated != 0, right, up) };
+            let feet = entrance.position(seconds);
             *pos = feet.into();
-            if let Some(a) = &v.audio {
+            if let Some(a) = &mut v.audio {
                 a.set_volume(f.volume);
                 a.set_listener(listener_view(f.eye.into(), forward, up), f.eye.into());
+                if fast && activated == 1 {
+                    a.portal_exit((seconds / libsms_present::portal_cache::REVEAL * 89.).clamp(0., 89.), feet);
+                }
             }
             if done { 2 } else { 1 }
         })

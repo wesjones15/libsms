@@ -63,6 +63,11 @@ impl Portal {
     /// Host entrance direction: 0 shows the swirling colours, 1 reveals the still.
     /// BRK follows the source's unkD0; BTK keeps running throughout.
     pub fn image(&mut self, frame: f32, activation: f32) -> Baked {
+        self.image_sized(frame, activation, 512)
+    }
+
+    /// Same authored material at a bounded size for the host's cached animation.
+    pub fn image_sized(&mut self, frame: f32, activation: f32, size: u32) -> Baked {
         self.texture.apply(&mut self.model, frame);
         self.colors.apply(
             &mut self.model,
@@ -77,7 +82,7 @@ impl Portal {
             textures: &self.textures,
             channels: &channels,
         }
-        .bake_preserving_alpha(0, &Inputs::default(), 512)
+        .bake_preserving_alpha(0, &Inputs::default(), size)
         .expect("gate is texture mapped");
         // The source material is GX_BL_SRCALPHA / GX_BL_ZERO. Its surviving
         // edge pixels replace the wall with C*A, leaving the dark M border.
@@ -91,6 +96,8 @@ impl Portal {
         }
         baked
     }
+
+    pub fn loop_frames(&self) -> f32 { self.texture.frames }
 }
 
 #[cfg(test)]

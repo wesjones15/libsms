@@ -23,6 +23,7 @@ const FLUDD: u64 = 0x464C_5544;
 const WATER: u64 = 0x5741_5452;
 const YOSHI: u64 = 0x594F_5348;
 const COIN: u64 = 0x434F_494E;
+const PORTAL: u64 = 0x504F_5254;
 
 /// Cache RoR2's short arrival/death stings from the user's extracted sound banks, without an
 /// output device. This runs on the host's first-run worker, never the Unity thread. Existing
@@ -118,6 +119,7 @@ pub struct Audio {
 struct SceneAudio {
     tables: HashMap<String, AnimSoundTable>,
     animation: AnimationPlayer,
+    portal: AnimationPlayer,
     clip: Option<&'static str>,
     /// Yoshi's body and eating-head clips' sound keys (`mBodyAnmSound`, `mTongueAnmSound`;
     /// `yoshi/bas/yoshi_<clip>.bas`).
@@ -188,6 +190,7 @@ impl SceneAudio {
         Self {
             tables,
             animation: AnimationPlayer::default(),
+            portal: AnimationPlayer::default(),
             clip: None,
             yoshi_tables,
             yoshi: Default::default(),
@@ -201,6 +204,7 @@ impl SceneAudio {
 
     fn reset(&mut self, sys: &mut SoundSystem) {
         self.animation.stop(sys);
+        self.portal.stop(sys);
         for (p, c) in &mut self.yoshi {
             p.stop(sys);
             *c = None;
@@ -209,6 +213,15 @@ impl SceneAudio {
             sys.stop(h, 0);
         }
         self.clip = None;
+    }
+
+    /// MarioDraw loads this BAS beside the warp-out BCK. Its nine Y_ROLL cues
+    /// (0x1963 down to 0x195B) are the original particle-to-Mario portal sound.
+    fn portal_exit(&mut self, sys: &mut SoundSystem, frame: f32, pos: Vec3) {
+        if let Some(table) = self.tables.get("demo_gate_out_appear_get") {
+            // Compress cue timing, but retain each sample's authored pitch.
+            self.portal.update(sys, table, frame, 1., pos, PORTAL);
+        }
     }
 
     fn tick(&mut self, sys: &mut SoundSystem, mario: &Mario) {
@@ -389,6 +402,9 @@ impl SceneAudio {
 }
 
 impl Audio {
+    pub fn portal_exit(&mut self, frame: f32, pos: Vec3) {
+        if let Ok(mut sys) = self.sys.lock() { self.scene.portal_exit(&mut sys, frame, pos); }
+    }
     /// Failure leaves a usable silent host, with a diagnostic. `music` starts Delfino Plaza's
     /// theme (hosts with their own soundtrack leave it off).
     pub fn start(dir: &Path, music: bool) -> Option<Self> {
@@ -776,6 +792,25 @@ mod tests {
         assert!(peak > 0.001, "jump animation produced silence: {peak}");
         scene.reset(&mut sys);
         assert!(scene.clip.is_none());
+    }
+
+    #[test]
+    fn original_portal_exit_bas_plays_its_nine_cues_at_compressed_timing() {
+        let Some((assets, _)) = fixture() else { eprintln!("SKIP: Sunshine audio absent"); return; };
+        let mut sys = SoundSystem::new(Arc::new(SoundData::load(&assets.dir).unwrap()));
+        let mut scene = SceneAudio::load(&assets.dir, &sys);
+        let table = scene.tables.get("demo_gate_out_appear_get").expect("original exit BAS");
+        assert_eq!(table.sounds.iter().map(|k| k.id).collect::<Vec<_>>(), (0x195b..=0x1963).rev().collect::<Vec<_>>());
+        let mut peak = 0f32;
+        let mut buffer = [0.;1600];
+        for i in 0..60 {
+            let time = i as f32 / 30.;
+            scene.portal_exit(&mut sys, (time / crate::portal_cache::REVEAL * 89.).min(89.), Vec3::ZERO);
+            sys.frame(); sys.render(&mut buffer,24000.);
+            assert!(buffer.iter().all(|x|x.is_finite()));
+            peak = buffer.iter().map(|x|x.abs()).fold(peak,f32::max);
+        }
+        assert!(peak > 0.001,"portal exit cue sequence is silent");
     }
 
     #[test]

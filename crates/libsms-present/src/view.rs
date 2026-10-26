@@ -32,7 +32,7 @@ use crate::tev::{Baked, C4, Inputs, Source, Tex, env_uv};
 
 #[path = "entrance.rs"]
 mod entrance;
-pub use entrance::{Entrance, entrance_fall, entrance_pose, ENTRANCE_RETURN};
+pub use entrance::{Entrance, entrance_fall, entrance_pose, entrance_fast_pose, ENTRANCE_RETURN};
 
 #[path = "luigi_skin.rs"]
 mod luigi_skin;

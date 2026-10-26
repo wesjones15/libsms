@@ -4,6 +4,30 @@ use std::ffi::{CStr, c_char};
 use std::panic::catch_unwind;
 use std::path::{Path, PathBuf};
 
+/// Whether the user's derived portal animation is ready for gameplay.
+/// # Safety
+/// `dir` is null or a nul-terminated UTF-8 path.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_entrance_cache_complete(dir: *const c_char) -> u8 {
+    catch_unwind(|| unsafe { path_arg(dir) }.is_some_and(|p| libsms_present::portal_cache::complete(&p)) as u8).unwrap_or(0)
+}
+
+/// Prepare the exact portal TEV frames on the asset worker. No graphics/audio device required.
+/// # Safety
+/// `dir` is null or a nul-terminated path; `msg` null or writable for `len` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_prepare_entrance(dir: *const c_char, msg: *mut u8, len: u32) -> u8 {
+    let result = catch_unwind(|| {
+        let dir = unsafe { path_arg(dir) }.ok_or("missing asset directory".to_string())?;
+        libsms_present::portal_cache::prepare(&dir).map(|p| format!("cached portal animation: {}",p.display()))
+    });
+    match result {
+        Ok(Ok(s)) => { unsafe { write_str(&s,msg,len) }; 1 },
+        Ok(Err(s)) => { unsafe { write_str(&s,msg,len) }; 0 },
+        Err(_) => { unsafe { write_str("portal cache preparation failed",msg,len) }; 0 },
+    }
+}
+
 /// Whether `dir` (UTF-8) holds a complete extraction.
 ///
 /// # Safety

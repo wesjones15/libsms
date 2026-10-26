@@ -11,6 +11,7 @@ pub mod hud;
 pub mod life;
 pub mod particles;
 pub mod portal;
+pub mod portal_cache;
 pub mod plaza;
 pub mod screenfx;
 pub mod tev;
