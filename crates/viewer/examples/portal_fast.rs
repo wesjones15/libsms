@@ -13,6 +13,8 @@ use macroquad::{
     prelude::*,
 };
 use std::{collections::HashMap, path::PathBuf};
+#[path = "support/pod_fire.rs"]
+mod pod_fire;
 fn conf() -> Conf {
     Conf {
         window_title: "Fast statue portal / native presenter".into(),
@@ -116,10 +118,26 @@ async fn main() {
     libsms_present::portal_cache::prepare(&dir).unwrap();
     let mut view = View::load(&dir).unwrap();
     let mut entrance = Entrance::load_fast(&dir, &mut view).unwrap();
+    let (base_lo, base_hi) = entrance.pedestal_bounds(&view);
+    let fire_center = (base_lo + base_hi) * 0.005 + G3::Y * ((base_lo.y - base_hi.y) * 0.005 - 9.5);
     let luigi = args.iter().any(|a| a == "--luigi");
-    if luigi {
+    let late_luigi = args.iter().any(|a| a == "--late-luigi");
+    let fire_dir = args
+        .iter()
+        .position(|a| a == "--descent-fire")
+        .and_then(|i| args.get(i + 1));
+    let fire = if let Some(path) = fire_dir {
+        Some(pod_fire::Fire::load(&PathBuf::from(path)).await)
+    } else {
+        None
+    };
+    // ModelView fixes its model table at creation: preload the alternate mesh, then select
+    // the rider later, reproducing a passenger/loadout arriving after pod preparation.
+    if luigi || late_luigi {
         assert!(view.set_luigi(&dir.join("../../libssbm/assets")));
-        view.set_skin(libsms_present::view::Skin::Luigi);
+        if !late_luigi {
+            view.set_skin(libsms_present::view::Skin::Luigi);
+        }
     }
     let mut textures: Vec<_> = view.textures.list.iter().map(tex).collect();
     let mut versions: Vec<_> = (0..textures.len())
@@ -136,15 +154,26 @@ async fn main() {
         if is_key_pressed(KeyCode::Escape) {
             break;
         }
-        let eye = G3::new(5.5, 3.8, 11.5);
-        let at = G3::new(0., 1.8, 1.4);
+        if late_luigi && time >= 0.25 {
+            view.set_skin(libsms_present::view::Skin::Luigi);
+        }
+        let eye = if fire.is_some() {
+            G3::new(22., 16., 31.)
+        } else {
+            G3::new(5.5, 3.8, 11.5)
+        };
+        let at = if fire.is_some() {
+            G3::new(0., 8., -3.)
+        } else {
+            G3::new(0., 1.8, 1.4)
+        };
         let matrix = GMat::look_at_rh(eye, at, G3::Y);
         let right = matrix.inverse().x_axis.truncate();
         let up = matrix.inverse().y_axis.truncate();
         entrance.update_fast(
             &mut view,
             (time - 0.35).max(0.),
-            if time < 0.35 { 0 } else { 1 },
+            if time < 0.35 || fire.is_some() { 0 } else { 1 },
             G3::new(-right.x, right.y, right.z),
             G3::new(-up.x, up.y, up.z),
         );
@@ -218,10 +247,15 @@ async fn main() {
             });
         }
         gl_use_default_material();
+        if let Some(fire) = &fire {
+            fire.draw(time, vec3(fire_center.x, fire_center.y, fire_center.z));
+        }
         set_default_camera();
         draw_rectangle(0., 0., 1100., 62., Color::new(0.04, 0.05, 0.08, 0.95));
         draw_text(
-            if luigi {
+            if fire.is_some() {
+                "SurvivorPod / Flames - exact donut5Mesh / matEntryBurn"
+            } else if luigi || late_luigi {
                 "LUIGI | Fast portal / green cap particles"
             } else {
                 "MARIO | Fast portal / original particles"
@@ -232,17 +266,25 @@ async fn main() {
             WHITE,
         );
         draw_text(
-            "Emitter 0x40 | 0.8s particles | normal-rate spin / gentle 0.8s fall | normal landing",
+            if fire.is_some() {
+                "3.5x scale | fireball at pedestal bottom | extracted mesh/textures; cloud shader placement preview"
+            } else {
+                "Emitter 0x40 | 0.8s particles | normal-rate spin / gentle 0.8s fall | normal landing"
+            },
             18.,
             52.,
             18.,
             LIGHTGRAY,
         );
         draw_text(
-            &format!(
-                "X + {:.2}s | original full Sunshine sequence retained in portal_entrance",
-                (time - 0.35).max(0.)
-            ),
+            &if fire.is_some() {
+                "Flames PS -470276994286075641 | donut5Mesh -6476590250452040025".into()
+            } else {
+                format!(
+                    "X + {:.2}s | original full Sunshine sequence retained in portal_entrance",
+                    (time - 0.35).max(0.)
+                )
+            },
             18.,
             776.,
             19.,
@@ -266,7 +308,7 @@ async fn main() {
             fxtextures.clear();
             view = View::load(&dir).unwrap();
             entrance = Entrance::load_fast(&dir, &mut view).unwrap();
-            if luigi {
+            if luigi || late_luigi {
                 assert!(view.set_luigi(&dir.join("../../libssbm/assets")));
                 view.set_skin(libsms_present::view::Skin::Luigi);
             }
