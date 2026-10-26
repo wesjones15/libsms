@@ -15,9 +15,12 @@ pub struct Portal {
 impl Portal {
     pub fn load(dir: &Path) -> Result<Self, Error> {
         let mut model = Bmd::parse(&std::fs::read(dir.join("portal/05_gate01.bmd"))?)?;
-        // Keep the M upright independently of the replaceable interior's row order.
+        // Keep the M upright and front-facing independently of the interior's row order.
+        // The entrance quad's host UVs mirror U; compensate only the fixed mask so
+        // the Plaza Y/U/V planes retain their already approved orientation.
         // Slot 5 is the fixed mask; BTK animates slots 3 and 4 only.
         if let Some(mask) = &mut model.materials[0].tex_mtx[5] {
+            mask.scale.x = -mask.scale.x;
             mask.scale.y = -mask.scale.y;
         }
         let texture = TexSrt::parse(&std::fs::read(dir.join("portal/05_gate01.btk"))?)?;
@@ -97,7 +100,9 @@ impl Portal {
         baked
     }
 
-    pub fn loop_frames(&self) -> f32 { self.texture.frames }
+    pub fn loop_frames(&self) -> f32 {
+        self.texture.frames
+    }
 }
 
 #[cfg(test)]
@@ -162,6 +167,53 @@ mod tests {
             before,
             p.image(0., 1.).rgba,
             "interior replacement must remain independent of the M"
+        );
+    }
+
+    #[test]
+    fn front_view_mask_is_mirrored_without_mirroring_the_interior() {
+        let Some(dir) = assets() else {
+            return;
+        };
+        let mut portal = Portal::load(&dir).unwrap();
+        let still = crate::plaza::plaza_still(&dir, 128).unwrap();
+        portal.set_interior(&still);
+        // Isolate the fixed silhouette from the independently animated indirect warp.
+        // The other portal test checks that the authored distortion remains active.
+        portal.model.materials[0].indirect = None;
+        let movie_srt: Vec<_> = portal.model.materials[0].tex_mtx[..3]
+            .iter()
+            .map(|m| m.as_ref().unwrap().srt_rows())
+            .collect();
+        let corrected = portal.image_sized(0., 0., 128);
+        // Reconstruct the previous mask transform. At the host's mirrored quad UV,
+        // the new silhouette must match the old source-facing silhouette.
+        portal.model.materials[0].tex_mtx[5]
+            .as_mut()
+            .unwrap()
+            .scale
+            .x *= -1.;
+        let previous = portal.image_sized(0., 0., 128);
+        let mut covered = 0;
+        for y in 0..128usize {
+            for x in 0..128usize {
+                let source = previous.rgba[(y * 128 + x) * 4 + 3];
+                let host = corrected.rgba[(y * 128 + 127 - x) * 4 + 3];
+                assert_eq!(host, source, "front-facing mask differs at ({x},{y})");
+                covered += usize::from(host != 0);
+            }
+        }
+        assert!(
+            covered > 1000 && covered < 15000,
+            "mask has no M-shaped coverage"
+        );
+        assert_eq!(
+            movie_srt,
+            portal.model.materials[0].tex_mtx[..3]
+                .iter()
+                .map(|m| m.as_ref().unwrap().srt_rows())
+                .collect::<Vec<_>>(),
+            "fixing the M must not flip the Plaza Y/U/V planes"
         );
     }
 }

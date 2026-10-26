@@ -5,6 +5,8 @@
 #![allow(dead_code)]
 #[path = "../src/j3d.rs"]
 mod j3d;
+#[path = "../src/fludd.rs"]
+mod fludd;
 #[path = "../src/mario_model.rs"]
 mod mario_model;
 
@@ -247,7 +249,8 @@ async fn main() {
             .map(|v| {
                 vertex(
                     v.position * 0.01 + G3::new(0., 0., 0.035),
-                    [v.uv[0].x, 1. - v.uv[0].y],
+                    // Match the native entrance quad, including its fixed-mask U correction.
+                    [1. - v.uv[0].x, 1. - v.uv[0].y],
                     WHITE,
                 )
             })

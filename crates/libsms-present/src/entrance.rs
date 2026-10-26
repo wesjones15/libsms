@@ -429,8 +429,8 @@ fn append_rigid(view: &mut View, model: u32, root: Mat4, flip_uv: bool) {
             let (p, n) = pose.skin(v);
             view.positions.push(p);
             view.normals.push(n.normalize_or_zero());
-            // ModelView mirrors native model X for Unity. Compensate the planar
-            // portal's U so both the M and the Plaza still keep the approved orientation.
+            // Keep the established interior/row mapping. Portal::load compensates
+            // the M's fixed mask independently, without flipping the Plaza planes.
             view.uvs.push(if flip_uv {
                 [1. - v.uv[0].x, 1. - v.uv[0].y]
             } else {

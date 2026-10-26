@@ -18,7 +18,7 @@ pub const HOP: f32 = 0.8;
 pub const LAND: f32 = 0.15;
 pub const COMPLETE: f32 = REVEAL + HOP + LAND;
 pub const CLOSE: f32 = COMPLETE + 0.14;
-const MAGIC: &[u8; 8] = b"SMSPOD02";
+const MAGIC: &[u8; 8] = b"SMSPOD03";
 const PIXELS: usize = (SIZE * SIZE * 4) as usize;
 const HEADER: usize = 20;
 
@@ -50,7 +50,7 @@ fn cache_path(dir: &Path) -> Result<PathBuf, String> {
     }
     Ok(dir
         .join("portal/cache")
-        .join(format!("entrance-v2-{hash:016x}.bin")))
+        .join(format!("entrance-v3-{hash:016x}.bin")))
 }
 
 pub fn complete(dir: &Path) -> bool {

@@ -51,12 +51,13 @@ fn meshes(view: &View, d: Draw, textures: &[Texture2D]) -> Vec<Mesh> {
                     1.
                 };
                 let uv = view.uvs[vi];
-                // Native gate U compensates the Unity host's X mirror; undo it for this RH viewer.
+                // Keep the native UVs. This camera and Unity's reflected geometry give
+                // the same front view; undoing U here hid the host's backwards M.
                 Vertex::new(
                     p.x,
                     p.y,
                     p.z,
-                    if d.kind == 241 { 1. - uv[0] } else { uv[0] },
+                    uv[0],
                     uv[1],
                     Color::new(
                         color[0] * light,
