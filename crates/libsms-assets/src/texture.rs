@@ -7,6 +7,7 @@
 
 use crate::Error;
 use crate::reader::Be;
+use libcommon::texture::gx::{self, GxFormat, ia8, rgb565, rgb5a3};
 
 /// A decoded image, row-major RGBA8, top row first.
 #[derive(Debug, Clone)]
@@ -84,55 +85,6 @@ pub fn read_bti(d: &[u8], name: String) -> Result<Texture, Error> {
     read_timg(d, 0, name)
 }
 
-fn rgb565(c: u16) -> [u8; 4] {
-    let r = ((c >> 11) & 0x1F) as u8;
-    let g = ((c >> 5) & 0x3F) as u8;
-    let b = (c & 0x1F) as u8;
-    [
-        (r << 3) | (r >> 2),
-        (g << 2) | (g >> 4),
-        (b << 3) | (b >> 2),
-        255,
-    ]
-}
-
-fn rgb5a3(c: u16) -> [u8; 4] {
-    if c & 0x8000 != 0 {
-        let r = ((c >> 10) & 0x1F) as u8;
-        let g = ((c >> 5) & 0x1F) as u8;
-        let b = (c & 0x1F) as u8;
-        [
-            (r << 3) | (r >> 2),
-            (g << 3) | (g >> 2),
-            (b << 3) | (b >> 2),
-            255,
-        ]
-    } else {
-        let a = ((c >> 12) & 0x7) as u8;
-        let r = ((c >> 8) & 0xF) as u8;
-        let g = ((c >> 4) & 0xF) as u8;
-        let b = (c & 0xF) as u8;
-        [r * 0x11, g * 0x11, b * 0x11, (a << 5) | (a << 2) | (a >> 1)]
-    }
-}
-
-/// IA8 as stored in palettes and textures: alpha in the high byte, intensity in the low.
-fn ia8(c: u16) -> [u8; 4] {
-    let (a, i) = ((c >> 8) as u8, c as u8);
-    [i, i, i, a]
-}
-
-/// Tile size in pixels and bytes per tile.
-fn tile(format: u8) -> Option<((usize, usize), usize)> {
-    Some(match format {
-        0 | 8 | 14 => ((8, 8), 32), // I4, C4, CMPR
-        1 | 2 | 9 => ((8, 4), 32),  // I8, IA4, C8
-        3..=5 | 10 => ((4, 4), 32), // IA8, RGB565, RGB5A3, C14X2
-        6 => ((4, 4), 64),          // RGBA8
-        _ => return None,
-    })
-}
-
 /// Decodes the first level of a `GXTexFmt` image. `palette` is used by C4/C8/C14X2.
 pub fn decode(
     format: u8,
@@ -141,113 +93,9 @@ pub fn decode(
     data: &[u8],
     palette: &[[u8; 4]],
 ) -> Result<Image, Error> {
-    let (w, h) = (width as usize, height as usize);
-    let ((tw, th), tile_bytes) =
-        tile(format).ok_or_else(|| Error::Bad(format!("texture format {format}")))?;
-    let tiles_x = w.div_ceil(tw);
-    let tiles_y = h.div_ceil(th);
-    let need = tiles_x * tiles_y * tile_bytes;
-    if data.len() < need {
-        return Err(Error::Bad(format!(
-            "format {format} {w}x{h} needs {need} bytes, have {}",
-            data.len()
-        )));
-    }
-
-    let mut rgba = vec![0u8; w * h * 4];
-    let mut put = |x: usize, y: usize, px: [u8; 4]| {
-        if x < w && y < h {
-            rgba[(y * w + x) * 4..][..4].copy_from_slice(&px);
-        }
-    };
-    let be16 = |o: usize| u16::from_be_bytes([data[o], data[o + 1]]);
-    let pal = |i: usize| palette.get(i).copied().unwrap_or([0, 0, 0, 0]);
-
-    for ty in 0..tiles_y {
-        for tx in 0..tiles_x {
-            let base = (ty * tiles_x + tx) * tile_bytes;
-            let (x0, y0) = (tx * tw, ty * th);
-            match format {
-                14 => {
-                    // CMPR: four DXT1 blocks per 8x8 tile.
-                    for sub in 0..4 {
-                        let b = base + sub * 8;
-                        let (sx, sy) = (x0 + (sub % 2) * 4, y0 + (sub / 2) * 4);
-                        let (c0, c1) = (be16(b), be16(b + 2));
-                        let (p0, p1) = (rgb565(c0), rgb565(c1));
-                        let mix = |a: u8, b: u8, wa: u16, wb: u16| {
-                            ((a as u16 * wa + b as u16 * wb) / (wa + wb)) as u8
-                        };
-                        let lerp = |wa, wb| -> [u8; 4] {
-                            std::array::from_fn(|i| {
-                                if i == 3 {
-                                    255
-                                } else {
-                                    mix(p0[i], p1[i], wa, wb)
-                                }
-                            })
-                        };
-                        let palette = if c0 > c1 {
-                            [p0, p1, lerp(2, 1), lerp(1, 2)]
-                        } else {
-                            [p0, p1, lerp(1, 1), [0, 0, 0, 0]]
-                        };
-                        for row in 0..4 {
-                            let bits = data[b + 4 + row];
-                            for col in 0..4 {
-                                let idx = (bits >> (6 - col * 2)) & 3;
-                                put(sx + col, sy + row, palette[idx as usize]);
-                            }
-                        }
-                    }
-                }
-                6 => {
-                    // RGBA8: AR pairs for the 16 pixels, then GB pairs.
-                    for i in 0..16 {
-                        let (a, r) = (data[base + i * 2], data[base + i * 2 + 1]);
-                        let (g, b) = (data[base + 32 + i * 2], data[base + 32 + i * 2 + 1]);
-                        put(x0 + i % 4, y0 + i / 4, [r, g, b, a]);
-                    }
-                }
-                _ => {
-                    for i in 0..tw * th {
-                        let (x, y) = (x0 + i % tw, y0 + i / tw);
-                        let nibble = |i: usize| {
-                            let byte = data[base + i / 2];
-                            if i.is_multiple_of(2) {
-                                byte >> 4
-                            } else {
-                                byte & 0xF
-                            }
-                        };
-                        let px = match format {
-                            0 => {
-                                let v = nibble(i) * 0x11;
-                                [v, v, v, v]
-                            }
-                            1 => {
-                                let v = data[base + i];
-                                [v, v, v, v]
-                            }
-                            2 => {
-                                let byte = data[base + i];
-                                let (a, v) = ((byte >> 4) * 0x11, (byte & 0xF) * 0x11);
-                                [v, v, v, a]
-                            }
-                            3 => ia8(be16(base + i * 2)),
-                            4 => rgb565(be16(base + i * 2)),
-                            5 => rgb5a3(be16(base + i * 2)),
-                            8 => pal(nibble(i) as usize),
-                            9 => pal(data[base + i] as usize),
-                            10 => pal((be16(base + i * 2) & 0x3FFF) as usize),
-                            _ => unreachable!(),
-                        };
-                        put(x, y, px);
-                    }
-                }
-            }
-        }
-    }
+    let gx = GxFormat::from_gx(format as u32)
+        .ok_or_else(|| Error::Bad(format!("texture format {format}")))?;
+    let rgba = gx::decode(gx, width, height, data, palette).map_err(|e| Error::Bad(e.to_string()))?;
     Ok(Image {
         width,
         height,
@@ -264,6 +112,46 @@ mod tests {
         assert_eq!(rgb5a3(0xFFFF), [255, 255, 255, 255]);
         assert_eq!(rgb5a3(0x0F00), [255, 0, 0, 0]);
     }
+
+    fn fnv(bytes: &[u8]) -> u64 {
+        bytes.iter().fold(0xcbf29ce484222325, |h, &b| (h ^ b as u64).wrapping_mul(0x100000001b3))
+    }
+
+    /// Pixel-exact baseline over pseudo-random data, including partial edge tiles and
+    /// palette indices past the palette's end, so a refactor cannot change color or alpha
+    /// unnoticed.
+    #[test]
+    fn decoded_pixels_match_baseline() {
+        let mut s = 0x1234_5678u32;
+        let mut next = || {
+            s = s.wrapping_mul(1664525).wrapping_add(1013904223);
+            (s >> 24) as u8
+        };
+        let data: Vec<u8> = (0..4096).map(|_| next()).collect();
+        let palette: Vec<[u8; 4]> = (0..40).map(|_| [next(), next(), next(), next()]).collect();
+        let formats = [0u8, 1, 2, 3, 4, 5, 6, 8, 9, 10, 14];
+        let got: Vec<u64> = formats
+            .iter()
+            .map(|&f| fnv(&decode(f, 13, 11, &data, &palette).unwrap().rgba))
+            .collect();
+        println!("{got:#x?}");
+        assert_eq!(got, BASELINE);
+    }
+
+    // Recorded from the decoder before it moved to libcommon::texture::gx.
+    const BASELINE: [u64; 11] = [
+        0x8951b18c7a118b4d,
+        0x46ebc824be401321,
+        0x9824912f42098bdf,
+        0x7ba54e580471227b,
+        0xa7e5dc0259b842b2,
+        0x433f0bf7c535a946,
+        0xb51c3975d39f7dfc,
+        0xb9bf7e9cd143e6cc,
+        0x6214fbdb537f24b7,
+        0x10eb3a1f96c15455,
+        0xb9d7fb80fab30c30,
+    ];
 
     #[test]
     fn i8_tiles_are_8x4() {
