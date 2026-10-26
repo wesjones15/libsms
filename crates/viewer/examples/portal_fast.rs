@@ -119,7 +119,7 @@ async fn main() {
     let mut view = View::load(&dir).unwrap();
     let mut entrance = Entrance::load_fast(&dir, &mut view).unwrap();
     let (base_lo, base_hi) = entrance.pedestal_bounds(&view);
-    let fire_center = (base_lo + base_hi) * 0.005 + G3::Y * ((base_lo.y - base_hi.y) * 0.005 - 9.5);
+    let fire_center = (base_lo + base_hi) * 0.005 + G3::Y * ((base_lo.y - base_hi.y) * 0.005);
     let luigi = args.iter().any(|a| a == "--luigi");
     let late_luigi = args.iter().any(|a| a == "--late-luigi");
     let fire_dir = args
@@ -267,7 +267,7 @@ async fn main() {
         );
         draw_text(
             if fire.is_some() {
-                "3.5x scale | fireball at pedestal bottom | extracted mesh/textures; cloud shader placement preview"
+                "3.5x | emitter at base | mesh/material preview; Unity pivot/height require in-game verification"
             } else {
                 "Emitter 0x40 | 0.8s particles | normal-rate spin / gentle 0.8s fall | normal landing"
             },
