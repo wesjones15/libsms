@@ -1522,7 +1522,11 @@ impl View {
                     for name in ["null_G_muzzle", "null_G_muzzle2"] {
                         if let Some(j) = bmd.joint(name) {
                             let mm = at * js[j];
-                            muzzles.push((mm.w_axis.truncate(), mm.x_axis.truncate()));
+                            // The host draws every model mirrored across its own X, so the
+                            // drawn nozzle leaves from -x; the water must leave from the same
+                            // place or it sprays out of the other side of the leaning neck.
+                            let p = mm.w_axis.truncate();
+                            muzzles.push((Vec3::new(-p.x, p.y, p.z), mm.x_axis.truncate()));
                             muzzle_mtx.push(mm);
                         }
                     }

@@ -244,8 +244,11 @@ impl Luigi {
         let leaning = self.lean.abs() > 0.5;
         if leaning {
             let pivot = LUIGI_LEAN_PIVOT;
+            // Negated: the pose is right-handed but the host draws each instance mirrored
+            // across its own X, so a +45 here lands on the -45 side of the screen. Flipping it
+            // makes the neck lean the way the aim is, which is what the rule says.
             let m = Mat4::from_translation(pivot)
-                * Mat4::from_rotation_y(self.lean.to_radians())
+                * Mat4::from_rotation_y(-self.lean.to_radians())
                 * Mat4::from_translation(-pivot);
             for i in LUIGI_LEAN_JOINTS {
                 if let Some(j) = joints.get_mut(i) {
