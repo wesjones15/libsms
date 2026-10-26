@@ -8,6 +8,7 @@
 //! Joint convention (J3D): local transform `T * Rz * Ry * Rx * S`, bones run along local +X, units
 //! are the decomp's (Mario's pelvis `center` joint sits 58 above the root).
 
+use libcommon::anim::hermite;
 use std::collections::HashMap;
 use std::f32::consts::PI;
 
@@ -343,13 +344,8 @@ impl Track {
                 if dt <= 0.0 {
                     return a.1;
                 }
-                let s = (t - a.0) / dt;
-                let (s2, s3) = (s * s, s * s * s);
                 // Cubic Hermite with the outgoing tangent of `a` and incoming tangent of `b`.
-                (2.0 * s3 - 3.0 * s2 + 1.0) * a.1
-                    + (s3 - 2.0 * s2 + s) * dt * a.3
-                    + (-2.0 * s3 + 3.0 * s2) * b.1
-                    + (s3 - s2) * dt * b.2
+                hermite(t, a.0, a.1, a.3, b.0, b.1, b.2)
             }
         }
     }
@@ -507,4 +503,45 @@ impl ClipLibrary {
     pub fn is_empty(&self) -> bool {
         self.clips.is_empty()
     }
+}
+
+#[cfg(test)]
+mod hermite_baseline {
+    use super::*;
+
+    /// Sampled bits over random keys (both tangent layouts) and times outside the range,
+    /// pinned before the curve moved to libcommon.
+    #[test]
+    fn track_values_match_baseline() {
+        let mut s = 0x1357_9BDFu32;
+        let mut next = || {
+            s = s.wrapping_mul(1664525).wrapping_add(1013904223);
+            (s >> 8) as f32 / (1u32 << 24) as f32
+        };
+        let times = [0.0f32, 4.0, 9.0, 15.0, 22.0, 30.0];
+        let mut hash = 0xcbf29ce484222325u64;
+        for tangent in [0u16, 1] {
+            let stride = if tangent == 0 { 3 } else { 4 };
+            let mut flat = Vec::new();
+            for t in times {
+                flat.push(t);
+                flat.push(next() * 8.0 - 4.0);
+                flat.push(next() * 2.0 - 1.0);
+                if stride == 4 {
+                    flat.push(next() * 2.0 - 1.0);
+                }
+            }
+            let at = |i: usize| flat.get(i).copied();
+            let track = Track::read(times.len(), 0, tangent, at, at).unwrap();
+            for step in 0..100 {
+                let v = track.value(-2.0 + step as f32 * 0.37);
+                hash = (hash ^ v.to_bits() as u64).wrapping_mul(0x100000001b3);
+            }
+        }
+        println!("{hash:#x}");
+        assert_eq!(hash, BASELINE);
+    }
+
+    // Recorded from the curve before it moved to libcommon::anim.
+    const BASELINE: u64 = 0x6797bedbaa821b37;
 }
