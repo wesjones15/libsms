@@ -377,6 +377,8 @@ struct Effect {
     name: String,
     jpa: Jpa,
     paint: Paint,
+    /// The file's own colours, kept after a skin tint so another skin can restore them.
+    untinted: Option<Jpa>,
     world_space: bool,
     fixed_height: bool,
     speed: f32,
@@ -537,6 +539,157 @@ fn basis_images(tex: &Texture, count: u32) -> Vec<FxTexture> {
         .collect()
 }
 
+/// The strongly red colours (twice the green and blue, the rule the statue's gate particles
+/// use) become green; whites, blues and everything else are left alone. Shared with the
+/// statue's gate particles, which are tinted at load.
+pub(crate) fn red_to_green(jpa: &mut Jpa) {
+    let base = &mut jpa.base;
+    let swap = |c: &mut [u8; 4]| {
+        if c[0] as u16 > c[1] as u16 * 2 && c[0] as u16 > c[2] as u16 * 2 {
+            c.swap(0, 1);
+        }
+    };
+    swap(&mut base.prm);
+    swap(&mut base.env);
+    for c in base.prm_table.iter_mut().chain(base.env_table.iter_mut()) {
+        swap(c);
+    }
+}
+
+/// How a `.jpa` is drawn: a static palette atlas, basis textures, or a stripe texture the draw
+/// rebakes each frame.
+fn bake_paint(textures: &mut Vec<FxTexture>, jpa: &Jpa) -> Paint {
+    let base = &jpa.base;
+    let stripe = base.kind == 5 || base.kind == 6;
+    let second = jpa.ex_tex.as_ref().is_some_and(|e| e.second_on());
+    let projected = stripe
+        && base.projection
+        && jpa
+            .ex_tex
+            .as_ref()
+            .is_some_and(|e| e.ind_mode == 1 && e.second_on());
+    let palette = base.kind == 2
+        && base.color_mode == 3
+        && base.col_anm_type == 4
+        && !base.global_col_anm
+        && !base.tex_anm
+        && (base.prm_anm || base.env_anm)
+        && base.blend_mode == 1
+        && base.blend_src == 6
+        && base.blend_dst == 7;
+    if let Some(source) = jpa
+        .textures
+        .get(base.texture as usize)
+        .filter(|_| palette)
+        .map(|t| &t.image)
+    {
+        let mut colors = Vec::new();
+        for i in 0..=base.col_anm_max.max(0) as usize {
+            let pair = (
+                base.prm_table.get(i).copied().unwrap_or(base.prm),
+                base.env_table.get(i).copied().unwrap_or(base.env),
+            );
+            if !colors.contains(&pair) {
+                colors.push(pair);
+            }
+        }
+        let columns = (colors.len() as f32).sqrt().ceil().max(1.) as u32;
+        let tile = [source.width + 2, source.height + 2];
+        let width = columns * tile[0];
+        let height = (colors.len() as u32).div_ceil(columns) * tile[1];
+        let mut rgba = vec![0u8; (width * height * 4) as usize];
+        for (i, (prm, env)) in colors.iter().enumerate() {
+            for y in 0..source.height {
+                for x in 0..source.width {
+                    let src = ((y * source.width + x) * 4) as usize;
+                    let dst = (((i as u32 / columns * tile[1] + 1 + y) * width
+                        + i as u32 % columns * tile[0]
+                        + 1
+                        + x)
+                        * 4) as usize;
+                    for k in 0..3 {
+                        let t = source.rgba[src + k] as f32 / 255.;
+                        rgba[dst + k] =
+                            (env[k] as f32 * (1. - t) + prm[k] as f32 * t).round() as u8;
+                    }
+                    rgba[dst + 3] = (source.rgba[src + 3] as u32 * prm[3] as u32 / 255) as u8;
+                }
+            }
+        }
+        let texture = textures.len() as u32;
+        textures.push(FxTexture {
+            width,
+            height,
+            rgba,
+            repeat: false,
+            version: 1,
+        });
+        Paint::Palette {
+            texture,
+            colors,
+            columns,
+            tile,
+        }
+    } else if projected {
+        textures.push(refraction_image(jpa));
+        Paint::Refraction {
+            texture: textures.len() as u32 - 1,
+        }
+    } else if stripe && second {
+        let size = jpa
+            .ex_tex
+            .as_ref()
+            .and_then(|e| jpa.textures.get(e.second_texture as usize))
+            .map_or(32, |t| t.image.width.max(t.image.height).clamp(8, 64));
+        textures.push(FxTexture {
+            width: size,
+            height: size,
+            rgba: vec![0; (size * size * 4) as usize],
+            repeat: false,
+            version: 0,
+        });
+        Paint::Baked {
+            texture: textures.len() as u32 - 1,
+        }
+    } else {
+        let over = base.blend_dst != 1 && base.tev().contains(&4);
+        let count = if quadratic(base) { 3 } else { 2 };
+        let count = if base.blend_dst == 1 || over {
+            count
+        } else {
+            1
+        };
+        let mut first = HashMap::new();
+        let mut wanted: Vec<u8> = base.tex_keys.clone();
+        wanted.push(base.texture);
+        for t in wanted {
+            if first.contains_key(&t) {
+                continue;
+            }
+            let Some(tex) = jpa.textures.get(t as usize) else {
+                continue;
+            };
+            first.insert(t, textures.len() as u32);
+            if count == 1 {
+                // See-through effects: the texture itself, times prm.
+                textures.push(FxTexture {
+                    width: tex.image.width,
+                    height: tex.image.height,
+                    rgba: tex.image.rgba.clone(),
+                    repeat: tex.wrap_s != Wrap::Clamp || tex.wrap_t != Wrap::Clamp,
+                    version: 1,
+                });
+            } else {
+                textures.extend(basis_images(tex, count));
+                if over {
+                    textures.push(coverage_image(tex));
+                }
+            }
+        }
+        Paint::Basis { first, count, over }
+    }
+}
+
 impl Particles {
     /// Loads the named effects from `dir/particle/<name>.jpa`; missing or unreadable ones are
     /// skipped (and never drawn).
@@ -559,146 +712,46 @@ impl Particles {
 
     /// Adds an effect under `name`.
     pub fn add(&mut self, name: &str, jpa: Jpa) {
-        let base = &jpa.base;
-        let stripe = base.kind == 5 || base.kind == 6;
-        let second = jpa.ex_tex.as_ref().is_some_and(|e| e.second_on());
-        let projected = stripe
-            && base.projection
-            && jpa
-                .ex_tex
-                .as_ref()
-                .is_some_and(|e| e.ind_mode == 1 && e.second_on());
-        let palette = base.kind == 2
-            && base.color_mode == 3
-            && base.col_anm_type == 4
-            && !base.global_col_anm
-            && !base.tex_anm
-            && (base.prm_anm || base.env_anm)
-            && base.blend_mode == 1
-            && base.blend_src == 6
-            && base.blend_dst == 7;
-        let paint = if let Some(source) = jpa
-            .textures
-            .get(base.texture as usize)
-            .filter(|_| palette)
-            .map(|t| &t.image)
-        {
-            let mut colors = Vec::new();
-            for i in 0..=base.col_anm_max.max(0) as usize {
-                let pair = (
-                    base.prm_table.get(i).copied().unwrap_or(base.prm),
-                    base.env_table.get(i).copied().unwrap_or(base.env),
-                );
-                if !colors.contains(&pair) {
-                    colors.push(pair);
-                }
-            }
-            let columns = (colors.len() as f32).sqrt().ceil().max(1.) as u32;
-            let tile = [source.width + 2, source.height + 2];
-            let width = columns * tile[0];
-            let height = (colors.len() as u32).div_ceil(columns) * tile[1];
-            let mut rgba = vec![0u8; (width * height * 4) as usize];
-            for (i, (prm, env)) in colors.iter().enumerate() {
-                for y in 0..source.height {
-                    for x in 0..source.width {
-                        let src = ((y * source.width + x) * 4) as usize;
-                        let dst = (((i as u32 / columns * tile[1] + 1 + y) * width
-                            + i as u32 % columns * tile[0]
-                            + 1
-                            + x)
-                            * 4) as usize;
-                        for k in 0..3 {
-                            let t = source.rgba[src + k] as f32 / 255.;
-                            rgba[dst + k] =
-                                (env[k] as f32 * (1. - t) + prm[k] as f32 * t).round() as u8;
-                        }
-                        rgba[dst + 3] = (source.rgba[src + 3] as u32 * prm[3] as u32 / 255) as u8;
-                    }
-                }
-            }
-            let texture = self.textures.len() as u32;
-            self.textures.push(FxTexture {
-                width,
-                height,
-                rgba,
-                repeat: false,
-                version: 1,
-            });
-            Paint::Palette {
-                texture,
-                colors,
-                columns,
-                tile,
-            }
-        } else if projected {
-            self.textures.push(refraction_image(&jpa));
-            Paint::Refraction {
-                texture: self.textures.len() as u32 - 1,
-            }
-        } else if stripe && second {
-            let size = jpa
-                .ex_tex
-                .as_ref()
-                .and_then(|e| jpa.textures.get(e.second_texture as usize))
-                .map_or(32, |t| t.image.width.max(t.image.height).clamp(8, 64));
-            self.textures.push(FxTexture {
-                width: size,
-                height: size,
-                rgba: vec![0; (size * size * 4) as usize],
-                repeat: false,
-                version: 0,
-            });
-            Paint::Baked {
-                texture: self.textures.len() as u32 - 1,
-            }
-        } else {
-            let over = base.blend_dst != 1 && base.tev().contains(&4);
-            let count = if quadratic(base) { 3 } else { 2 };
-            let count = if base.blend_dst == 1 || over {
-                count
-            } else {
-                1
-            };
-            let mut first = HashMap::new();
-            let mut wanted: Vec<u8> = base.tex_keys.clone();
-            wanted.push(base.texture);
-            for t in wanted {
-                if first.contains_key(&t) {
-                    continue;
-                }
-                let Some(tex) = jpa.textures.get(t as usize) else {
-                    continue;
-                };
-                first.insert(t, self.textures.len() as u32);
-                if count == 1 {
-                    // See-through effects: the texture itself, times prm.
-                    self.textures.push(FxTexture {
-                        width: tex.image.width,
-                        height: tex.image.height,
-                        rgba: tex.image.rgba.clone(),
-                        repeat: tex.wrap_s != Wrap::Clamp || tex.wrap_t != Wrap::Clamp,
-                        version: 1,
-                    });
-                } else {
-                    self.textures.extend(basis_images(tex, count));
-                    if over {
-                        self.textures.push(coverage_image(tex));
-                    }
-                }
-            }
-            Paint::Basis { first, count, over }
-        };
+        let paint = bake_paint(&mut self.textures, &jpa);
         self.by_name.insert(name.to_owned(), self.effects.len());
         self.effects.push(Effect {
             name: name.to_owned(),
             jpa,
             paint,
+            untinted: None,
             world_space: false,
             fixed_height: false,
             speed: 1.0,
             rate_scale: 1.0,
             life: None,
         });
+    }
+
+    /// A skin's palette: `on` turns the strongly red colours of the named effects green
+    /// (Luigi's alt-skin keeps Mario's effects but not his red); `off` restores the file's own
+    /// colours. A palette-kind effect bakes its colours into a texture, so that is rebuilt.
+    pub fn retint_red_to_green(&mut self, names: &[&str], on: bool) {
+        for &name in names {
+            let Some(&i) = self.by_name.get(name) else {
+                continue;
+            };
+            if on {
+                if self.effects[i].untinted.is_none() {
+                    self.effects[i].untinted = Some(self.effects[i].jpa.clone());
+                } else {
+                    self.effects[i].jpa = self.effects[i].untinted.clone().unwrap();
+                }
+                red_to_green(&mut self.effects[i].jpa);
+            } else if let Some(orig) = self.effects[i].untinted.take() {
+                self.effects[i].jpa = orig;
+            } else {
+                continue;
+            }
+            if matches!(self.effects[i].paint, Paint::Palette { .. }) {
+                let jpa = self.effects[i].jpa.clone();
+                self.effects[i].paint = bake_paint(&mut self.textures, &jpa);
+            }
+        }
     }
 
     /// Host presentation override: emitted puffs stay in the world while the emitter
@@ -3045,5 +3098,72 @@ mod tests {
         // (1 - t) env + t prm.
         assert!((k[0] - Vec3::new(0.2, 0.0, 0.0)).length() < 1e-6);
         assert!((k[1] - Vec3::new(1.0, 0.5, 0.0)).length() < 1e-6);
+    }
+
+    /// A skin tint touches only the red: the smear's red prm and the spark's red key turn
+    /// green, the blues/whites stay, and the file's colours come back for the other skin.
+    #[test]
+    fn a_skin_turns_only_the_red_colours_green_and_restores_them() {
+        let mut fx = Particles::default();
+        fx.add(
+            "smear",
+            Jpa {
+                emitter: libsms_assets::jpa::Emitter {
+                    lifetime: 5,
+                    ..Default::default()
+                },
+                base: BaseShape {
+                    prm: [255, 39, 15, 255],
+                    env: [39, 63, 255, 255],
+                    ..BaseShape::default()
+                },
+                fields: vec![],
+                extra: None,
+                ex_tex: None,
+                keys: vec![],
+                has_children: false,
+                textures: vec![],
+            },
+        );
+        fx.add(
+            "spark",
+            Jpa {
+                emitter: libsms_assets::jpa::Emitter {
+                    lifetime: 5,
+                    ..Default::default()
+                },
+                base: BaseShape {
+                    prm: [63, 87, 255, 255],
+                    env: [135, 231, 255, 255],
+                    prm_anm: true,
+                    col_anm_max: 1,
+                    prm_table: vec![[255, 87, 72, 183], [63, 87, 255, 255]],
+                    ..BaseShape::default()
+                },
+                fields: vec![],
+                extra: None,
+                ex_tex: None,
+                keys: vec![],
+                has_children: false,
+                textures: vec![],
+            },
+        );
+        let base = |fx: &Particles, name: &str| fx.effects[fx.by_name[name]].jpa.base.clone();
+        fx.retint_red_to_green(&["smear", "spark"], true);
+        let smear = base(&fx, "smear");
+        assert_eq!(smear.prm, [39, 255, 15, 255], "the smear's red is green");
+        assert_eq!(smear.env, [39, 63, 255, 255], "its blue mixing colour is not");
+        let spark = base(&fx, "spark");
+        assert_eq!(spark.prm, [63, 87, 255, 255], "the spark's blue prm is not");
+        assert_eq!(spark.prm_table[0], [87, 255, 72, 183], "its red key is green");
+        assert_eq!(spark.prm_table[1], [63, 87, 255, 255], "its blue key is not");
+        assert_eq!(spark.env, [135, 231, 255, 255], "its light blue env is not");
+        fx.retint_red_to_green(&["smear", "spark"], false);
+        assert_eq!(base(&fx, "smear").prm, [255, 39, 15, 255]);
+        assert_eq!(base(&fx, "spark").prm_table[0], [255, 87, 72, 183]);
+        // Tinting again from green changes nothing more: the file's colours are restored first.
+        fx.retint_red_to_green(&["smear"], true);
+        fx.retint_red_to_green(&["smear"], true);
+        assert_eq!(base(&fx, "smear").prm, [39, 255, 15, 255]);
     }
 }

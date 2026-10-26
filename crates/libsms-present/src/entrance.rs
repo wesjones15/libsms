@@ -534,23 +534,10 @@ impl Fast {
             &std::fs::read(dir.join("particle/ms_m_gout_gate.jpa")).map_err(|e| e.to_string())?,
         )
         .map_err(|e| e.to_string())?;
-        // Luigi alt-skin: swap only the strongly red palette entries. Peach/brown skin,
-        // blue overalls, white gloves and yellow accessories keep their original colours.
-        let tint = |c: &mut [u8; 4]| {
-            if c[0] as u16 > c[1] as u16 * 2 && c[0] as u16 > c[2] as u16 * 2 {
-                c.swap(0, 1);
-            }
-        };
-        tint(&mut jpa.base.prm);
-        tint(&mut jpa.base.env);
-        for c in jpa
-            .base
-            .prm_table
-            .iter_mut()
-            .chain(jpa.base.env_table.iter_mut())
-        {
-            tint(c);
-        }
+        // Luigi alt-skin: swap only the strongly red palette entries (the same rule the
+        // gameplay effects use). Peach/brown skin, blue overalls, white gloves and yellow
+        // accessories keep their original colours.
+        crate::particles::red_to_green(&mut jpa);
         let mut fx = Particles::default();
         fx.add("ms_m_gout_gate", jpa);
         fx.set_speed("ms_m_gout_gate", 2.);

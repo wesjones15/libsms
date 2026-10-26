@@ -436,6 +436,12 @@ pub const MARIO_EFFECTS: &[&str] = &[
     "ms_watboost_b",
 ];
 
+/// Luigi's alt-skin: Mario's effects are his, but the red parts turn green. From
+/// `TMario::emitBlurSpinJump` (MarioParticle.cpp:564: the spin jump's swirl `ms_m_blur2` and
+/// its spark `ms_m_blur2sp`) and `TMario::emitBlurHipDrop` (:546: the ground pound's smear
+/// `ms_m_blur3`). Their textures are grey, so all their colour is in the JPA's prm/env.
+pub const LUIGI_RED_EFFECTS: &[&str] = &["ms_m_blur2", "ms_m_blur2sp", "ms_m_blur3"];
+
 /// Host presentation: dust/smoke trails remain where they were emitted when Mario jumps.
 pub const SMOKE_EFFECTS: &[&str] = &[
     "ms_mariwalk1_a",
@@ -1290,8 +1296,14 @@ impl View {
     /// Muzzle matrices a host posed itself (an alt-skin's FLUDD), in Mario's model space:
     /// from this frame on, the nozzle mist and the water leave those instead of this view's.
     /// Whose body the view draws (a skin picks the mesh; the clips and FLUDD look are shared).
+    /// Luigi's alt-skin also turns Mario's red effects green ([`LUIGI_RED_EFFECTS`]).
     pub fn set_skin(&mut self, skin: Skin) {
+        if self.skin == skin {
+            return;
+        }
         self.skin = skin;
+        self.fx
+            .retint_red_to_green(LUIGI_RED_EFFECTS, skin == Skin::Luigi);
     }
 
     /// Loads Luigi's HSD mesh from the Melee cache (alongside the Sunshine assets this view was
