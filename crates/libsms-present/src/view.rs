@@ -27,7 +27,7 @@ use crate::coins::{CoinMeter, Kind as CoinKind};
 use crate::democam::DemoCamera;
 use crate::life::LifeMeter;
 use crate::screenfx::ScreenFx;
-use crate::particles::Particles;
+use crate::particles::{GreenRule, Particles};
 use crate::tev::{Baked, C4, Inputs, Source, Tex, env_uv};
 
 #[path = "entrance.rs"]
@@ -441,6 +441,16 @@ pub const MARIO_EFFECTS: &[&str] = &[
 /// its spark `ms_m_blur2sp`) and `TMario::emitBlurHipDrop` (:546: the ground pound's smear
 /// `ms_m_blur3`). Their textures are grey, so all their colour is in the JPA's prm/env.
 pub const LUIGI_RED_EFFECTS: &[&str] = &["ms_m_blur2", "ms_m_blur2sp", "ms_m_blur3"];
+
+/// The super ground pound's fireball (`TMario::emitBlurHipDropSuper`, MarioParticle.cpp:552:
+/// `PARTICLE_MS_M_SPHIPD_A..D`). Its fire runs red through orange to yellow, so every warm
+/// entry turns green ([`GreenRule::Fire`]) rather than only the saturated red ones.
+pub const LUIGI_FIRE_EFFECTS: &[&str] = &[
+    "ms_m_sphipd_a",
+    "ms_m_sphipd_b",
+    "ms_m_sphipd_c",
+    "ms_m_sphipd_d",
+];
 
 /// Host presentation: dust/smoke trails remain where they were emitted when Mario jumps.
 pub const SMOKE_EFFECTS: &[&str] = &[
@@ -1296,14 +1306,18 @@ impl View {
     /// Muzzle matrices a host posed itself (an alt-skin's FLUDD), in Mario's model space:
     /// from this frame on, the nozzle mist and the water leave those instead of this view's.
     /// Whose body the view draws (a skin picks the mesh; the clips and FLUDD look are shared).
-    /// Luigi's alt-skin also turns Mario's red effects green ([`LUIGI_RED_EFFECTS`]).
+    /// Luigi's alt-skin also turns Mario's red effects green ([`LUIGI_RED_EFFECTS`]) and his
+    /// pound's fireball green ([`LUIGI_FIRE_EFFECTS`]).
     pub fn set_skin(&mut self, skin: Skin) {
         if self.skin == skin {
             return;
         }
         self.skin = skin;
+        let luigi = skin == Skin::Luigi;
         self.fx
-            .retint_red_to_green(LUIGI_RED_EFFECTS, skin == Skin::Luigi);
+            .retint_to_green(LUIGI_RED_EFFECTS, luigi, GreenRule::Red);
+        self.fx
+            .retint_to_green(LUIGI_FIRE_EFFECTS, luigi, GreenRule::Fire);
     }
 
     /// Loads Luigi's HSD mesh from the Melee cache (alongside the Sunshine assets this view was

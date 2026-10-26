@@ -539,13 +539,30 @@ fn basis_images(tex: &Texture, count: u32) -> Vec<FxTexture> {
         .collect()
 }
 
+/// How a skin's palette swap picks the entries it turns green.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum GreenRule {
+    /// Only the strongly red entries (twice the green and blue): the smears and the statue's gate.
+    Red,
+    /// Every warm entry (red above both green and blue): fire, whose red runs through orange.
+    Fire,
+}
+
 /// The strongly red colours (twice the green and blue, the rule the statue's gate particles
 /// use) become green; whites, blues and everything else are left alone. Shared with the
 /// statue's gate particles, which are tinted at load.
 pub(crate) fn red_to_green(jpa: &mut Jpa) {
+    turn_green(jpa, GreenRule::Red);
+}
+
+fn turn_green(jpa: &mut Jpa, rule: GreenRule) {
     let base = &mut jpa.base;
     let swap = |c: &mut [u8; 4]| {
-        if c[0] as u16 > c[1] as u16 * 2 && c[0] as u16 > c[2] as u16 * 2 {
+        let warm = match rule {
+            GreenRule::Red => c[0] as u16 > c[1] as u16 * 2 && c[0] as u16 > c[2] as u16 * 2,
+            GreenRule::Fire => c[0] > c[1] && c[0] > c[2],
+        };
+        if warm {
             c.swap(0, 1);
         }
     };
@@ -727,10 +744,10 @@ impl Particles {
         });
     }
 
-    /// A skin's palette: `on` turns the strongly red colours of the named effects green
-    /// (Luigi's alt-skin keeps Mario's effects but not his red); `off` restores the file's own
-    /// colours. A palette-kind effect bakes its colours into a texture, so that is rebuilt.
-    pub fn retint_red_to_green(&mut self, names: &[&str], on: bool) {
+    /// A skin's palette: `on` turns the colours of the named effects green by `rule` (Luigi's
+    /// alt-skin keeps Mario's effects but not his red); `off` restores the file's own colours. A
+    /// palette-kind effect bakes its colours into a texture, so that is rebuilt.
+    pub fn retint_to_green(&mut self, names: &[&str], on: bool, rule: GreenRule) {
         for &name in names {
             let Some(&i) = self.by_name.get(name) else {
                 continue;
@@ -741,7 +758,7 @@ impl Particles {
                 } else {
                     self.effects[i].jpa = self.effects[i].untinted.clone().unwrap();
                 }
-                red_to_green(&mut self.effects[i].jpa);
+                turn_green(&mut self.effects[i].jpa, rule);
             } else if let Some(orig) = self.effects[i].untinted.take() {
                 self.effects[i].jpa = orig;
             } else {
@@ -3149,7 +3166,7 @@ mod tests {
             },
         );
         let base = |fx: &Particles, name: &str| fx.effects[fx.by_name[name]].jpa.base.clone();
-        fx.retint_red_to_green(&["smear", "spark"], true);
+        fx.retint_to_green(&["smear", "spark"], true, GreenRule::Red);
         let smear = base(&fx, "smear");
         assert_eq!(smear.prm, [39, 255, 15, 255], "the smear's red is green");
         assert_eq!(smear.env, [39, 63, 255, 255], "its blue mixing colour is not");
@@ -3158,13 +3175,53 @@ mod tests {
         assert_eq!(spark.prm_table[0], [87, 255, 72, 183], "its red key is green");
         assert_eq!(spark.prm_table[1], [63, 87, 255, 255], "its blue key is not");
         assert_eq!(spark.env, [135, 231, 255, 255], "its light blue env is not");
-        fx.retint_red_to_green(&["smear", "spark"], false);
+        fx.retint_to_green(&["smear", "spark"], false, GreenRule::Red);
         assert_eq!(base(&fx, "smear").prm, [255, 39, 15, 255]);
         assert_eq!(base(&fx, "spark").prm_table[0], [255, 87, 72, 183]);
         // Tinting again from green changes nothing more: the file's colours are restored first.
-        fx.retint_red_to_green(&["smear"], true);
-        fx.retint_red_to_green(&["smear"], true);
+        fx.retint_to_green(&["smear"], true, GreenRule::Red);
+        fx.retint_to_green(&["smear"], true, GreenRule::Red);
         assert_eq!(base(&fx, "smear").prm, [39, 255, 15, 255]);
+    }
+
+    /// The pound flames run red through orange, so the fire rule takes every warm entry while
+    /// the white core stays; the smears' strongly-red-only rule would have missed the orange.
+    #[test]
+    fn the_fire_rule_turns_the_pound_flames_green() {
+        let mut fx = Particles::default();
+        fx.add(
+            "flame",
+            Jpa {
+                emitter: libsms_assets::jpa::Emitter {
+                    lifetime: 5,
+                    ..Default::default()
+                },
+                base: BaseShape {
+                    prm: [255, 255, 255, 255],
+                    env: [255, 144, 0, 255],
+                    env_anm: true,
+                    col_anm_max: 1,
+                    env_table: vec![[255, 144, 0, 255], [255, 0, 0, 255]],
+                    ..BaseShape::default()
+                },
+                fields: vec![],
+                extra: None,
+                ex_tex: None,
+                keys: vec![],
+                has_children: false,
+                textures: vec![],
+            },
+        );
+        fx.retint_to_green(&["flame"], true, GreenRule::Fire);
+        let e = |fx: &Particles| fx.effects[fx.by_name["flame"]].jpa.base.clone();
+        assert_eq!(e(&fx).prm, [255, 255, 255, 255], "the white core stays white");
+        assert_eq!(e(&fx).env, [144, 255, 0, 255], "orange becomes green");
+        assert_eq!(e(&fx).env_table[0], [144, 255, 0, 255]);
+        assert_eq!(e(&fx).env_table[1], [0, 255, 0, 255], "red becomes green");
+        // The strict rule leaves that orange alone, which is why fire has its own.
+        fx.retint_to_green(&["flame"], false, GreenRule::Fire);
+        fx.retint_to_green(&["flame"], true, GreenRule::Red);
+        assert_eq!(e(&fx).env, [255, 144, 0, 255]);
     }
 
     /// The green is not shipped: it comes from the user's own disc. A first run extracts
@@ -3191,7 +3248,7 @@ mod tests {
         }
         let prm = |fx: &Particles, name: &str| fx.effects[fx.by_name[name]].jpa.base.prm;
         assert_eq!(prm(&fx, "ms_m_blur3"), [255, 39, 15, 255], "the file's red");
-        fx.retint_red_to_green(&["ms_m_blur2", "ms_m_blur2sp", "ms_m_blur3"], true);
+        fx.retint_to_green(&["ms_m_blur2", "ms_m_blur2sp", "ms_m_blur3"], true, GreenRule::Red);
         assert_eq!(prm(&fx, "ms_m_blur3"), [39, 255, 15, 255], "green, in memory");
         assert_eq!(
             fx.effects[fx.by_name["ms_m_blur2sp"]].jpa.base.prm_table[0],

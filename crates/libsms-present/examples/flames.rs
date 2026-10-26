@@ -16,9 +16,15 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let out = args.next().unwrap_or_else(|| "flames.png".into());
     let extra: u32 = args.next().and_then(|s| s.parse().ok()).unwrap_or(40);
+    let luigi = std::env::args().any(|a| a == "luigi");
     let dir = libsms::assets::find(None).expect("no assets/");
     let a = libsms::Assets::load(&dir);
     let mut view = View::load(&dir).expect("Mario's models");
+    view.set_skin(if luigi {
+        libsms_present::view::Skin::Luigi
+    } else {
+        libsms_present::view::Skin::Mario
+    });
     let mut sim = Sim::new(a.params, a.anim_table, Vec3::new(0.0, 6000.0, 0.0), 0);
     let mut host = FlatHost::default();
     let dt = 1.0 / 120.0;
