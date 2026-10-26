@@ -18,7 +18,9 @@ use libsms_assets::bmd::{Material, TevCombiner};
 use libsms_assets::texture::Wrap;
 use libsms_assets::{Bmd, Image};
 
-pub type C4 = [f32; 4];
+pub use libcommon::tev::C4;
+use libcommon::tev::{Combine, Regs, alpha_in, color_in, combine_alpha, combine_color, konst};
+use libcommon::texture::sample_rgba8_bilinear;
 
 /// Per-draw changes to a material's inputs.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
@@ -101,154 +103,13 @@ pub fn env_uv(nx: f32, ny: f32, mtx: Option<[[f32; 3]; 2]>) -> [f32; 2] {
     }
 }
 
-/// GX konst selection (`GXTevKColorSel` / `GXTevKAlphaSel`): 0..7 are fractions 8/8..1/8,
-/// 12..15 a konst colour, then its R, G, B, A replicated.
-fn konst(sel: u8, k: &[C4; 4]) -> C4 {
-    if sel < 8 {
-        return [1.0 - sel as f32 / 8.0; 4];
-    }
-    let c = k[(sel as usize).wrapping_sub(12) % 4];
-    match sel {
-        12..=15 => c,
-        16..=19 => [c[0]; 4],
-        20..=23 => [c[1]; 4],
-        24..=27 => [c[2]; 4],
-        _ => [c[3]; 4],
-    }
-}
-
 fn swizzle(c: C4, table: [u8; 4]) -> C4 {
     table.map(|i| c[(i & 3) as usize])
 }
 
-struct Regs {
-    prev: C4,
-    r: [C4; 3],
-}
-
-/// `GXTevColorArg`.
-fn color_in(a: u8, g: &Regs, tex: C4, ras: C4, k: C4) -> [f32; 3] {
-    let rgb = |c: C4| [c[0], c[1], c[2]];
-    let rep = |v: f32| [v; 3];
-    match a {
-        0 => rgb(g.prev),
-        1 => rep(g.prev[3]),
-        2 => rgb(g.r[0]),
-        3 => rep(g.r[0][3]),
-        4 => rgb(g.r[1]),
-        5 => rep(g.r[1][3]),
-        6 => rgb(g.r[2]),
-        7 => rep(g.r[2][3]),
-        8 => rgb(tex),
-        9 => rep(tex[3]),
-        10 => rgb(ras),
-        11 => rep(ras[3]),
-        12 => rep(1.0),
-        13 => rep(0.5),
-        14 => rgb(k),
-        _ => rep(0.0),
-    }
-}
-
-/// `GXTevAlphaArg`.
-fn alpha_in(a: u8, g: &Regs, tex: C4, ras: C4, k: C4) -> f32 {
-    match a {
-        0 => g.prev[3],
-        1 => g.r[0][3],
-        2 => g.r[1][3],
-        3 => g.r[2][3],
-        4 => tex[3],
-        5 => ras[3],
-        6 => k[3],
-        _ => 0.0,
-    }
-}
-
-fn slot(g: &mut Regs, out: u8) -> &mut C4 {
-    match out {
-        0 => &mut g.prev,
-        n => &mut g.r[(n as usize - 1).min(2)],
-    }
-}
 
 fn b8(v: f32) -> u32 {
     (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u32
-}
-
-fn bias(b: u8) -> f32 {
-    match b {
-        1 => 0.5,
-        2 => -0.5,
-        _ => 0.0,
-    }
-}
-
-fn scale(s: u8) -> f32 {
-    match s {
-        1 => 2.0,
-        2 => 4.0,
-        3 => 0.5,
-        _ => 1.0,
-    }
-}
-
-/// One colour combiner: `(d ± lerp(a, b, c) + bias) * scale`, or a compare op
-/// (`GX_TEV_COMP_*`: `d + (a OP b ? c : 0)`).
-fn combine_color(c: &TevCombiner, a: [f32; 3], b: [f32; 3], cc: [f32; 3], d: [f32; 3]) -> [f32; 3] {
-    let cl = |v: [f32; 3]| v.map(|x| x.clamp(0.0, 1.0));
-    let (a, b, cc) = (cl(a), cl(b), cl(cc));
-    if c.op <= 1 {
-        return std::array::from_fn(|i| {
-            let l = a[i] + (b[i] - a[i]) * cc[i];
-            let v = (d[i] + if c.op == 1 { -l } else { l } + bias(c.bias)) * scale(c.scale);
-            if c.clamp {
-                v.clamp(0.0, 1.0)
-            } else {
-                v.clamp(-4.0, 4.0)
-            }
-        });
-    }
-    let gr16 = |v: [f32; 3]| b8(v[1]) << 8 | b8(v[0]);
-    let bgr24 = |v: [f32; 3]| b8(v[2]) << 16 | b8(v[1]) << 8 | b8(v[0]);
-    let hit = match c.op {
-        8 => Some(b8(a[0]) > b8(b[0])),
-        9 => Some(b8(a[0]) == b8(b[0])),
-        10 => Some(gr16(a) > gr16(b)),
-        11 => Some(gr16(a) == gr16(b)),
-        12 => Some(bgr24(a) > bgr24(b)),
-        13 => Some(bgr24(a) == bgr24(b)),
-        _ => None,
-    };
-    match hit {
-        Some(h) => std::array::from_fn(|i| (d[i] + if h { cc[i] } else { 0.0 }).clamp(0.0, 1.0)),
-        None => std::array::from_fn(|i| {
-            let m = if c.op == 14 {
-                b8(a[i]) > b8(b[i])
-            } else {
-                b8(a[i]) == b8(b[i])
-            };
-            (d[i] + if m { cc[i] } else { 0.0 }).clamp(0.0, 1.0)
-        }),
-    }
-}
-
-fn combine_alpha(c: &TevCombiner, a: f32, b: f32, cc: f32, d: f32) -> f32 {
-    let (a, b, cc) = (a.clamp(0.0, 1.0), b.clamp(0.0, 1.0), cc.clamp(0.0, 1.0));
-    if c.op <= 1 {
-        let l = a + (b - a) * cc;
-        let v = (d + if c.op == 1 { -l } else { l } + bias(c.bias)) * scale(c.scale);
-        return if c.clamp {
-            v.clamp(0.0, 1.0)
-        } else {
-            v.clamp(-4.0, 4.0)
-        };
-    }
-    let hit = if c.op.is_multiple_of(2) {
-        b8(a) > b8(b)
-    } else {
-        b8(a) == b8(b)
-    };
-    (d + if hit { cc } else { 0.0 }).clamp(0.0, 1.0)
 }
 
 /// `GXSetAlphaCompare` on the 8-bit alpha.
@@ -436,6 +297,12 @@ impl Source<'_> {
             prev: [0.0; 4],
             r: m.tev_colors.map(|c| c.map(|v| v as f32 / 255.0)),
         };
+        let combine = |c: &TevCombiner| Combine {
+            op: c.op,
+            bias: c.bias,
+            scale: c.scale,
+            clamp: c.clamp,
+        };
         for (i, s) in m.stages.iter().enumerate() {
             let ras = match s.channel {
                 0 => [ch[0][0], ch[0][1], ch[0][2], 0.0],
@@ -450,7 +317,7 @@ impl Source<'_> {
             let ka = konst(s.kalpha_sel, &k);
             let c = &s.color;
             let rgb = combine_color(
-                c,
+                &combine(c),
                 color_in(c.a, &g, tx, ras, kc),
                 color_in(c.b, &g, tx, ras, kc),
                 color_in(c.c, &g, tx, ras, kc),
@@ -458,14 +325,14 @@ impl Source<'_> {
             );
             let al = &s.alpha;
             let a = combine_alpha(
-                al,
+                &combine(al),
                 alpha_in(al.a, &g, tx, ras, ka),
                 alpha_in(al.b, &g, tx, ras, ka),
                 alpha_in(al.c, &g, tx, ras, ka),
                 alpha_in(al.d, &g, tx, ras, ka),
             );
-            slot(&mut g, c.out)[..3].copy_from_slice(&rgb);
-            slot(&mut g, al.out)[3] = a;
+            g.slot(c.out)[..3].copy_from_slice(&rgb);
+            g.slot(al.out)[3] = a;
         }
         let mut out = g.prev.map(|v| v.clamp(0.0, 1.0));
         if !m.alpha_compare.always_passes() {
@@ -593,34 +460,9 @@ impl Source<'_> {
     }
 }
 
-/// Bilinear filtering at `uv`, wrapping as the texture says.
+/// Bilinear filtering at `uv`, wrapping as the texture says (host codes: 0 repeat, 1 clamp,
+/// 2 mirror). White for an empty image.
 fn sample(img: &Image, wrap: [u8; 2], u: f32, v: f32) -> C4 {
-    let (w, h) = (img.width as i32, img.height as i32);
-    if w == 0 || h == 0 {
-        return [1.0; 4];
-    }
-    let fix = |i: i32, n: i32, mode: u8| {
-        Wrap::from_host(mode).index(i64::from(i), n as u32) as i32
-    };
-    let texel = |x: i32, y: i32| {
-        let (x, y) = (fix(x, w, wrap[0]), fix(y, h, wrap[1]));
-        let o = (y * w + x) as usize * 4;
-        let p = &img.rgba[o..o + 4];
-        [p[0], p[1], p[2], p[3]].map(|c| c as f32 / 255.0)
-    };
-    let (x, y) = (u * w as f32 - 0.5, v * h as f32 - 0.5);
-    let (x0, y0) = (x.floor(), y.floor());
-    let (fx, fy) = (x - x0, y - y0);
-    let (x0, y0) = (x0 as i32, y0 as i32);
-    let (a, b, c, d) = (
-        texel(x0, y0),
-        texel(x0 + 1, y0),
-        texel(x0, y0 + 1),
-        texel(x0 + 1, y0 + 1),
-    );
-    std::array::from_fn(|i| {
-        let top = a[i] + (b[i] - a[i]) * fx;
-        let bottom = c[i] + (d[i] - c[i]) * fx;
-        top + (bottom - top) * fy
-    })
+    sample_rgba8_bilinear(img.width, img.height, &img.rgba, wrap.map(Wrap::from_host), u, v)
+        .unwrap_or([1.0; 4])
 }
