@@ -114,6 +114,18 @@ pub enum Status {
     YoshiThrown,
     /// Out of health (`DOWN_LOSER`, `loserDown`): lying down for good.
     DownLoser,
+    // On fire (MarioJump.cpp `fireDowning` / `fireJumping` / `fireLanding`, MarioRun.cpp
+    // `fireDashing`, MarioWait.cpp `fireJumpEnd`).
+    /// Thrown up by a fire hit, butt burning (`FIRE_DOWN`, arg 1): bounces twice, yelling.
+    FireDown,
+    /// A hop out of the panicked run (`FIRE_JUMP`).
+    FireJump,
+    /// Fell off an edge while running on fire (`FIRE_LAND`).
+    FireLand,
+    /// Running about in a panic, uncontrollably fast (`FIRE_DASH`).
+    FireDash,
+    /// Flat on his back after the fire has burned out (`FIRE_JUMP_END`).
+    FireJumpEnd,
     /// Got a Shine Sprite (`MARIO_STATUS_WIN_DEMO`, `winDemo`, MarioAutodemo.cpp): lands, then
     /// holds the Shine over his head until the host ends the demo ([`Mario::end_win_demo`]).
     WinDemo,
@@ -133,11 +145,13 @@ impl Status {
         use Status::*;
         match self {
             Wait | Squat | SquatStandup | JumpEnd | SecJumpEnd | LandEnd | UTurnJumpEnd
-            | UltraJumpEnd | BroadJumpEnd | HipAttackEnd | BrakeEnd | SlipEnd => Kind::Waiting,
+            | UltraJumpEnd | BroadJumpEnd | HipAttackEnd | BrakeEnd | SlipEnd | FireJumpEnd => {
+                Kind::Waiting
+            }
             Run | RotateL | RotateR | Turn | TurnEnd | Brake | WalkEnd | Slip | SlipFore
             | SlipBack | Catch | JumpSlip | LandSlip | SecJumpSlip | UTurnJumpSlip
             | UltraJumpSlip | BroadJumpSlip | BackDown | ForeDown | ShortBackDown
-            | ShortForeDown | SafeBackDown | SafeForeDown | CatchDown => Kind::Running,
+            | ShortForeDown | SafeBackDown | SafeForeDown | CatchDown | FireDash => Kind::Running,
             CatchLost | Take | TakePose | Putting | Pitching => Kind::Action,
             Hanging | Ascend | Descend | HangJumping | DownLoser | WinDemo => Kind::Special,
             _ => Kind::Jumping,
@@ -237,6 +251,10 @@ pub struct Options {
     /// Once a knock-down's slide has nearly spent itself, A, the stick, B, L or R gets him up at
     /// once instead of after the whole get-up clip. false: the game's.
     pub knockdown_cancel: bool,
+    /// After the fire hit's second bounce Mario gets up running in a panic (`FIRE_DASH`) instead of
+    /// lying down (`FIRE_JUMP_END`, the game's). The decomp has the panicked run but nothing
+    /// enters it; this is the host's way in. false: the game's.
+    pub fire_panic_run: bool,
 }
 
 /// Ticks either side of a stomp in which A counts for [`Options::stomp_jump`].
@@ -264,6 +282,7 @@ impl Default for Options {
             slide_fx_scale: 1.0,
             unlimited_water: false,
             knockdown_cancel: false,
+            fire_panic_run: false,
         }
     }
 }
@@ -1289,6 +1308,20 @@ impl Mario {
                 self.forward_vel = j.rot_broad_jump_force;
                 self.vel.y = j.rot_broad_jump_force_y;
                 event = Some(JumpKind::Long);
+            }
+            // setStatusToJumping: a hop out of the panicked run, and the fire hit's throw up
+            // (arg 0 also pushes back; arg 2 keeps the velocity it has).
+            Status::FireJump => {
+                self.vel.y = 31.5;
+                self.forward_vel = 8.0;
+            }
+            Status::FireDown => {
+                if arg != 2 {
+                    self.vel.y = j.fire_down_force;
+                    if arg == 0 {
+                        self.forward_vel = -j.fire_back_velocity;
+                    }
+                }
             }
             Status::Rocket => {
                 // setStatusToJumping case ROCKET: each nozzle's start voice, the Rocket's burst of

@@ -28,7 +28,7 @@ use libsms::{
 use view::SmsView;
 
 /// ABI version, bumped when the C interface changes.
-pub const SMS_ABI_VERSION: u32 = 30;
+pub const SMS_ABI_VERSION: u32 = 31;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sms_abi_version() -> u32 {
@@ -813,6 +813,8 @@ pub unsafe extern "C" fn sms_sim_new(
         // RoR2 permits the primary Spray while B-diving or belly sliding.
         sim.mario.options.spray_during_dive = true;
         sim.mario.options.redive_after_slide = true;
+        // A burning Mario runs about in a panic (the decomp's FIRE_DASH) rather than lying down.
+        sim.mario.options.fire_panic_run = true;
         Some(sim)
     });
     match made {
@@ -1178,6 +1180,22 @@ pub unsafe extern "C" fn sms_sim_knock_down(
     0
 }
 
+/// Sets Mario on fire (the host's burning, with no attacker and no sim health lost): he is
+/// thrown up by the decomp's `FIRE_DOWN`, yells, bounces twice and runs about in a panic
+/// (`FIRE_DASH`). Not while he is down, already burning, or diving or pounding. Returns 1 if
+/// it took.
+///
+/// # Safety
+/// `sim` from [`sms_sim_new`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_sim_ignite(sim: *mut SmsSim) -> u8 {
+    // SAFETY: the caller promised a valid pointer.
+    match unsafe { sim.as_mut() } {
+        Some(s) => s.sim.mario.ignite() as u8,
+        None => 0,
+    }
+}
+
 /// Boosts the jump Mario is in: horizontal travel times `factor` until he lands (a host's
 /// sprint-jump item). Ignored on the ground.
 ///
@@ -1511,6 +1529,7 @@ mod tests {
             assert!((*sim).sim.mario.options.spray_during_dive);
             assert!((*sim).sim.mario.options.redive_after_slide);
             assert_eq!((*sim).water.spray_speed, 1.4);
+            assert!((*sim).sim.mario.options.fire_panic_run);
             let run = SmsPad {
                 move_x: 1.0,
                 use_move: 1,

@@ -6,7 +6,7 @@ use crate::anim::{ClipName, clip};
 use crate::event::Event;
 use crate::host::{Host, SurfaceFlags};
 use crate::mario::{HEIGHT, Mario, Status};
-use crate::math::diff;
+use crate::math::{cos, diff, fconverge, sin, to_angle};
 use crate::params::NozzleKind;
 
 /// 120 Hz ticks after a jump pad throws him before a move can break the flight, so a button held through the launch (a B or R from before) doesn't.
@@ -200,6 +200,9 @@ impl Mario {
                 let v = self.forward_vel;
                 self.jump_down(host, LandSlip, clip::LAND, v)
             }
+            FireDown => self.fire_downing(host),
+            FireJump => self.fire_jumping(host),
+            FireLand => self.fire_landing(host),
             WallSlide => self.stay_wall(host),
             CatchStop => self.catch_stop(host),
             SlipFall => self.slip_falling(host),
@@ -725,6 +728,88 @@ impl Mario {
             }
             _ => {}
         }
+        false
+    }
+
+    /// `fireDowning`: thrown up by a fire hit. Mario yells, steers a little, and bounces twice
+    /// (0.4 of the fall speed back up) before he lands for good.
+    fn fire_downing(&mut self, host: &mut dyn Host) -> bool {
+        // The yell comes on the second tick (`mStatusTimer == 1` before the increment).
+        if self.status_timer == 1 {
+            self.voice("MSD_SE_MV05_DAMAGE_FIRE_01");
+        }
+        self.status_timer += 1;
+        if self.input.stick {
+            let angle = self.intended_yaw.wrapping_sub(self.face_yaw);
+            let inc = 0.03125 * self.intended_mag * self.params.jump.fire_down_control;
+            self.forward_vel += inc * cos(angle);
+            self.face_yaw = self
+                .face_yaw
+                .wrapping_add(to_angle(1024.0 * inc * sin(angle)));
+            if self.forward_vel < 0.0 {
+                self.face_yaw = self.face_yaw.wrapping_add(i16::MIN);
+                self.forward_vel = -self.forward_vel;
+            }
+            if self.forward_vel > 32.0 {
+                self.forward_vel -= 2.0;
+            }
+        } else {
+            self.forward_vel = fconverge(self.forward_vel, 0.0, 0.35, 0.35);
+        }
+        self.slide_x = self.forward_vel * sin(self.face_yaw);
+        self.slide_z = self.forward_vel * cos(self.face_yaw);
+        self.vel.x = self.slide_x;
+        self.vel.z = self.slide_z;
+        match self.jump_process(host, 0) {
+            1 => {
+                if self.status_state < 2 && self.vel.y < 0.0 {
+                    self.vel.y = 0.4 * -self.vel.y;
+                    self.set_player_velocity(0.5 * self.forward_vel);
+                    self.status_state += 1;
+                } else {
+                    self.voice("MSD_SE_MV07_DAMAGE_REACT_01");
+                    // The game lies down (`FIRE_JUMP_END`); the host's option gets up running.
+                    let to = if self.options.fire_panic_run {
+                        Status::FireDash
+                    } else {
+                        Status::FireJumpEnd
+                    };
+                    self.change_status(to, 0, false);
+                }
+            }
+            2 => self.player_refrection(false, host),
+            _ => {}
+        }
+        self.set_anim("firejmp", 1.0);
+        self.fire_flicker();
+        false
+    }
+
+    /// `fireJumping`: a hop out of the panicked run, which goes on when he lands.
+    fn fire_jumping(&mut self, host: &mut dyn Host) -> bool {
+        if self.status_timer == 1 {
+            self.voice("MSD_SE_MV05_DAMAGE_FIRE_01");
+        }
+        self.status_timer += 1;
+        self.set_player_velocity(self.forward_vel);
+        if self.jump_process(host, 0) == 1 {
+            self.change_status(Status::FireDash, 0, false);
+        }
+        // `mStatusArg == 0` plays the plain jump clip; the dash's hop (arg 0) does.
+        let c = if self.status_arg == 0 { clip::JUMP } else { "firejmp" };
+        self.set_anim(c, 1.0);
+        self.fire_flicker();
+        false
+    }
+
+    /// `fireLanding`: off an edge in the panicked run; lands back in it.
+    fn fire_landing(&mut self, host: &mut dyn Host) -> bool {
+        self.set_player_velocity(self.forward_vel);
+        if self.jump_process(host, 0) == 1 {
+            self.change_status(Status::FireDash, 0, false);
+        }
+        self.set_anim(clip::LAND, 1.0);
+        self.fire_flicker();
         false
     }
 

@@ -212,6 +212,16 @@ impl Mario {
                 self.jump_end_common(host, clip::LAND_END, Wait);
                 false
             }
+            FireJumpEnd => {
+                // `fireJumpEnd`: no jump or dive button while he gets up.
+                self.input.jump = false;
+                self.input.b_pressed = false;
+                if self.jump_end_events(None) {
+                    return true;
+                }
+                self.jump_end_common(host, "fjpend", Wait);
+                false
+            }
             UTurnJumpEnd => {
                 if self.jump_end_events(None) {
                     return true;
@@ -501,6 +511,7 @@ impl Mario {
             SafeBackDown => self.downing(host, "sfbdn", 200.0),
             SafeForeDown => self.downing(host, "sffdn", 100.0),
             CatchDown => self.downing(host, "sldwn", 128.0),
+            FireDash => self.fire_dashing(host),
             Slip => false,
             _ => false,
         }
@@ -622,6 +633,32 @@ impl Mario {
             self.fx("ms_watboost_a", crate::event::FxAt::Muzzle(0));
             self.fx("ms_watboost_b", crate::event::FxAt::Muzzle(0));
         }
+        false
+    }
+
+    /// `fireDashing`: running about in a panic. Mario can't stop: he runs at about 32, turns
+    /// toward the stick a little each tick, and hops (A) or tumbles off edges, until the panic
+    /// wears off after 0xA0 ticks or he reaches water.
+    fn fire_dashing(&mut self, host: &mut dyn Host) -> bool {
+        if self.input.jump {
+            return self.change_status(Status::FireJump, 0, false);
+        }
+        let timer = self.status_timer;
+        self.status_timer += 1;
+        if timer > 0xA0 || self.in_water {
+            return self.change_status(Status::Run, 0, false);
+        }
+        self.forward_vel = self.forward_vel.clamp(8.0, 48.0);
+        self.forward_vel = fconverge(self.forward_vel, 32.0, 4.0, 1.0);
+        if self.input.stick {
+            self.face_yaw = math::turn_toward(self.face_yaw, self.intended_yaw, 0x600);
+        }
+        self.slope_process();
+        if self.walk_process(host) == 0 {
+            self.change_status(Status::FireLand, 0, false);
+        }
+        self.set_anim("firejmp", 0.1 * (0.5 * self.forward_vel));
+        self.fire_flicker();
         false
     }
 

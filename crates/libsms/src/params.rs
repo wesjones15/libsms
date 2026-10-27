@@ -90,6 +90,9 @@ params! {
         jump_accel_control: f32 = 0.5, "mJumpAccelControl";
         jump_slide_control: f32 = 0.5, "mJumpSlideControl";
         turn_jump_force: f32 = 62.0, "mTurnJumpForce";
+        fire_down_force: f32 = 80.0, "mFireDownForce";
+        fire_down_control: f32 = 1.0, "mFireDownControl";
+        fire_back_velocity: f32 = 1.0, "mFireBackVelocity";
         broad_jump_force: f32 = 80.0, "mBroadJumpForce";
         broad_jump_force_y: f32 = 30.0, "mBroadJumpForceY";
         rotate_jump_force_y: f32 = 62.0, "mRotateJumpForceY";

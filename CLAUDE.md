@@ -131,5 +131,5 @@ double/triple chain, dive/belly slide, ground pound, wall slide/kick, bump knock
 Spray/Hover/Rocket/Turbo, crouch, nozzle swap, FLUDD/nozzle/pumping-arm animation and sound cues,
 water particles, ledge grab/hanging/shimmy/climb, grabbing/carrying/putting/throwing,
 Yoshi's egg, riding, flutter, tongue and juice, damage, health and coins, stomping and
-pounding enemies, water hitting enemies, the Shine Get pose (`shine.rs`: `Mario::get_shine`, the `WinDemo` status, `Event::ShineTouch` / `ShineDemo`). Not yet: swimming, bars, wires, poles, fences,
+pounding enemies, water hitting enemies, catching fire (`FIRE_DOWN` bounce, `FIRE_DASH` panic run, `Mario::ignite`; the decomp never enters the run, so `Options::fire_panic_run` is the host way in), the Shine Get pose (`shine.rs`: `Mario::get_shine`, the `WinDemo` status, `Event::ShineTouch` / `ShineDemo`). Not yet: swimming, bars, wires, poles, fences,
 the Spray "bomb". See the spec.

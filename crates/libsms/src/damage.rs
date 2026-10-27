@@ -117,7 +117,83 @@ impl Mario {
     /// `HIT_MESSAGE_ATTACK`). Returns whether it landed.
     pub fn damage(&mut self, from: Vec3, kind: DamageKind) -> bool {
         let p = self.params.damage(kind).clone();
-        self.damage_by(from, &p)
+        let landed = self.damage_by(from, &p);
+        // A hit on Yoshi throws Mario off him; nothing sets Yoshi's rider alight.
+        if landed && Self::burns(kind) && !self.is_down() && self.status != Status::YoshiThrown {
+            self.start_fire_down();
+        }
+        landed
+    }
+
+    /// Whether a hit of this kind sets Mario on fire: the game follows `damageExec` with
+    /// `changePlayerStatus(FIRE_DOWN, 1)`, the fire sound and `ms_firedmg_a` for fire
+    /// (`receiveMessage`), bullets (`TKiller`) and the lamp trap's iron.
+    fn burns(kind: DamageKind) -> bool {
+        matches!(
+            kind,
+            DamageKind::Fire | DamageKind::Killer | DamageKind::LampTrapIron
+        )
+    }
+
+    /// Mario catches fire from a host's flame (RoR2's burning), with no attacker and no health
+    /// lost: he is thrown up by `FIRE_DOWN`, yells, bounces and, with
+    /// [`Options::fire_panic_run`](crate::mario::Options::fire_panic_run), runs about in a panic.
+    /// Returns whether he caught (not while down for good, already burning, or in a dive or
+    /// ground pound, which the game doesn't knock him out of; on Yoshi, Yoshi is thrown off
+    /// instead).
+    pub fn ignite(&mut self) -> bool {
+        if self.is_down() || self.health <= 0 || self.status == Status::WinDemo {
+            return false;
+        }
+        if self.on_yoshi() {
+            self.get_off_yoshi(true);
+            return true;
+        }
+        if matches!(
+            self.status,
+            Status::FireDown
+                | Status::FireJump
+                | Status::FireLand
+                | Status::FireDash
+                | Status::JumpCatch
+                | Status::HipDrop
+                | Status::HipAttackEnd
+        ) {
+            return false;
+        }
+        // `damageExec`'s knock-back, with no one to face: at least the fire hit's own speed.
+        let min_speed = self.params.damage(DamageKind::Fire).min_speed;
+        if self.forward_vel < min_speed {
+            self.set_player_velocity(min_speed);
+        }
+        self.drop_object();
+        if self.upper == UpperState::HoldingObject {
+            self.upper = UpperState::Idle;
+        }
+        self.start_fire_down();
+        true
+    }
+
+    /// The fire hit: `FIRE_DOWN` with its sound and flames.
+    fn start_fire_down(&mut self) {
+        self.change_status(Status::FireDown, 1, true);
+        self.cue("MSD_SE_MA_DAMAGE_FIRE");
+        self.fx_once("ms_firedmg_a", 0);
+    }
+
+    /// The burning keeps flaring up around him every quarter second or so while a fire status lasts.
+    pub(crate) fn fire_flicker(&mut self) {
+        if self.status_timer % 30 == 0 {
+            self.fx_once("ms_firedmg_a", 0);
+        }
+    }
+
+    /// Whether a fire status holds him (a view may draw flames, a host may mind the panic).
+    pub fn on_fire(&self) -> bool {
+        matches!(
+            self.status,
+            Status::FireDown | Status::FireJump | Status::FireLand | Status::FireDash
+        )
     }
 
     /// `damageExec` with any damage parameters.
@@ -136,7 +212,11 @@ impl Mario {
         p.water_emit = 0;
         // Only there so one hit isn't followed by another before he's up.
         p.invincible_time = p.invincible_time.min(KNOCK_DOWN_GUARD);
-        self.hurt(from, &p, false)
+        let landed = self.hurt(from, &p, false);
+        if landed && Self::burns(kind) && !self.is_down() && self.status != Status::YoshiThrown {
+            self.start_fire_down();
+        }
+        landed
     }
 
     /// `damageExec`; `hp` false leaves the health and the water alone (a host's hit).

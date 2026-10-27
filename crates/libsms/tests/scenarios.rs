@@ -4055,3 +4055,88 @@ fn a_stick_circle_in_a_plain_dive_is_a_normal_speed_corkscrew() {
         if s.sim.mario.status != Status::JumpCatch { break; }
     }
 }
+
+fn particle_count<H: Host>(s: &Scene<H>, name: &str) -> usize {
+    s.event_count(|e| matches!(e, Event::Particle(c) if c.name == name))
+}
+
+#[test]
+fn a_fire_hit_throws_mario_up_burning_and_he_lies_down_after_two_bounces() {
+    if need_disc() {
+        return;
+    }
+    let mut s = Scene::flat();
+    s.step(2);
+    let max = s.mario().health;
+    assert!(s.sim.mario.damage(Vec3::new(0.0, 0.0, 100.0), libsms::DamageKind::Fire));
+    // `receiveMessage`: FIRE_DOWN, the fire sound and `ms_firedmg_a` after `damageExec`.
+    assert_eq!(s.mario().status, Status::FireDown);
+    assert!(s.mario().on_fire());
+    assert!(s.mario().health < max);
+    // `mFireDownForce` throws him up; the yell is on the second tick.
+    s.step(1);
+    assert_eq!(sound_count(&s, "MSD_SE_MA_DAMAGE_FIRE"), 1);
+    assert_eq!(particle_count(&s, "ms_firedmg_a"), 1);
+    assert!(s.mario().vel.y > 0.0, "he wasn't thrown up: {}", s.mario().vel.y);
+    s.step(2);
+    assert_eq!(sound_count(&s, "MSD_SE_MV05_DAMAGE_FIRE_01"), 1);
+    // Two bounces, then the game lies him down (`FIRE_JUMP_END`) and he gets up.
+    let mut bounces = 0;
+    let mut prev_up = false;
+    let mut lay = false;
+    for _ in 0..2400 {
+        s.step(1);
+        let up = s.mario().vel.y > 0.0 && s.mario().status == Status::FireDown;
+        if up && !prev_up {
+            bounces += 1;
+        }
+        prev_up = up;
+        if s.mario().status == Status::FireJumpEnd {
+            lay = true;
+            break;
+        }
+    }
+    assert!(lay, "he never lay down: {:?}", s.mario().status);
+    assert_eq!(bounces, 3, "the throw and two bounces");
+    assert_eq!(sound_count(&s, "MSD_SE_MV07_DAMAGE_REACT_01"), 1);
+    assert!(s.until(600, |m| m.status == Status::Wait), "he never got up");
+}
+
+#[test]
+fn a_host_fire_runs_him_about_in_a_panic_when_asked() {
+    if need_disc() {
+        return;
+    }
+    let mut s = Scene::flat();
+    s.sim.mario.options.fire_panic_run = true;
+    s.step(2);
+    let max = s.mario().health;
+    assert!(s.sim.mario.ignite());
+    assert_eq!(s.mario().health, max, "the host keeps the health");
+    assert_eq!(s.mario().status, Status::FireDown);
+    assert!(s.until(2400, |m| m.status == Status::FireDash), "no panic: {:?}", s.mario().status);
+    // He runs at about 32 with nothing held, however long he does it, then calms down.
+    let start = s.mario().pos;
+    s.step(60);
+    assert_eq!(s.mario().status, Status::FireDash);
+    assert!((s.mario().forward_vel - 32.0).abs() < 1.0, "speed {}", s.mario().forward_vel);
+    assert!(s.mario().pos.distance(start) > 100.0, "he didn't run");
+    assert!(s.until(400, |m| m.status == Status::Run || m.status == Status::Wait));
+    assert!(!s.mario().on_fire());
+    // Burning again once he is out.
+    assert!(s.sim.mario.ignite());
+}
+
+#[test]
+fn burning_mario_cannot_be_lit_twice_or_while_down() {
+    if need_disc() {
+        return;
+    }
+    let mut s = Scene::flat();
+    s.step(2);
+    assert!(s.sim.mario.ignite());
+    s.step(5);
+    assert!(!s.sim.mario.ignite(), "already burning");
+    s.sim.mario.knock_out();
+    assert!(!s.sim.mario.ignite(), "down for good");
+}
