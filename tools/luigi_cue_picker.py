@@ -10,13 +10,15 @@ that usually go with the cue next); "Any length" and "Every bucket" show the res
 
     python libsms/tools/luigi_cue_picker.py [--state picks.json] [--map draft-map.json]
 
-Keys: Up/Down move through clips; Space replays the clip; Enter or p ticks it for this cue; r
-rejects it (hidden next time); b plays Mario's variant then the clip, to compare; m plays the
-next Mario variant; n marks the cue "no good match"; Tab / Shift+Tab change cue.
+Keys: Up/Down move through clips; Space replays the clip; Enter or p ticks it for this cue (again
+to untick); r rejects it (hidden next time; again to bring it back); b plays Mario's variant then
+the clip, to compare; m plays the next Mario variant; n marks the cue "no good match"; u or
+Ctrl+Z undoes the last change (as many steps as you like); Tab / Shift+Tab change cue.
 Every change is saved, and a draft voice map (cue -> disc waves) is rewritten with it.
 Standard library only.
 """
 import argparse
+import copy
 import glob
 import json
 import math
@@ -147,6 +149,7 @@ class Picker:
         self.fam = FAMILIES[0][0]
         self.cur = None  # selected Luigi clip
         self.cap = LIST_STEP  # how many best fits the list shows
+        self.history = []  # (family, copy of its record) before each change, for undo
         self.variant = 0  # Mario variant `m` plays next
         self.after_id = None
         self.dur = {n: wav_seconds(p) for n, p in mario.items()}
@@ -210,7 +213,7 @@ class Picker:
         right = ttk.Frame(body, padding=(8, 0))
         right.pack(side="left", fill="y")
         for text, cmd in (("Play clip (Space)", self.play), ("Show 40 more", self.show_more), ("Mario then clip (b)", self.ab), ("Next Mario variant (m)", self.play_mario),
-                          ("Tick for this cue (Enter)", self.toggle_tick), ("Reject (r)", self.reject),
+                          ("Tick for this cue (Enter)", self.toggle_tick), ("Reject / bring back (r)", self.reject), ("Undo last change (u)", self.undo),
                           ("No good match (n)", self.toggle_none), ("Stop", self.stop)):
             ttk.Button(right, text=text, command=cmd, takefocus=0, width=24).pack(pady=2)
         ttk.Label(right, text="Note for this cue:").pack(anchor="w", pady=(14, 0))
@@ -223,6 +226,7 @@ class Picker:
         self.status.pack(anchor="w", pady=10)
 
         root.bind("<Key>", self.on_key)
+        root.bind("<Control-z>", lambda e: self.undo())
         root.bind("<Tab>", lambda e: self.step_cue(1) or "break")
         root.bind("<Shift-Tab>", lambda e: self.step_cue(-1) or "break")
         root.protocol("WM_DELETE_WINDOW", self.close)
@@ -354,6 +358,24 @@ class Picker:
         if n in self.tree.get_children():
             self.tree.item(n, values=self.row(n), tags=self.tags(n))
 
+    def snapshot(self):
+        self.history.append((self.fam, copy.deepcopy(self.picks.cue(self.fam))))
+        del self.history[:-500]
+
+    def undo(self):
+        if not self.history:
+            self.status.configure(text="nothing to undo")
+            return
+        fam, record = self.history.pop()
+        self.picks.cues[fam] = record
+        self.picks.save()
+        self.refresh_cues()
+        if fam != self.fam:
+            self.cue_tree.selection_set(fam)  # switching cue redraws its list
+        else:
+            self.fill()
+        self.status.configure(text="undid the last change (%s)" % self.family(fam)[1])
+
     def show_more(self):
         self.cap += LIST_STEP
         self.fill()
@@ -361,6 +383,7 @@ class Picker:
     def toggle_tick(self):
         if not self.cur:
             return
+        self.snapshot()
         c = self.picks.cue(self.fam)
         if self.cur in c["picks"]:
             c["picks"].remove(self.cur)
@@ -377,17 +400,20 @@ class Picker:
     def reject(self):
         if not self.cur:
             return
+        self.snapshot()
         c = self.picks.cue(self.fam)
         n = self.cur
-        if n in c["picks"]:
-            c["picks"].remove(n)
-        if n not in c["rejects"]:
+        if n in c["rejects"]:  # rejecting again brings it back
+            c["rejects"].remove(n)
+        else:
+            if n in c["picks"]:
+                c["picks"].remove(n)
             c["rejects"].append(n)
         self.picks.save()
         kids = list(self.tree.get_children())
         i = kids.index(n) if n in kids else 0
         self.refresh_cues()
-        if self.view.get() == "Best fits":
+        if self.view.get() in ("Best fits", "Rejected"):
             self.tree.delete(n)
             kids = list(self.tree.get_children())
             if kids:
@@ -396,6 +422,7 @@ class Picker:
             self.update_row(n)
 
     def toggle_none(self):
+        self.snapshot()
         c = self.picks.cue(self.fam)
         c["none"] = not c["none"]
         self.picks.save()
@@ -458,6 +485,8 @@ class Picker:
             self.play_mario()
         elif ch == "n":
             self.toggle_none()
+        elif ch == "u":
+            self.undo()
 
     def close(self):
         self.save_note()
@@ -516,9 +545,20 @@ def main():
         app.tree.selection_set(app.tree.get_children()[0])
         root.update()
         app.toggle_tick()
+        before = len(picks.cue("jump_mid")["picks"])
+        app.undo()  # takes back the jump_mid tick
+        assert len(picks.cue("jump_mid")["picks"]) == before - 1, "undo should remove the jump_mid tick"
+        app.undo()  # the reject in jump_small
+        assert not picks.cue("jump_small")["rejects"], "undo should bring the rejected clip back"
+        app.undo()  # the first tick
+        assert not picks.cue("jump_small")["picks"], "undo should remove the first tick"
+        app.undo()
+        assert app.status.cget("text").startswith("nothing"), "history should be empty"
+        app.tree.selection_set(app.tree.get_children()[0])
+        root.update()
+        app.toggle_tick()
         m = json.load(open(a.map, encoding="utf-8"))["voice_map"]
         assert m["jump_small"]["picks"][0]["clip"] == first, m["jump_small"]
-        assert m["jump_mid"]["picks"], m["jump_mid"]
         print("selftest ok: %d clips, %d cues; first jump_small pick %s %s; map %s"
               % (len(clips), len(FAMILIES), first, m["jump_small"]["picks"][0]["disc"], a.map))
         root.destroy()
