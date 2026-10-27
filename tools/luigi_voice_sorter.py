@@ -54,9 +54,28 @@ DEFAULT_BUCKETS = [
     ("other_useful", "Other - useful noise"),
     ("junk", "Junk / unusable"),
 ]
+# Which of Mario's cues (name prefixes of the clips in the Mario folder) stand beside each
+# starting bucket as its reference; a bucket you add has none until you pick one by hand.
+MARIO_REF = {
+    "jump_small": ["MV21_JUMP_SMALL", "MA_VO_JUMP_SMALL"],
+    "jump_mid": ["MV22_JUMP_MID", "MA_VO_JUMP_MID"],
+    "jump_large": ["MV23_JUMP_LARGE", "MA_VO_JUMP_BIG"],
+    "jump_special": ["MV24_JUMP_SPECIAL", "MA_VO_JUMP_SPECIAL"],
+    "jump_huge": ["MV25A_JUMP_HUGE"],
+    "dive": ["MV13_ACTION_SMALL"],
+    "effort": ["MV15_EXERT_INST", "MV17_EXERT_REACT", "MV15_REACT_SMALL"],
+    "damage_small": ["MV03_DAMAGE_LITLE", "MV02_DAMAGE_MID", "MA_VO_DAMAGE_SMALL"],
+    "damage_big": ["MV01_DAMAGE_BIG", "MA_VO_DAMAGE_BIG"],
+    "land_react": ["MV26_JUMP_REACT", "MA_VO_LAND_LOW", "MA_VO_LAND_HI"],
+    "down": ["MV08A_DOWN", "MA_VO_DEAD", "MV08B_DOWN_REACT"],
+    "scared": ["MV27_SPRISE", "MV28_SPRISE_SMALL", "MV30_FRIGHT"],
+    "whimper": ["MV10A_CRY_SHORT", "MV10B_CRY_JUMP"],
+    "call": ["MV_BYEBYE", "MV_CHAO"],
+}
+
 # Hotkeys handed out in order; the rest are reserved for navigation.
 KEY_POOL = list("1234567890qwertyuiopasdfghjklzcvbnm")
-RESERVED = {" ", "x"}
+RESERVED = {" ", "x", "m"}  # x: next Mario reference of the last bucket; m: same, picked cue
 
 
 def natural_key(name):
@@ -109,6 +128,15 @@ def read_table(path):
             if len(f) >= 4:
                 disc[f[0]] = "b%s_%s" % (f[1], f[3])
     return disc
+
+
+def read_mario_refs(folder):
+    """cue name -> wav path for Mario's own cues (rendered from the Sunshine disc)."""
+    refs = {}
+    if folder and os.path.isdir(folder):
+        for p in glob.glob(os.path.join(folder, "*.wav")):
+            refs[os.path.splitext(os.path.basename(p))[0]] = p
+    return refs
 
 
 def find_clips_dir():
@@ -164,8 +192,11 @@ class State:
 
 
 class App:
-    def __init__(self, root, clips, state):
+    def __init__(self, root, clips, state, mario=None):
         self.root, self.clips, self.state = root, clips, state
+        self.mario = mario or {}
+        self.mario_next = {}  # bucket id -> which of its Mario variants plays next
+        self.last_ref = None  # (bucket id, or None for the picker) the x key repeats
         self.by_name = {c.name: c for c in clips}
         self.current = None
         self.visible = []
@@ -233,6 +264,14 @@ class App:
         ttk.Label(right, text="Buckets", font=("Segoe UI", 12, "bold")).pack(anchor="w")
         self.bucket_frame = ttk.Frame(right)
         self.bucket_frame.pack(fill="y")
+        pick = ttk.LabelFrame(right, text="Any Mario cue", padding=4)
+        pick.pack(fill="x", pady=(8, 0))
+        self.mario_pick = tk.StringVar()
+        cues = sorted(self.mario, key=natural_key)
+        box = ttk.Combobox(pick, textvariable=self.mario_pick, values=cues, state="readonly", width=30)
+        box.pack(side="left")
+        box.bind("<<ComboboxSelected>>", lambda e: self.play_picked())
+        ttk.Button(pick, text="▶", width=3, command=self.play_picked, takefocus=0).pack(side="left", padx=2)
         ttk.Button(right, text="+ New bucket", command=self.new_bucket, takefocus=0).pack(fill="x", pady=(8, 0))
         ttk.Button(right, text="Rename selected-clip bucket", command=self.rename_bucket, takefocus=0).pack(fill="x", pady=2)
         ttk.Button(right, text="Write summary.txt", command=self.write_summary, takefocus=0).pack(fill="x", pady=2)
@@ -250,8 +289,16 @@ class App:
             w.destroy()
         self.bucket_buttons = {}
         for b in self.state.buckets:
-            btn = ttk.Button(self.bucket_frame, command=lambda bid=b["id"]: self.file_to(bid), takefocus=0, width=34)
-            btn.pack(fill="x", pady=1)
+            row = ttk.Frame(self.bucket_frame)
+            row.pack(fill="x", pady=1)
+            cues = self.mario_cues(b["id"])
+            ref = ttk.Button(row, text="▶ M" if cues else "  -  ", width=5, takefocus=0,
+                             command=lambda bid=b["id"]: self.play_mario(bid))
+            if not cues:
+                ref.state(["disabled"])
+            ref.pack(side="left", padx=(0, 2))
+            btn = ttk.Button(row, command=lambda bid=b["id"]: self.file_to(bid), takefocus=0, width=34)
+            btn.pack(side="left", fill="x", expand=True)
             self.bucket_buttons[b["id"]] = btn
         self.update_bucket_labels()
         self.show_box["values"] = ["All clips", "Unsorted"] + [b["label"] for b in self.state.buckets]
@@ -388,6 +435,12 @@ class App:
             return self.unfile()
         if e.keysym == "space":
             return self.play()
+        if (e.char or "").lower() == "x":
+            return self.repeat_mario()
+        if (e.char or "").lower() == "m" and self.current:
+            # m: Mario's reference for the bucket this clip is filed in.
+            bid = self.state.assign.get(self.current)
+            return self.play_mario(bid) if bid else None
         ch = (e.char or "").lower()
         for b in self.state.buckets:
             if b["key"] and b["key"] == ch:
@@ -399,6 +452,38 @@ class App:
             winsound.PlaySound(self.by_name[self.current].path, winsound.SND_FILENAME | winsound.SND_ASYNC)
         elif not winsound:
             self.status.configure(text="No sound player on this system (winsound is Windows-only).")
+
+    def mario_cues(self, bid):
+        """Mario's reference cues for a bucket, in cue order (every variant of each prefix)."""
+        out = []
+        for prefix in MARIO_REF.get(bid, []):
+            out += sorted((n for n in self.mario if n == prefix or n.startswith(prefix + "_")), key=natural_key)
+        return out
+
+    def play_mario(self, bid):
+        """Plays the bucket's next Mario variant, one per press, so every one gets heard."""
+        cues = self.mario_cues(bid)
+        if not cues or not winsound:
+            return
+        i = self.mario_next.get(bid, 0) % len(cues)
+        self.mario_next[bid] = i + 1
+        self.last_ref = bid
+        winsound.PlaySound(self.mario[cues[i]], winsound.SND_FILENAME | winsound.SND_ASYNC)
+        self.status.configure(text="Mario: %s  (%d of %d for %s)" % (cues[i], i + 1, len(cues), self.state.label(bid)))
+
+    def play_picked(self):
+        cue = self.mario_pick.get()
+        if cue in self.mario and winsound:
+            self.last_ref = None
+            winsound.PlaySound(self.mario[cue], winsound.SND_FILENAME | winsound.SND_ASYNC)
+            self.status.configure(text="Mario: %s" % cue)
+
+    def repeat_mario(self):
+        """x: Mario's next reference for the last bucket you played one from."""
+        if self.last_ref is None:
+            self.play_picked()
+        else:
+            self.play_mario(self.last_ref)
 
     def stop(self):
         if winsound:
@@ -428,6 +513,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--clips", help="folder of Luigi WAVs (default: found under 'iso backups')")
     ap.add_argument("--table", default=os.path.join(ROOT, "output", "lm-rip-match.txt"), help="rip_match table")
+    ap.add_argument("--mario", default=os.path.join(ROOT, "output", "mario-refs"),
+                    help="folder of Mario's cue WAVs, named by cue (MV21_JUMP_SMALL_01.wav)")
     ap.add_argument("--state", default=os.path.join(ROOT, "output", "luigi-voice-buckets.json"))
     ap.add_argument("--selftest", action="store_true", help="build the window, file a clip, save, quit")
     a = ap.parse_args()
@@ -442,7 +529,8 @@ def main():
     os.makedirs(os.path.dirname(a.state), exist_ok=True)
     state = State(a.state)
     root = tk.Tk()
-    app = App(root, clips, state)
+    mario = read_mario_refs(a.mario)
+    app = App(root, clips, state, mario)
     if a.selftest:
         root.update()
         first = clips[0].name
@@ -454,7 +542,9 @@ def main():
         root.update()
         check = json.load(open(a.state, encoding="utf-8"))
         assert check["assign"].get(first) == state.buckets[0]["id"], check
+        refs = {b["id"]: len(app.mario_cues(b["id"])) for b in state.buckets if app.mario_cues(b["id"])}
         print("selftest ok: %d clips, filed %s -> %s, state %s" % (len(clips), first, state.buckets[0]["id"], a.state))
+        print("Mario references: %d clips, per bucket %s" % (len(mario), refs))
         root.destroy()
         return
     print("%d clips from %s; state %s" % (len(clips), clips_dir, a.state))
