@@ -4,9 +4,9 @@
 For each Mario cue family (small jump, damage, knocked down ...) you hear Mario's own
 variants and a ranked list of Luigi clips, and tick the ones that fit. A clip may serve several
 cues and a cue may take several clips: scared and whimper overlap, hurt, big jump and
-knocked-down overlap, and the picker never limits a cue to one bucket. Your earlier buckets and
-the clip's length only order the list (closest length to one of Mario's variants first, buckets
-that usually go with the cue next); "Any length" and "Every bucket" show the rest.
+knocked-down overlap, so a clip can be ticked for several cues. The list is ordered by your
+earlier buckets first: the cue's own buckets always show (any length), then related buckets whose
+length fits, each closest length first. Other buckets stay hidden until "Other buckets" is ticked.
 
     python libsms/tools/luigi_cue_picker.py [--state picks.json] [--map draft-map.json]
 
@@ -35,55 +35,67 @@ import luigi_voice_sorter as S  # noqa: E402  (the clip loaders and Mario refere
 
 winsound = S.winsound
 
-# (id, label, Mario cue-name prefixes, buckets that usually go with it). The buckets are only a
-# nudge: overlaps are expected, so every bucket stays reachable.
+# (id, label, Mario cue-name prefixes, (own buckets, related buckets)).
+# Own buckets: the cue's clips are shown from these whatever their length, first. Related buckets
+# follow, when their length fits. Other buckets stay hidden until "Other buckets" is ticked, so
+# whimpers and little noises don't crowd cues they don't belong to. Overlaps are expected (hurt
+# and big jump, knocked down and mid jump), which is why a clip can serve several cues.
+# The first thirteen are the cues ror2-mario actually requests; the rest are never asked for.
 FAMILIES = [
     ("jump_small", "Jump - small (MV21)", ["MV21_JUMP_SMALL", "MA_VO_JUMP_SMALL"],
-     ["jump_small", "effort", "jump_mid", "lil_noise", "damage_small"]),
+     (["jump_small"], ["jump_mid", "effort"])),
     ("jump_mid", "Jump - mid (MV22)", ["MV22_JUMP_MID", "MA_VO_JUMP_MID"],
-     ["jump_mid", "jump_small", "effort", "damage_small", "down", "land_react"]),
+     (["jump_mid"], ["jump_small", "jump_large", "down", "effort"])),
     ("jump_large", "Jump - large (MV23)", ["MV23_JUMP_LARGE", "MA_VO_JUMP_BIG"],
-     ["jump_large", "jump_mid", "damage_big", "damage_small", "land_react", "scared", "effort"]),
+     (["jump_large"], ["jump_mid", "jump_special", "damage_big", "land_react"])),
     ("jump_special", "Jump - special / spin (MV24)", ["MV24_JUMP_SPECIAL", "MA_VO_JUMP_SPECIAL"],
-     ["jump_special", "jump_huge", "calling_for_mario", "scared", "damage_big", "jump_large"]),
-    ("jump_huge", "Jump - huge / triple (MV25A)", ["MV25A_JUMP_HUGE"],
-     ["jump_huge", "calling_for_mario", "scared", "down", "jump_special"]),
+     (["jump_special"], ["jump_huge", "jump_large", "calling_for_mario", "scared"])),
     ("dive", "Dive / action (MV13)", ["MV13_ACTION_SMALL"],
-     ["dive", "effort", "jump_small", "lil_noise"]),
+     (["dive"], ["effort", "jump_small"])),
     ("damage_big", "Damage - big (MV01)", ["MV01_DAMAGE_BIG", "MA_VO_DAMAGE_BIG"],
-     ["damage_big", "damage_small", "scared", "whimper", "jump_large", "down", "calling_for_mario"]),
+     (["damage_big"], ["damage_small", "jump_large", "scared", "down"])),
     ("damage_mid", "Damage - mid (MV02)", ["MV02_DAMAGE_MID"],
-     ["damage_small", "damage_big", "scared", "whimper", "land_react", "effort"]),
+     (["damage_small", "damage_big"], ["effort", "land_react", "scared"])),
     ("damage_small", "Damage - little (MV03)", ["MV03_DAMAGE_LITLE", "MA_VO_DAMAGE_SMALL"],
-     ["damage_small", "damage_big", "scared", "whimper", "land_react", "effort"]),
-    ("damage_react", "Damage reaction (MV07)", ["MV07_DAMAGE_REACT"],
-     ["scared", "whimper", "land_react", "damage_small", "damage_big"]),
+     (["damage_small"], ["damage_big", "effort", "land_react"])),
     ("down", "Knocked down / dead (MV08A)", ["MV08A_DOWN", "MA_VO_DEAD"],
-     ["down", "damage_big", "calling_for_mario", "scared", "jump_mid", "whimper"]),
+     (["down"], ["damage_big", "calling_for_mario", "scared", "jump_mid"])),
     ("down_react", "Down reaction (MV08B)", ["MV08B_DOWN_REACT"],
-     ["down", "scared", "whimper", "damage_big", "calling_for_mario"]),
-    ("cry", "Cry (MV10)", ["MV10A_CRY_SHORT", "MV10B_CRY_JUMP"],
-     ["whimper", "scared", "lil_noise", "damage_small"]),
-    ("react", "React (MV12 / MV15)", ["MV12_REACT", "MV15_REACT_SMALL"],
-     ["scared", "whimper", "land_react", "effort", "lil_noise"]),
+     (["down", "scared"], ["damage_big", "calling_for_mario"])),
     ("effort", "Exert / effort (MV15 / MV17)", ["MV15_EXERT_INST", "MV17_EXERT_REACT"],
-     ["effort", "jump_small", "dive", "lil_noise", "land_react"]),
-    ("land", "Landing / jump react (MV26)", ["MV26_JUMP_REACT", "MA_VO_LAND_LOW", "MA_VO_LAND_HI"],
-     ["land_react", "effort", "damage_small", "scared", "lil_noise"]),
-    ("fall", "Fall after (MV18)", ["MV18_FALL_AFTER"], ["scared", "down", "calling_for_mario", "whimper"]),
-    ("surprise", "Surprise (MV27 / 28 / 29)", ["MV27_SPRISE", "MV28_SPRISE_SMALL", "MV29_SPRISE_REACT"],
-     ["scared", "whimper", "land_react", "lil_noise"]),
-    ("fright", "Fright (MV30)", ["MV30_FRIGHT"], ["scared", "whimper", "calling_for_mario"]),
-    ("door", "Open door (MV31)", ["MV31_OPEN_DOOR"], ["effort", "call", "lil_noise"]),
-    ("hello", "Hello / goodbye (MV_BYEBYE, MV_CHAO)", ["MV_BYEBYE", "MV_CHAO"],
-     ["call", "calling_for_mario", "laugh"]),
+     (["effort"], ["jump_small", "dive", "land_react"])),
+    ("cry_jump", "Cry - jump, the long yell (MV10B)", ["MV10B_CRY_JUMP"],
+     (["scared", "calling_for_mario"], ["jump_large", "jump_special", "damage_big", "down"])),
+    ("tired", "Tired / low health (MV33, MV34, MV38, MV41)",
+     ["MV33_T", "MV34_ACTION_T", "MV38_EXERT_INST_T", "MV41_JUMP_T"],
+     (["whimper", "lil_noise"], ["effort", "scared", "land_react"])),
+    # Never requested by ror2-mario (the code asks for none of these by name):
+    ("jump_huge", "Jump - huge (MV25A) - unused", ["MV25A_JUMP_HUGE", "MV42_JUMP_HUGE_T"],
+     (["jump_huge"], ["jump_special", "calling_for_mario", "scared", "down"])),
+    ("cry_short", "Cry - short, the sob (MV10A) - unused", ["MV10A_CRY_SHORT"],
+     (["whimper"], ["lil_noise", "scared", "damage_small"])),
+    ("damage_react", "Damage reaction (MV07) - unused", ["MV07_DAMAGE_REACT"],
+     (["scared", "land_react"], ["damage_small", "damage_big", "whimper"])),
+    ("react", "React (MV12 / MV15) - unused", ["MV12_REACT", "MV15_REACT_SMALL"],
+     (["land_react", "effort"], ["scared", "damage_small"])),
+    ("land", "Landing / jump react (MV26) - unused", ["MV26_JUMP_REACT", "MA_VO_LAND_LOW", "MA_VO_LAND_HI"],
+     (["land_react"], ["effort", "damage_small"])),
+    ("fall", "Fall after (MV18) - unused", ["MV18_FALL_AFTER"],
+     (["down", "scared"], ["calling_for_mario"])),
+    ("surprise", "Surprise (MV27 / 28 / 29) - unused", ["MV27_SPRISE", "MV28_SPRISE_SMALL", "MV29_SPRISE_REACT"],
+     (["scared"], ["land_react", "calling_for_mario"])),
+    ("fright", "Fright (MV30) - unused", ["MV30_FRIGHT"],
+     (["scared"], ["calling_for_mario", "whimper"])),
+    ("door", "Open door (MV31) - unused", ["MV31_OPEN_DOOR"],
+     (["effort", "call"], ["lil_noise"])),
+    ("hello", "Hello / goodbye (MV_BYEBYE, MV_CHAO) - unused", ["MV_BYEBYE", "MV_CHAO"],
+     (["call", "calling_for_mario", "laugh"], ["lil_noise"])),
 ]
 
-# A clip within about 0.7x..1.45x of a Mario variant's length is a candidate by default, best
-# 40 first; "Show 40 more" and "Any length" reach further.
+# A related or other-bucket clip within about 0.7x..1.45x of a Mario variant's length is a
+# candidate by default, best 40 first; "Show 40 more" and "Any length" reach further.
 FIT_LIMIT = math.log(1.45)
 LIST_STEP = 40
-NOT_LIKELY = 0.35  # added to the score for a bucket that does not usually go with the cue
 
 
 def wav_seconds(path):
@@ -165,9 +177,9 @@ class Picker:
         v.pack(side="left", padx=4)
         v.bind("<<ComboboxSelected>>", lambda e: self.fill())
         self.any_len = tk.BooleanVar(value=False)
-        self.every_bucket = tk.BooleanVar(value=True)
+        self.other_buckets = tk.BooleanVar(value=False)
         self.autoplay = tk.BooleanVar(value=True)
-        for text, var in (("Any length", self.any_len), ("Every bucket", self.every_bucket), ("Auto-play", self.autoplay)):
+        for text, var in (("Any length", self.any_len), ("Other buckets", self.other_buckets), ("Auto-play", self.autoplay)):
             ttk.Checkbutton(top, text=text, variable=var, takefocus=0, command=self.fill if var is not self.autoplay else None).pack(side="left", padx=8)
         self.progress = ttk.Label(top, text="")
         self.progress.pack(side="right")
@@ -196,10 +208,10 @@ class Picker:
         self.mario_box.pack(fill="x", pady=4)
         self.canvas = tk.Canvas(mid, height=110, bg="#101418", highlightthickness=0)
         self.canvas.pack(fill="x", pady=4)
-        cols = ("tick", "clip", "secs", "fit", "disc", "bucket", "also")
+        cols = ("tick", "clip", "secs", "fit", "disc", "bucket", "match", "also")
         self.tree = ttk.Treeview(mid, columns=cols, show="headings", selectmode="browse")
         for c, w, t in (("tick", 36, ""), ("clip", 80, "clip"), ("secs", 55, "secs"), ("fit", 60, "length vs Mario"),
-                        ("disc", 70, "disc"), ("bucket", 150, "your bucket"), ("also", 250, "also ticked for")):
+                        ("disc", 70, "disc"), ("bucket", 150, "your bucket"), ("match", 60, "match"), ("also", 230, "also ticked for")):
             self.tree.heading(c, text=t)
             self.tree.column(c, width=w, anchor="center" if c in ("tick", "secs", "fit") else "w")
         sb = ttk.Scrollbar(mid, command=self.tree.yview)
@@ -276,12 +288,13 @@ class Picker:
 
     # ---- candidates
     def score(self, clip):
-        """(length fit as |ln ratio| to the nearest Mario variant, bucket nudge); lower is better."""
+        """(tier, length fit): tier 0 own bucket, 1 related, 2 other; fit is |ln ratio| to the
+        nearest Mario variant. Lower is better, tier first."""
         ds = [self.dur[n] for n in self.variants() if self.dur.get(n, 0) > 0]
         fit = min((abs(math.log(max(clip.seconds, 0.03) / d)) for d in ds), default=9.0)
-        likely = self.family()[3]
-        nudge = 0.0 if self.bucket_of.get(clip.name) in likely else NOT_LIKELY
-        return fit, nudge
+        own, related = self.family()[3]
+        b = self.bucket_of.get(clip.name)
+        return (0 if b in own else (1 if b in related else 2)), fit
 
     def fill(self):
         fid = self.fam
@@ -289,7 +302,7 @@ class Picker:
         view = self.view.get()
         rows = []
         for clip in self.clips:
-            fit, nudge = self.score(clip)
+            tier, fit = self.score(clip)
             n = clip.name
             if view == "Ticked":
                 ok = n in c["picks"]
@@ -299,41 +312,43 @@ class Picker:
                 ok = True
             else:  # Best fits
                 ok = n not in c["rejects"]
-                if ok and not self.any_len.get() and fit > FIT_LIMIT:
-                    ok = n in c["picks"]
-                if ok and not self.every_bucket.get() and nudge > 0:
-                    ok = n in c["picks"]
+                if ok and tier == 2 and not self.other_buckets.get():
+                    ok = False
+                if ok and tier > 0 and not self.any_len.get() and fit > FIT_LIMIT:
+                    ok = False
+                ok = ok or n in c["picks"]
             if ok:
-                rows.append((fit + nudge, fit, n))
+                rows.append((tier, fit, n))
         rows.sort()
         total = len(rows)
         if view == "Best fits" and total > self.cap:
             ticked = set(c["picks"])
             rows = [r for i, r in enumerate(rows) if i < self.cap or r[2] in ticked]
         self.tree.delete(*self.tree.get_children())
-        for _, fit, n in rows:
-            self.tree.insert("", "end", iid=n, values=self.row(n, fit), tags=self.tags(n))
+        for tier, fit, n in rows:
+            self.tree.insert("", "end", iid=n, values=self.row(n, tier, fit), tags=self.tags(n))
         keep = self.cur if self.cur in {r[2] for r in rows} else (rows[0][2] if rows else None)
         if keep:
             self.tree.selection_set(keep)
             self.tree.see(keep)
+        own = sum(1 for r in rows if r[0] == 0)
         more = " (%d more fit)" % (total - len(rows)) if total > len(rows) else ""
-        self.status.configure(text="%d clips listed%s" % (len(rows), more))
+        self.status.configure(text="%d clips listed, %d from this cue's own buckets%s" % (len(rows), own, more))
 
     def tags(self, n):
         c = self.picks.cue(self.fam)
         return ("ticked",) if n in c["picks"] else (("rejected",) if n in c["rejects"] else ())
 
-    def row(self, n, fit=None):
+    def row(self, n, tier=None, fit=None):
         clip = self.by_name[n]
         if fit is None:
-            fit = self.score(clip)[0]
+            tier, fit = self.score(clip)
         ratio = math.exp(fit)
-        others = [self.family(f)[1].split(" (")[0] for f in self.picks.cues
-                  if f != self.fam and n in self.picks.cues[f]["picks"]]
+        others = [f[1].split(" (")[0] for f in FAMILIES
+                  if f[0] != self.fam and n in self.picks.cues[f[0]]["picks"]]
         tick = "✔" if n in self.picks.cue(self.fam)["picks"] else ("x" if n in self.picks.cue(self.fam)["rejects"] else "")
         return (tick, n, "%.2f" % clip.seconds, "x%.2f" % ratio, clip.disc or "?",
-                self.buckets.get(self.bucket_of.get(n), ""), ", ".join(others))
+                self.buckets.get(self.bucket_of.get(n), ""), ("own", "related", "other")[tier], ", ".join(others))
 
     def on_clip(self, _):
         sel = self.tree.selection()
