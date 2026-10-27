@@ -35,9 +35,12 @@ const FACE_PATTERNS: [(&str, &str); 3] = [
 
 /// Piantissimo's own colours, the two most common in his texture (`monteman_model.bmd`): the
 /// purply pink of his mask and the brown of his skin. They recolour Mario's smears and the super
-/// pound's fire (red to pink, blue to brown).
+/// pound's fire: red to pink, and the blue half brown (the primary colour) and half green (the
+/// mixing colour).
 pub const PIANTISSIMO_PINK: [u8; 3] = [213, 106, 188];
 pub const PIANTISSIMO_BROWN: [u8; 3] = [140, 99, 40];
+/// The green of his leaf (`monteman_model.bmd`'s atlas runs from (3, 147, 1) to (180, 209, 67)).
+pub const PIANTISSIMO_GREEN: [u8; 3] = [24, 176, 20];
 
 /// Piantissimo's model has his face painted into one atlas, with no pattern to swap, so a burning
 /// Piantissimo flushes: his colours times this (red up, green and blue down).
@@ -1428,21 +1431,21 @@ impl View {
         self.fx
             .retint_to_green(LUIGI_FIRE_EFFECTS, luigi, GreenRule::Fire);
         if pianta {
-            // His own smears: Mario's red becomes his purply pink and the blue his skin's brown;
-            // the super pound's fireball burns pink.
+            // His own smears: Mario's red becomes his purply pink and the blue his skin's brown (the
+            // main colour) and his leaf's green (the mixing colour); the super pound's fireball burns pink.
             self.fx.retint_to_colors(
                 LUIGI_RED_EFFECTS,
                 true,
                 GreenRule::Red,
                 PIANTISSIMO_PINK,
-                Some(PIANTISSIMO_BROWN),
+                Some([PIANTISSIMO_BROWN, PIANTISSIMO_GREEN]),
             );
             self.fx.retint_to_colors(
                 LUIGI_FIRE_EFFECTS,
                 true,
                 GreenRule::Fire,
                 PIANTISSIMO_PINK,
-                Some(PIANTISSIMO_BROWN),
+                Some([PIANTISSIMO_BROWN, PIANTISSIMO_GREEN]),
             );
         }
     }

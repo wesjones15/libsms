@@ -586,10 +586,11 @@ fn turn_green(jpa: &mut Jpa, rule: GreenRule) {
 }
 
 /// [`Particles::retint_to_colors`]: warm entries (strongly red, or for [`GreenRule::Fire`] anything
-/// from red to yellow) become `warm`, blue-led ones `cool`, each scaled by the entry's strongest
-/// channel; whites and the rest stay as they are.
-fn turn_to_colors(jpa: &mut Jpa, rule: GreenRule, warm: [u8; 3], cool: Option<[u8; 3]>) {
-    let paint = |c: &mut [u8; 4]| {
+/// from red to yellow) become `warm`, blue-led ones `cool` (`[0]` for the primary colour slots,
+/// `[1]` for the environment ones), each scaled by the entry's strongest channel; whites and the
+/// rest stay as they are.
+fn turn_to_colors(jpa: &mut Jpa, rule: GreenRule, warm: [u8; 3], cool: Option<[[u8; 3]; 2]>) {
+    let paint = |c: &mut [u8; 4], slot: usize| {
         let is_warm = match rule {
             GreenRule::Red => c[0] as u16 > c[1] as u16 * 2 && c[0] as u16 > c[2] as u16 * 2,
             GreenRule::Fire => c[0] >= c[1] && c[0] > c[2],
@@ -597,7 +598,7 @@ fn turn_to_colors(jpa: &mut Jpa, rule: GreenRule, warm: [u8; 3], cool: Option<[u
         let target = if is_warm {
             Some((warm, c[0]))
         } else if c[2] > c[0] && c[2] > c[1] {
-            cool.map(|t| (t, c[2]))
+            cool.map(|t| (t[slot], c[2]))
         } else {
             None
         };
@@ -608,14 +609,17 @@ fn turn_to_colors(jpa: &mut Jpa, rule: GreenRule, warm: [u8; 3], cool: Option<[u
         }
     };
     let base = &mut jpa.base;
-    paint(&mut base.prm);
-    paint(&mut base.env);
-    for c in base.prm_table.iter_mut().chain(base.env_table.iter_mut()) {
-        paint(c);
+    paint(&mut base.prm, 0);
+    paint(&mut base.env, 1);
+    for c in base.prm_table.iter_mut() {
+        paint(c, 0);
+    }
+    for c in base.env_table.iter_mut() {
+        paint(c, 1);
     }
     if let Some(child) = &mut jpa.child {
-        paint(&mut child.prm);
-        paint(&mut child.env);
+        paint(&mut child.prm, 0);
+        paint(&mut child.env, 1);
     }
 }
 
@@ -857,7 +861,8 @@ impl Particles {
     }
 
     /// A skin's palette from colours: `on` turns the warm entries of the named effects (by `rule`)
-    /// into `warm` and, if given, the blue ones into `cool`, each as bright as the entry's
+    /// into `warm` and, if given, the blue ones into `cool` (its primary-colour and its
+    /// environment-colour entries get one each), each as bright as the entry's
     /// strongest channel (255 is the colour itself); `off` restores the file's own colours.
     pub fn retint_to_colors(
         &mut self,
@@ -865,7 +870,7 @@ impl Particles {
         on: bool,
         rule: GreenRule,
         warm: [u8; 3],
-        cool: Option<[u8; 3]>,
+        cool: Option<[[u8; 3]; 2]>,
     ) {
         self.retint(names, on, |jpa| turn_to_colors(jpa, rule, warm, cool));
     }
@@ -3698,16 +3703,20 @@ mod tests {
         };
         let mut fx = Particles::default();
         fx.add("smear", jpa([255, 39, 15, 255], [39, 63, 255, 255], vec![]));
+        fx.add("spark", jpa([63, 87, 255, 255], [135, 231, 255, 255], vec![]));
         fx.add(
             "flame",
             jpa([255, 255, 255, 255], [255, 255, 135, 255], vec![[255, 144, 0, 255], [128, 0, 0, 255]]),
         );
         let base = |fx: &Particles, name: &str| fx.effects[fx.by_name[name]].jpa.base.clone();
-        let (pink, brown) = ([200, 100, 180], [140, 100, 40]);
-        fx.retint_to_colors(&["smear"], true, GreenRule::Red, pink, Some(brown));
+        let (pink, brown, green) = ([200, 100, 180], [140, 100, 40], [20, 170, 20]);
+        fx.retint_to_colors(&["smear", "spark"], true, GreenRule::Red, pink, Some([brown, green]));
         let smear = base(&fx, "smear");
+        let spark = base(&fx, "spark");
+        assert_eq!(spark.prm, [140, 100, 40, 255], "a blue main colour is his brown");
+        assert_eq!(spark.env, [20, 170, 20, 255], "its light blue mixing colour is his green");
         assert_eq!(smear.prm, [200, 100, 180, 255], "the red is his pink");
-        assert_eq!(smear.env, [140, 100, 40, 255], "the blue is his brown");
+        assert_eq!(smear.env, [20, 170, 20, 255], "the blue mixing colour is his green");
         fx.retint_to_colors(&["flame"], true, GreenRule::Fire, pink, None);
         let flame = base(&fx, "flame");
         assert_eq!(flame.prm, [255, 255, 255, 255], "the white core stays");
@@ -3717,8 +3726,8 @@ mod tests {
         fx.retint_to_colors(&["smear", "flame"], false, GreenRule::Red, pink, None);
         assert_eq!(base(&fx, "smear").prm, [255, 39, 15, 255]);
         assert_eq!(base(&fx, "flame").env_table[0], [255, 144, 0, 255]);
-        fx.retint_to_colors(&["smear"], true, GreenRule::Red, pink, Some(brown));
-        fx.retint_to_colors(&["smear"], true, GreenRule::Red, pink, Some(brown));
+        fx.retint_to_colors(&["smear"], true, GreenRule::Red, pink, Some([brown, green]));
+        fx.retint_to_colors(&["smear"], true, GreenRule::Red, pink, Some([brown, green]));
         assert_eq!(base(&fx, "smear").prm, [200, 100, 180, 255]);
     }
 
