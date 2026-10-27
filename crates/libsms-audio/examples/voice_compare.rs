@@ -8,7 +8,10 @@
 //! lookalikes, not meaning, so a person still decides.
 //!
 //!     cargo run --release -p libsms-audio --example voice_compare -- <other disc's assets dir>
-//!         <out dir> [bank:first-last ...]      (default 2:0-215 3:0-215)
+//!         <out dir> [bank:first-last ... | pool.txt]      (default 2:0-215 3:0-215)
+//!
+//! `pool.txt` is `rip_match`'s table: only those disc waves are candidates, labelled with the
+//! rip's own names (`Luigi204`), which is how a labelled rip narrows the search to one speaker.
 //!
 //! `<other assets dir>` holds `AudioRes/msound.aaf` etc. under Sunshine's names (see
 //! `wave_survey`); Mario's cues come from the normal `assets/` (`SMS_ASSETS`).
@@ -168,6 +171,19 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let other_dir = args.first().expect("<other assets dir>");
     let out_dir = Path::new(args.get(1).expect("<out dir>"));
+    // A `rip_match` table: (label, bank, index) of the waves to consider, first of any duplicates.
+    let mut pool: Vec<(String, usize, usize)> = Vec::new();
+    if let Some(t) = args.get(2).filter(|a| a.ends_with(".txt")) {
+        for line in std::fs::read_to_string(t).expect("pool table").lines().skip(1) {
+            let f: Vec<&str> = line.split_whitespace().collect();
+            if let [label, bank, _group, idx, ..] = f.as_slice()
+                && let (Ok(b), Ok(k)) = (bank.parse::<usize>(), idx.parse::<usize>())
+                && !pool.iter().any(|p| p.1 == b && p.2 == k)
+            {
+                pool.push((label.to_string(), b, k));
+            }
+        }
+    }
     let mut ranges: Vec<(usize, usize, usize)> = args[2.min(args.len())..]
         .iter()
         .filter_map(|a| {
@@ -176,7 +192,7 @@ fn main() {
             Some((b.parse().ok()?, lo.parse().ok()?, hi.parse().ok()?))
         })
         .collect();
-    if ranges.is_empty() {
+    if ranges.is_empty() && pool.is_empty() {
         ranges = vec![(2, 0, 215), (3, 0, 215)];
     }
 
@@ -186,8 +202,12 @@ fn main() {
 
     // Candidates: one-shot waves in the requested ranges, voice-sized.
     let mut candidates: Vec<Clip> = Vec::new();
+    let mut wanted: Vec<(String, usize, usize)> = pool.clone();
     for &(bank, lo, hi) in &ranges {
-        for k in lo..=hi {
+        wanted.extend((lo..=hi).map(|k| (format!("b{bank}_{k:03}"), bank, k)));
+    }
+    for (label, bank, k) in wanted {
+        {
             let Some(w) = other.wave((bank, 0, k)) else { continue };
             if w.looping {
                 continue;
@@ -202,7 +222,8 @@ fn main() {
             if feat.secs < 0.08 {
                 continue;
             }
-            candidates.push(Clip { label: format!("b{bank}_{k:03}"), rate: w.sample_rate, pcm: f, feat });
+            let label = if label.starts_with('b') { label } else { format!("{label}_b{bank}_{k}") };
+            candidates.push(Clip { label, rate: w.sample_rate, pcm: f, feat });
         }
     }
     println!("{} candidate clips", candidates.len());
