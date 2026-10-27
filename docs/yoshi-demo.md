@@ -3,8 +3,9 @@
 Run `target/release/sms-viewer.exe assets --yoshi-mario` from libsms.
 The standalone viewer uses Mario's simulation and `ma_*.bck` motion on Yoshi's
 own 38-joint skeleton and geometry. WASD moves, Space jumps, F dives/grabs,
-Z ground pounds, arrows orbit the camera, R respawns and Escape quits.
-This runaround has no FLUDD and is not a RoR2 deployment.
+Z ground pounds, Shift sprays, 1–4 choose Spray/Hover/Rocket/Turbo, X switches
+nozzles, G refills, arrows orbit the camera, R respawns and Escape quits.
+This is a standalone Rust viewer demo, not a RoR2 deployment.
 
 Exact asset: `yoshi.szs:yoshi_model.bmd`, identified by
 `sms-main/src/Player/Yoshi.cpp::TYoshi::init`; its normal hand shapes, materials,
@@ -18,6 +19,14 @@ preserving Yoshi's bind translations/scales. Matching limb names map directly;
 transforms, inheriting the posed parents. These are host retargeting choices.
 The body anchors its lowest skinned point to Mario's current lowest point.
 No Yoshi riding/body animation replaces Mario's motion in this mode.
+
+FLUDD reuses the existing viewer component and water simulation. Its exact assets
+are `mario.szs:watergun2/body/wg_mdl1.bmd` and the `normal_wg`, `hover_wg`,
+`rocket_wg`, `back_wg` nozzle models named by `WaterGun.cpp::nozzleBmdData/init`.
+The pack attaches to `jnt_neck_1`, Yoshi's upper torso mapped to Mario's chest,
+with a bind-frame rotation correction. FLUDD keeps its authored centered neck;
+Mari-Yoshi does not use Luigi's side lean.
+The returned posed muzzle matrices drive both water emission and particle placement.
 
 Viewer-first evidence: labelled idle, run frames 6/21/36, jump and dive captures
 in `../output/sms-yoshi-demo/`. The `yoshi_skin` test samples seven Mario clips

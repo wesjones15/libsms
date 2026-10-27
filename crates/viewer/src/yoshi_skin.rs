@@ -18,6 +18,8 @@ const ALIASES: &[(&str,&str)] = &[
 pub struct YoshiSkin {
     rig: Skeleton,
     retarget: Retarget,
+    chest: usize,
+    chest_align: Mat4,
 }
 
 impl YoshiSkin {
@@ -31,11 +33,21 @@ impl YoshiSkin {
             }
         }
         let retarget = Retarget::new(source,&rig,ALIASES);
+        // The neck's first joint is Yoshi's upper torso, mapped to Mario's chest.
+        // Host attachment: keep the shared FLUDD in Mario's authored chest frame
+        // (WaterGun.cpp::init/setBaseTRMtx), following Yoshi's posed torso position.
+        let chest=rig.find("jnt_neck_1").ok_or("Yoshi torso joint missing")?;
+        let mario_chest=source.find("jnt_chest").ok_or("Mario chest missing")?;
+        let rotation=|m:Mat4|m.to_scale_rotation_translation().1;
+        let chest_align=Mat4::from_quat(rotation(rig.bind_world()[chest]).inverse()
+            *rotation(source.bind_world()[mario_chest]));
         eprintln!("Yoshi skin: yoshi.szs:yoshi_model.bmd, 38 joints; TYoshi::init (Player/Yoshi.cpp); Mario's 29-joint clips");
-        Ok(Self{rig,retarget})
+        Ok(Self{rig,retarget,chest,chest_align})
     }
 
     pub fn pose(&self,source:&[Mat4])->Vec<Mat4> { self.retarget.pose(&self.rig,source) }
+
+    pub fn chest(&self,world:&[Mat4])->Mat4 { world[self.chest]*self.chest_align }
 }
 
 #[cfg(test)]
@@ -56,6 +68,9 @@ mod tests {
             let c = libsms::Clip::parse(&std::fs::read(dir.join(format!("bck/ma_{name}.bck"))).unwrap()).unwrap();
             for frame in [0.,c.frames*0.25,c.frames*0.5,c.frames*0.75] {
                 let world = skin.pose(&source.pose(&c,frame));
+                let (scale,rotation,position)=skin.chest(&world).to_scale_rotation_translation();
+                assert!(scale.abs_diff_eq(glam::Vec3::ONE,0.001),"FLUDD mount must not resize the pack");
+                assert!(rotation.is_finite() && position.is_finite(),"invalid FLUDD mount {name}:{frame}");
                 for (j,parent) in skin.rig.parents.iter().enumerate() {
                     let Some(p)=*parent else { continue };
                     let length=|w:&[Mat4]|w[j].w_axis.truncate().distance(w[p].w_axis.truncate());

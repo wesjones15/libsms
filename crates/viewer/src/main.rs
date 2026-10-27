@@ -906,7 +906,7 @@ async fn main() {
             .ok()
     });
     // Luigi owns a FLUDD of his own; it follows his chest, not Mario's.
-    let mut luigi_fludd = if use_luigi || use_peach || use_melee_peach || use_pianta {
+    let mut luigi_fludd = if use_luigi || use_peach || use_melee_peach || use_pianta || use_yoshi_skin {
         assets.as_ref().and_then(|a| {
             fludd::Fludd::load(&a.dir)
                 .map_err(|e| eprintln!("Luigi's FLUDD: {e}"))
@@ -977,7 +977,7 @@ async fn main() {
         let mut s = spawn();
         s.mario.params = params.clone();
         s.mario.anims = anims.clone();
-        if !use_yoshi_skin { s.mario.give_fludd(); }
+        s.mario.give_fludd();
         // `SMS_SPRAY_DIVE=1`: the host extension the RoR2 mod uses â€” the Spray nozzle may fire
         // during a B dive and the belly slide (`Options::spray_during_dive`).
         s.mario.options.spray_during_dive = std::env::var_os("SMS_SPRAY_DIVE").is_some();
@@ -1436,6 +1436,11 @@ async fn main() {
                     let offset=model.lowest(&joints)-ym.lowest(&world);
                     for joint in &mut world { joint.w_axis.y+=offset; }
                     ym.draw_mario_pose(&world,root,view,proj,get_time() as f32);
+                    if let Some(f)=&mut luigi_fludd {
+                        let deployed=m.fludd.as_ref().is_some_and(|f|f.housed<0.5);
+                        muzzle_mtx=f.draw(m.fludd_look(),deployed,false,dt,
+                            skin.chest(&world),root,view,proj,(true,true));
+                    }
                 }
                 if let Some(peach) = peach_model.as_mut().filter(|_| !show_melee_peach) {
                     let world = peach.pose(&joints, model.lowest(&joints),pose_name,pose_phase);
@@ -1622,7 +1627,7 @@ async fn main() {
         if use_yoshi_skin {
             let pose=std::env::var("SMS_POSE").unwrap_or_else(|_|format!("{}, {:.1}",sim.mario.anim.clip,sim.mario.anim.frame));
             draw_rectangle(0.,screen_height()-88.,screen_width(),24.,Color::new(0.04,0.04,0.08,0.85));
-            draw_text(&format!("SUNSHINE YOSHI | 38 joints | yoshi.szs:yoshi_model.bmd | Player/Yoshi.cpp TYoshi::init | Mario: {pose} | Esc: quit"),
+            draw_text(&format!("MARI-YOSHI + FLUDD | wg_mdl1.bmd (WaterGun.cpp::init) | yoshi_model.bmd (Yoshi.cpp::init) | Mario: {pose} | Esc: quit"),
                 12.,screen_height()-71.,16.,WHITE);
         }
         if let Some(p) = pianta_models.get(pianta_index) {
