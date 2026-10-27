@@ -819,8 +819,8 @@ pub unsafe extern "C" fn sms_sim_new(
         Ok(Some(sim)) => Box::into_raw(Box::new(SmsSim {
             water: {
                 let mut water = WaterManager::new(&sim.mario.params);
-                // Viewer-proven RoR2 pacing: traverse the same Spray arc 20% faster.
-                water.spray_speed = 1.2;
+                // RoR2 pacing: traverse the same Spray arc 40% faster (1.2 played a bit slow).
+                water.spray_speed = 1.4;
                 water
             },
             water_ticks: 0,
@@ -1510,7 +1510,7 @@ mod tests {
             assert!(!sim.is_null());
             assert!((*sim).sim.mario.options.spray_during_dive);
             assert!((*sim).sim.mario.options.redive_after_slide);
-            assert_eq!((*sim).water.spray_speed, 1.2);
+            assert_eq!((*sim).water.spray_speed, 1.4);
             let run = SmsPad {
                 move_x: 1.0,
                 use_move: 1,
