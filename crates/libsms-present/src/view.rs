@@ -23,6 +23,22 @@ use libsms_assets::mario::{BODY_HAND_SHAPES, HIDDEN_SHAPE, Hands, SHIRT_SHAPE, h
 use libsms_assets::{Batch, Bmd, Pose, paths};
 
 use crate::hud::{Gauge, Hud};
+
+/// Clips with a face pattern of their own, in place of the blink: the burning Mario's hot face
+/// (`gMarioAnimeData`'s pattern index per clip, `marioAnimeTexPatternFilenames`, MarioDraw.cpp:
+/// `hot_wait` 8, `firejmp` 9, `fjpend` 10).
+const FACE_PATTERNS: [(&str, &str); 3] = [
+    ("hot_wait", "ma_hot_wait_tx.btp"),
+    ("firejmp", "ma_firejmp_tx.btp"),
+    ("fjpend", "ma_fjpend_tx.btp"),
+];
+
+/// A face pattern and the body materials its tracks name (`usize::MAX`: not in this body).
+struct FacePattern {
+    clip: &'static str,
+    pat: TexPattern,
+    mats: Vec<usize>,
+}
 use crate::coins::{CoinMeter, Kind as CoinKind};
 use crate::democam::DemoCamera;
 use crate::life::LifeMeter;
@@ -364,6 +380,8 @@ pub struct View {
     boost: Option<Boost>,
     wink: Option<TexPattern>,
     eye_materials: Vec<usize>,
+    /// The face a clip wears instead of the blink (`gMarioAnimeData`'s pattern per clip).
+    faces: Vec<FacePattern>,
     hand_joints: [Option<usize>; 2],
     head: Option<usize>,
     chest: Option<usize>,
@@ -1019,6 +1037,20 @@ impl View {
                     .collect()
             })
             .unwrap_or_default();
+        let faces: Vec<FacePattern> = FACE_PATTERNS
+            .iter()
+            .filter_map(|&(clip, file)| {
+                let pat = std::fs::read(dir.join("btp").join(file))
+                    .ok()
+                    .and_then(|d| TexPattern::parse(&d).ok())?;
+                let mats = pat
+                    .tracks
+                    .iter()
+                    .map(|t| b.material(&t.material).unwrap_or(usize::MAX))
+                    .collect();
+                Some(FacePattern { clip, pat, mats })
+            })
+            .collect();
         let mut fx = Particles::load(dir, MARIO_EFFECTS);
         for &name in SMOKE_EFFECTS
             .iter()
@@ -1065,6 +1097,7 @@ impl View {
             boost,
             wink,
             eye_materials,
+            faces,
             shirt: false,
             time: 0.0,
             blink_at: 2.0,
@@ -1119,6 +1152,7 @@ impl View {
             boost: None,
             wink: None,
             eye_materials: Vec::new(),
+            faces: Vec::new(),
             hand_joints: [None; 2],
             head: None,
             chest: None,
@@ -1209,6 +1243,7 @@ impl View {
             boost: None,
             wink: None,
             eye_materials: Vec::new(),
+            faces: Vec::new(),
             hand_joints: [None; 2],
             head: None,
             chest: None,
@@ -1533,6 +1568,22 @@ impl View {
                             e.tex[t.tex_map as usize] = Some(tex);
                         }
                     }
+                }
+            }
+        }
+        // A clip with a face of its own wears it for as long as it plays (`setAnimation` starts
+        // the clip's `marioAnimeTexPatternFilenames` entry beside it): the burning Mario's hot face.
+        if let Some(f) = self.faces.iter().find(|f| f.clip == m.anim.clip) {
+            let mut frame = m.anim.frame;
+            if f.pat.loop_mode == 2 && f.pat.length > 0 {
+                frame %= f.pat.length as f32;
+            }
+            for (i, t) in f.pat.tracks.iter().enumerate() {
+                if let (Some(&mat), Some(tex)) = (f.mats.get(i), f.pat.tex_no(i, frame))
+                    && (t.tex_map as usize) < 8
+                    && mat != usize::MAX
+                {
+                    body_inputs.entry(mat).or_default().tex[t.tex_map as usize] = Some(tex);
                 }
             }
         }
@@ -2520,6 +2571,30 @@ mod tests {
                 }
             }
             assert!(sampled);
+        }
+    }
+
+    /// Burning, Mario wears the hot face (`ma_hot_wait_tx`, `ma_firejmp_tx`, `ma_fjpend_tx`) in
+    /// place of the open eyes of the idle blink, on the body's own face materials.
+    #[test]
+    fn the_burning_mario_wears_the_hot_face() {
+        let dir = libsms::assets::find(None).expect("assets not found (set SMS_ASSETS)");
+        let v = View::load(&dir).unwrap();
+        let wink = v.wink.as_ref().expect("no blink pattern");
+        assert_eq!(v.faces.len(), FACE_PATTERNS.len(), "a hot face pattern did not load");
+        for f in &v.faces {
+            let mut changed = false;
+            for (i, t) in f.pat.tracks.iter().enumerate() {
+                if f.mats[i] == usize::MAX {
+                    continue;
+                }
+                // The same material and slot as the blink's, but not the blink's textures.
+                changed |= wink
+                    .tracks
+                    .iter()
+                    .any(|w| w.material == t.material && w.tex_map == t.tex_map && w.frames != t.frames);
+            }
+            assert!(changed, "{} wears the same eyes as the idle face", f.clip);
         }
     }
 
