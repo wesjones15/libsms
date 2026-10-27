@@ -33,6 +33,12 @@ const FACE_PATTERNS: [(&str, &str); 3] = [
     ("fjpend", "ma_fjpend_tx.btp"),
 ];
 
+/// Piantissimo's own colours, the two most common in his texture (`monteman_model.bmd`): the
+/// purply pink of his mask and the brown of his skin. They recolour Mario's smears and the super
+/// pound's fire (red to pink, blue to brown).
+pub const PIANTISSIMO_PINK: [u8; 3] = [213, 106, 188];
+pub const PIANTISSIMO_BROWN: [u8; 3] = [140, 99, 40];
+
 /// Piantissimo's model has his face painted into one atlas, with no pattern to swap, so a burning
 /// Piantissimo flushes: his colours times this (red up, green and blue down).
 const PIANTISSIMO_HOT_FLUSH: [f32; 3] = [1.0, 0.62, 0.55];
@@ -1413,10 +1419,32 @@ impl View {
         }
         self.skin = skin;
         let luigi = skin == Skin::Luigi;
+        let pianta = skin == Skin::Piantissimo;
+        // Back to the file's own colours first: the two skins' palettes share one saved original.
+        self.fx.retint_to_green(LUIGI_RED_EFFECTS, false, GreenRule::Red);
+        self.fx.retint_to_green(LUIGI_FIRE_EFFECTS, false, GreenRule::Fire);
         self.fx
             .retint_to_green(LUIGI_RED_EFFECTS, luigi, GreenRule::Red);
         self.fx
             .retint_to_green(LUIGI_FIRE_EFFECTS, luigi, GreenRule::Fire);
+        if pianta {
+            // His own smears: Mario's red becomes his purply pink and the blue his skin's brown;
+            // the super pound's fireball burns pink.
+            self.fx.retint_to_colors(
+                LUIGI_RED_EFFECTS,
+                true,
+                GreenRule::Red,
+                PIANTISSIMO_PINK,
+                Some(PIANTISSIMO_BROWN),
+            );
+            self.fx.retint_to_colors(
+                LUIGI_FIRE_EFFECTS,
+                true,
+                GreenRule::Fire,
+                PIANTISSIMO_PINK,
+                Some(PIANTISSIMO_BROWN),
+            );
+        }
     }
 
     /// Loads Luigi's HSD mesh from the Melee cache (alongside the Sunshine assets this view was
@@ -2613,6 +2641,23 @@ mod tests {
         let (calm, hot) = (skin(false), skin(true));
         assert_eq!(calm.len(), hot.len());
         assert_eq!(calm.iter().zip(&hot).filter(|(a, b)| a != b).count(), 2, "only the two eyes change");
+    }
+
+    /// Piantissimo's smears and pound fire are his pink and brown, and Mario's and Luigi's are back
+    /// when the skin changes (the palettes share one saved original).
+    #[test]
+    fn piantissimos_effects_wear_his_colours_and_switch_back() {
+        let Some(mut v) = view() else { eprintln!("skipping: no assets/"); return };
+        let prm = |v: &View, name: &str| v.fx.prm_of(name).expect("the effect is loaded");
+        let mario = (prm(&v, "ms_m_blur3"), prm(&v, "ms_m_sphipd_a"));
+        v.set_skin(Skin::Piantissimo);
+        assert_eq!(prm(&v, "ms_m_blur3"), [213, 106, 188, 255], "the pound's smear is his pink");
+        let fire = prm(&v, "ms_m_sphipd_a");
+        assert!(fire[0] > fire[1] && fire[2] > fire[1] && fire[0] > fire[2], "the fire is pink: {fire:?}");
+        v.set_skin(Skin::Luigi);
+        assert_eq!(prm(&v, "ms_m_blur3")[1], mario.0[0], "Luigi's is green, from Mario's red");
+        v.set_skin(Skin::Mario);
+        assert_eq!((prm(&v, "ms_m_blur3"), prm(&v, "ms_m_sphipd_a")), mario);
     }
 
     /// A burning Piantissimo's colours are flushed, and only while a burning clip plays.

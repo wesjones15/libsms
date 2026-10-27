@@ -585,6 +585,40 @@ fn turn_green(jpa: &mut Jpa, rule: GreenRule) {
     }
 }
 
+/// [`Particles::retint_to_colors`]: warm entries (strongly red, or for [`GreenRule::Fire`] anything
+/// from red to yellow) become `warm`, blue-led ones `cool`, each scaled by the entry's strongest
+/// channel; whites and the rest stay as they are.
+fn turn_to_colors(jpa: &mut Jpa, rule: GreenRule, warm: [u8; 3], cool: Option<[u8; 3]>) {
+    let paint = |c: &mut [u8; 4]| {
+        let is_warm = match rule {
+            GreenRule::Red => c[0] as u16 > c[1] as u16 * 2 && c[0] as u16 > c[2] as u16 * 2,
+            GreenRule::Fire => c[0] >= c[1] && c[0] > c[2],
+        };
+        let target = if is_warm {
+            Some((warm, c[0]))
+        } else if c[2] > c[0] && c[2] > c[1] {
+            cool.map(|t| (t, c[2]))
+        } else {
+            None
+        };
+        if let Some((t, level)) = target {
+            for k in 0..3 {
+                c[k] = (t[k] as u16 * level as u16 / 255) as u8;
+            }
+        }
+    };
+    let base = &mut jpa.base;
+    paint(&mut base.prm);
+    paint(&mut base.env);
+    for c in base.prm_table.iter_mut().chain(base.env_table.iter_mut()) {
+        paint(c);
+    }
+    if let Some(child) = &mut jpa.child {
+        paint(&mut child.prm);
+        paint(&mut child.env);
+    }
+}
+
 /// How a `.jpa` is drawn: a static palette atlas, basis textures, or a stripe texture the draw
 /// rebakes each frame.
 fn bake_paint(textures: &mut Vec<FxTexture>, jpa: &Jpa) -> Paint {
@@ -819,6 +853,30 @@ impl Particles {
     /// alt-skin keeps Mario's effects but not his red); `off` restores the file's own colours. A
     /// palette-kind effect bakes its colours into a texture, so that is rebuilt.
     pub fn retint_to_green(&mut self, names: &[&str], on: bool, rule: GreenRule) {
+        self.retint(names, on, |jpa| turn_green(jpa, rule));
+    }
+
+    /// A skin's palette from colours: `on` turns the warm entries of the named effects (by `rule`)
+    /// into `warm` and, if given, the blue ones into `cool`, each as bright as the entry's
+    /// strongest channel (255 is the colour itself); `off` restores the file's own colours.
+    pub fn retint_to_colors(
+        &mut self,
+        names: &[&str],
+        on: bool,
+        rule: GreenRule,
+        warm: [u8; 3],
+        cool: Option<[u8; 3]>,
+    ) {
+        self.retint(names, on, |jpa| turn_to_colors(jpa, rule, warm, cool));
+    }
+
+    /// The effect's primary colour as it is now (after any skin's tint).
+    #[cfg(test)]
+    pub(crate) fn prm_of(&self, name: &str) -> Option<[u8; 4]> {
+        self.by_name.get(name).map(|&i| self.effects[i].jpa.base.prm)
+    }
+
+    fn retint(&mut self, names: &[&str], on: bool, tint: impl Fn(&mut Jpa)) {
         for &name in names {
             let Some(&i) = self.by_name.get(name) else {
                 continue;
@@ -829,7 +887,7 @@ impl Particles {
                 } else {
                     self.effects[i].jpa = self.effects[i].untinted.clone().unwrap();
                 }
-                turn_green(&mut self.effects[i].jpa, rule);
+                tint(&mut self.effects[i].jpa);
             } else if let Some(orig) = self.effects[i].untinted.take() {
                 self.effects[i].jpa = orig;
             } else {
@@ -3614,6 +3672,54 @@ mod tests {
         fx.retint_to_green(&["smear"], true, GreenRule::Red);
         fx.retint_to_green(&["smear"], true, GreenRule::Red);
         assert_eq!(base(&fx, "smear").prm, [39, 255, 15, 255]);
+    }
+
+    /// A skin with colours of its own (Piantissimo's pink and brown): red entries become the warm
+    /// colour and blue ones the cool, each as bright as the entry was; whites stay, the file's
+    /// colours come back when it is turned off, and a second tint starts from the file's.
+    #[test]
+    fn a_skin_with_colours_of_its_own_recolours_the_smears_and_the_fire() {
+        let jpa = |prm: [u8; 4], env: [u8; 4], env_table: Vec<[u8; 4]>| Jpa {
+            emitter: libsms_assets::jpa::Emitter { lifetime: 5, ..Default::default() },
+            base: BaseShape {
+                prm,
+                env,
+                env_anm: !env_table.is_empty(),
+                col_anm_max: env_table.len().saturating_sub(1) as i16,
+                env_table,
+                ..BaseShape::default()
+            },
+            fields: vec![],
+            extra: None,
+            ex_tex: None,
+            keys: vec![],
+            child: None,
+            textures: vec![],
+        };
+        let mut fx = Particles::default();
+        fx.add("smear", jpa([255, 39, 15, 255], [39, 63, 255, 255], vec![]));
+        fx.add(
+            "flame",
+            jpa([255, 255, 255, 255], [255, 255, 135, 255], vec![[255, 144, 0, 255], [128, 0, 0, 255]]),
+        );
+        let base = |fx: &Particles, name: &str| fx.effects[fx.by_name[name]].jpa.base.clone();
+        let (pink, brown) = ([200, 100, 180], [140, 100, 40]);
+        fx.retint_to_colors(&["smear"], true, GreenRule::Red, pink, Some(brown));
+        let smear = base(&fx, "smear");
+        assert_eq!(smear.prm, [200, 100, 180, 255], "the red is his pink");
+        assert_eq!(smear.env, [140, 100, 40, 255], "the blue is his brown");
+        fx.retint_to_colors(&["flame"], true, GreenRule::Fire, pink, None);
+        let flame = base(&fx, "flame");
+        assert_eq!(flame.prm, [255, 255, 255, 255], "the white core stays");
+        assert_eq!(flame.env, [200, 100, 180, 255], "the yellow is pink");
+        assert_eq!(flame.env_table[0], [200, 100, 180, 255], "the orange is pink");
+        assert_eq!(flame.env_table[1], [100, 50, 90, 255], "a dim red is a dim pink");
+        fx.retint_to_colors(&["smear", "flame"], false, GreenRule::Red, pink, None);
+        assert_eq!(base(&fx, "smear").prm, [255, 39, 15, 255]);
+        assert_eq!(base(&fx, "flame").env_table[0], [255, 144, 0, 255]);
+        fx.retint_to_colors(&["smear"], true, GreenRule::Red, pink, Some(brown));
+        fx.retint_to_colors(&["smear"], true, GreenRule::Red, pink, Some(brown));
+        assert_eq!(base(&fx, "smear").prm, [200, 100, 180, 255]);
     }
 
     /// The pound flames run red through orange, so the fire rule takes every warm entry while
