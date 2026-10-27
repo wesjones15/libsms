@@ -32,6 +32,7 @@ mod props;
 mod stu;
 mod water;
 mod yoshi_model;
+mod yoshi_skin;
 
 use std::path::Path;
 
@@ -814,7 +815,9 @@ fn window_conf() -> Conf {
     // `SMS_SQUARE=1`: a square window, for skill-portrait reference captures.
     let square = std::env::var_os("SMS_SQUARE").is_some();
     Conf {
-        window_title: if std::env::args().any(|a| a == "--pianta") {
+        window_title: if std::env::args().any(|a| a == "--yoshi-mario") {
+            "Sunshine Yoshi — Mario movement demo".to_owned()
+        } else if std::env::args().any(|a| a == "--pianta") {
             "Pianta — Mario movement demo".to_owned()
         } else if std::env::args().any(|a| a.starts_with("--peach")) {
             "Sunshine Peach — Mario movement demo".to_owned()
@@ -882,6 +885,7 @@ async fn main() {
     // `--pianta`: the male Pianta, the female Pianta and Piantissimo wearing Mario's motion
     // (Tab cycles; `SMS_PIANTA=0|1|2` picks the first).
     let use_pianta = args.iter().any(|s| s == "--pianta");
+    let use_yoshi_skin = args.iter().any(|s|s=="--yoshi-mario");
     let mut pianta_index: usize = std::env::var("SMS_PIANTA").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
     let luigi_beside = std::env::args().any(|s| s == "--luigi-beside");
     // Luigi's voice: Mario's, pitched up with the lines' length kept (the Melee trick).
@@ -951,6 +955,12 @@ async fn main() {
             .map_err(|e| eprintln!("Yoshi's model: {e}"))
             .ok()
     });
+    let yoshi_skin = if use_yoshi_skin {
+        let a=assets.as_ref().expect("Yoshi demo requires Sunshine disc assets");
+        assert!(yoshi_model.is_some(),"Yoshi model failed to load");
+        Some(yoshi_skin::YoshiSkin::load(&a.dir,&rig.as_ref().expect("Mario rig").skeleton)
+            .expect("load Yoshi's exact 38-joint rig"))
+    } else { None };
     let (params, anims, data_label) = match &assets {
         Some(a) => (
             a.params.clone(),
@@ -967,7 +977,7 @@ async fn main() {
         let mut s = spawn();
         s.mario.params = params.clone();
         s.mario.anims = anims.clone();
-        s.mario.give_fludd();
+        if !use_yoshi_skin { s.mario.give_fludd(); }
         // `SMS_SPRAY_DIVE=1`: the host extension the RoR2 mod uses â€” the Spray nozzle may fire
         // during a B dive and the belly slide (`Options::spray_during_dive`).
         s.mario.options.spray_during_dive = std::env::var_os("SMS_SPRAY_DIVE").is_some();
@@ -1411,7 +1421,7 @@ async fn main() {
                 let mut muzzle_mtx: Vec<::glam::Mat4> = if portrait.as_deref() == Some("air") {
                     model.draw_nozzle_group(view, proj);
                     Vec::new()
-                } else if (use_luigi && !luigi_beside) || use_peach || use_melee_peach || use_pianta {
+                } else if (use_luigi && !luigi_beside) || use_peach || use_melee_peach || use_pianta || use_yoshi_skin {
                     Vec::new()
                 } else {
                     let mario_root = if luigi_beside {
@@ -1421,6 +1431,12 @@ async fn main() {
                     };
                     model.draw(&sim, &joints, mario_root, view, proj, get_time() as f32)
                 };
+                if let (Some(skin),Some(ym))=(&yoshi_skin,&mut yoshi_model) {
+                    let mut world=skin.pose(&joints);
+                    let offset=model.lowest(&joints)-ym.lowest(&world);
+                    for joint in &mut world { joint.w_axis.y+=offset; }
+                    ym.draw_mario_pose(&world,root,view,proj,get_time() as f32);
+                }
                 if let Some(peach) = peach_model.as_mut().filter(|_| !show_melee_peach) {
                     let world = peach.pose(&joints, model.lowest(&joints),pose_name,pose_phase);
                     peach.draw(&world, root, view, proj, get_time() as f32);
@@ -1603,6 +1619,12 @@ async fn main() {
         // `SMS_SHOT=<png>` saves a screenshot after `SMS_SHOT_FRAME` frames (default 90) and
         // quits; for checking the renderer without a person at the window.
         frame_no += 1;
+        if use_yoshi_skin {
+            let pose=std::env::var("SMS_POSE").unwrap_or_else(|_|format!("{}, {:.1}",sim.mario.anim.clip,sim.mario.anim.frame));
+            draw_rectangle(0.,screen_height()-88.,screen_width(),24.,Color::new(0.04,0.04,0.08,0.85));
+            draw_text(&format!("SUNSHINE YOSHI | 38 joints | yoshi.szs:yoshi_model.bmd | Player/Yoshi.cpp TYoshi::init | Mario: {pose} | Esc: quit"),
+                12.,screen_height()-71.,16.,WHITE);
+        }
         if let Some(p) = pianta_models.get(pianta_index) {
             let pose = std::env::var("SMS_POSE").unwrap_or_else(|_| format!("{}, {:.1}", sim.mario.anim.clip, sim.mario.anim.frame));
             draw_rectangle(0.0, screen_height() - 88.0, screen_width(), 24.0, Color::new(0.04,0.04,0.08,0.85));

@@ -211,6 +211,12 @@ impl YoshiModel {
             )
         });
         let joints = self.pose(look);
+        self.draw_posed(look,root,&joints,view,proj)
+    }
+
+    /// Draw the same exact model/materials with externally retargeted joint matrices.
+    fn draw_posed(&mut self,look:&YoshiLook,root:Mat4,joints:&[Mat4],view:Mat4,proj:Mat4)
+        ->Option<(Vec3,Vec3)> {
         let lights = Lights::daylight(view);
         let c = look.body_color;
         let tev = Some((2, [c[0], c[1], c[2], 255.0]));
@@ -228,7 +234,7 @@ impl YoshiModel {
             tev_color: tev,
             ..Default::default()
         };
-        let body_pose = Pose::new(&self.body.model.bmd, root, &joints);
+        let body_pose = Pose::new(&self.body.model.bmd, root, joints);
         let tongue = look.tongue.and_then(|(head, dir, tip)| {
             let (t, _) = self.tongue.as_ref()?;
             Some(tongue_arc(t, head, dir, tip + Vec3::Y * 50.0))
@@ -287,6 +293,22 @@ impl YoshiModel {
         self.mouth
             .and_then(|m| joints.get(m))
             .map(|m| (m.w_axis.truncate(), m.x_axis.truncate()))
+    }
+
+    pub fn lowest(&self,joints:&[Mat4])->f32 {
+        let pose=Pose::new(&self.body.model.bmd,Mat4::IDENTITY,joints);
+        self.body.model.bmd.batches().expect("Yoshi geometry").iter().flat_map(|b|&b.vertices)
+            .map(|v|pose.skin(v).0.y).fold(f32::INFINITY,f32::min)
+    }
+
+    /// Green Yoshi, using the same TEV register and blink pattern as TYoshi::entry.
+    pub fn draw_mario_pose(&mut self,joints:&[Mat4],root:Mat4,view:Mat4,proj:Mat4,time:f32) {
+        let colour=libsms::yoshi::BODY_COLORS[0];
+        let look=YoshiLook {pos:Vec3::ZERO,yaw:0,clip:"yoshi_wait",frame:0.,blend:None,
+            btp:"yoshi_wink_tx",btp_frame:time*30.,eat:None,
+            body_color:[colour[0] as f32,colour[1] as f32,colour[2] as f32],hands:false,
+            head_angle:0.,tongue:None,mounted:false};
+        self.draw_posed(&look,root,joints,view,proj);
     }
 
     /// Draws an egg and its thought bubble; `time` runs the bubble's idle clip.
