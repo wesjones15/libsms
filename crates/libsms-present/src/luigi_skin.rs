@@ -40,6 +40,11 @@ pub const LUIGI_HANG_OFFSET: (f32, f32) = (8.0, 6.0);
 /// (`Visuals.FighterBrightness`, default 1.5); Sunshine Luigi gets the same lift here.
 const LUIGI_BRIGHTNESS: f32 = 1.5;
 
+/// The image of Luigi's two eye TObjs (six frames: open, half shut, shut, then the screwed-up
+/// eye and brow of a pained face, then two glances) that a burning Luigi wears: Melee's hurt
+/// face, standing in for Mario's hot face, which Luigi's mesh has no pattern for.
+const LUIGI_HOT_EYE_FRAME: usize = 3;
+
 /// One HSD batch as the host reads it (mirrors the FFI's `SmsBatch` fields).
 pub struct HsdBatch {
     pub first_index: u32,
@@ -48,6 +53,9 @@ pub struct HsdBatch {
     pub vertex_count: u32,
     /// Plain texture id into [`Textures::list`], or -1 for an untextured batch.
     pub texture: i32,
+    /// The texture of a burning Luigi's face for the two eye batches (a plain texture id), else
+    /// the same as [`Self::texture`].
+    pub hot_texture: i32,
     /// [`blend`] class: 0 opaque, 1 cutout, 2 translucent, 3 additive.
     pub blend: u8,
     /// Lit bits (1 colour, 2 alpha); HSD carries no vertex-alpha fade.
@@ -92,8 +100,17 @@ impl Luigi {
         sms_dir: &Path,
         textures: &mut Textures,
     ) -> Result<Luigi, String> {
-        let model = hsd::Model::load_for(melee_dir, 0, &libssbm_assets::fighter::LUIGI)
-            .map_err(|e| e.to_string())?;
+        // The presentation's model carries the eyes' image frames (`texture_frames`), which the
+        // plain model does not; the plain one stands in if the animations can't be read.
+        let model = match libssbm_assets::presentation::Presentation::load_for(
+            melee_dir,
+            0,
+            &libssbm_assets::fighter::LUIGI,
+        ) {
+            Ok(p) => p.model,
+            Err(_) => hsd::Model::load_for(melee_dir, 0, &libssbm_assets::fighter::LUIGI)
+                .map_err(|e| e.to_string())?,
+        };
         let rig =
             sms::Rig::from_file(&sms_dir.join("bmd/ma_mdl1.bmd")).map_err(|e| e.to_string())?;
         let retarget = sms::Retarget::new(&model, &rig);
@@ -135,12 +152,26 @@ impl Luigi {
                 }
                 None => -1,
             };
+            let hot_texture = match batch.texture_frames.get(LUIGI_HOT_EYE_FRAME) {
+                Some(t) => {
+                    textures.list.push(Baked {
+                        width: t.width as u32,
+                        height: t.height as u32,
+                        wrap: [t.wrap_s, t.wrap_t],
+                        rgba: t.rgba.clone(),
+                        env: None,
+                    });
+                    textures.list.len() as i32 - 1
+                }
+                None => texture,
+            };
             batches.push(HsdBatch {
                 first_index: indices.len() as u32,
                 index_count: batch.indices.len() as u32,
                 first_vertex,
                 vertex_count: batch.vertices.len() as u32,
                 texture,
+                hot_texture,
                 blend: batch.blend,
                 lit: batch.lit,
                 src,
@@ -261,7 +292,8 @@ impl Luigi {
 
     /// Skins Luigi's HSD mesh for `world` (Melee units) into the host's per-frame buffers,
     /// scaling Melee units to Sunshine's decomp units (×10) and appending one colour + texture
-    /// id per batch. Returns the first vertex and colour offsets.
+    /// id per batch, with the burning face on his eyes when `hot`. Returns the first vertex and
+    /// colour offsets.
     pub fn skin_into(
         &self,
         world: &[Mat4],
@@ -270,6 +302,7 @@ impl Luigi {
         uvs: &mut Vec<[f32; 2]>,
         colors: &mut Vec<C4>,
         texture_ids: &mut Vec<i32>,
+        hot: bool,
     ) -> (u32, u32) {
         let first_vertex = positions.len() as u32;
         let first_color = colors.len() as u32;
@@ -280,7 +313,7 @@ impl Luigi {
                 normals.push(n);
                 uvs.push([batch.vertices[idx].uv.x, batch.vertices[idx].uv.y]);
             }
-            texture_ids.push(hb.texture);
+            texture_ids.push(if hot { hb.hot_texture } else { hb.texture });
             // Melee's 0.70 diffuse reads dark under RoR2's lighting; lift it like the Melee host does.
             colors.push([
                 batch.color[0] * LUIGI_BRIGHTNESS,

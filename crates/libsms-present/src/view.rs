@@ -33,6 +33,10 @@ const FACE_PATTERNS: [(&str, &str); 3] = [
     ("fjpend", "ma_fjpend_tx.btp"),
 ];
 
+/// Piantissimo's model has his face painted into one atlas, with no pattern to swap, so a burning
+/// Piantissimo flushes: his colours times this (red up, green and blue down).
+const PIANTISSIMO_HOT_FLUSH: [f32; 3] = [1.0, 0.62, 0.55];
+
 /// A face pattern and the body materials its tracks name (`usize::MAX`: not in this body).
 struct FacePattern {
     clip: &'static str,
@@ -1573,6 +1577,9 @@ impl View {
         }
         // A clip with a face of its own wears it for as long as it plays (`setAnimation` starts
         // the clip's `marioAnimeTexPatternFilenames` entry beside it): the burning Mario's hot face.
+        // The skins with no pattern to swap show it another way: Luigi's pained eyes, Piantissimo's
+        // flushed red.
+        let hot = FACE_PATTERNS.iter().any(|&(clip, _)| clip == m.anim.clip);
         if let Some(f) = self.faces.iter().find(|f| f.clip == m.anim.clip) {
             let mut frame = m.anim.frame;
             if f.pat.loop_mode == 2 && f.pat.length > 0 {
@@ -1955,7 +1962,16 @@ impl View {
                     self.textures.get(mdl, key, b.material, &inputs)
                 };
                 self.texture_ids.push(tex);
-                self.colors.push(mdl.batch_color[bi]);
+                let mut color = mdl.batch_color[bi];
+                if hot && rig_body.is_some_and(|(rig, _)| rig == model) {
+                    color = [
+                        color[0] * PIANTISSIMO_HOT_FLUSH[0],
+                        color[1] * PIANTISSIMO_HOT_FLUSH[1],
+                        color[2] * PIANTISSIMO_HOT_FLUSH[2],
+                        color[3],
+                    ];
+                }
+                self.colors.push(color);
             }
             self.draws.push(Draw {
                 key: (model as u64) << 56,
@@ -1980,6 +1996,7 @@ impl View {
                 &mut self.uvs,
                 &mut self.colors,
                 &mut self.texture_ids,
+                hot,
             );
             let luigi_model = self.models.len() as u32;
             self.draws.push(Draw {
@@ -2045,7 +2062,7 @@ mod tests {
         let mut colors = Vec::new();
         let mut texture_ids = Vec::new();
         let (first_vertex, first_color) =
-            luigi.skin_into(&world, &mut positions, &mut normals, &mut uvs, &mut colors, &mut texture_ids);
+            luigi.skin_into(&world, &mut positions, &mut normals, &mut uvs, &mut colors, &mut texture_ids, false);
         assert_eq!((first_vertex, first_color), (0, 0));
         assert_eq!(positions.len(), luigi.vertex_count);
         assert_eq!(uvs.len(), luigi.vertex_count);
@@ -2576,6 +2593,61 @@ mod tests {
 
     /// Burning, Mario wears the hot face (`ma_hot_wait_tx`, `ma_firejmp_tx`, `ma_fjpend_tx`) in
     /// place of the open eyes of the idle blink, on the body's own face materials.
+    /// Luigi's eyes (the two TObjs with image frames) wear the pained eye while he burns, and nothing
+    /// else changes.
+    #[test]
+    fn the_burning_luigi_wears_the_pained_eye() {
+        let Some(dir) = libsms::assets::find(None) else { eprintln!("SKIP: no assets/"); return };
+        let Some(melee) = melee_dir() else { eprintln!("SKIP: Melee cache absent"); return };
+        let mut v = View::load(&dir).unwrap();
+        assert!(v.set_luigi(&melee));
+        let luigi = v.luigi.as_mut().unwrap();
+        let eyes = luigi.batches.iter().filter(|b| b.hot_texture != b.texture).count();
+        assert_eq!(eyes, 2, "both eye batches have a hot image");
+        let world = luigi.pose("wait", 0.0).unwrap();
+        let skin = |hot| {
+            let (mut p, mut n, mut u, mut c, mut t) = (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+            luigi.skin_into(&world, &mut p, &mut n, &mut u, &mut c, &mut t, hot);
+            t
+        };
+        let (calm, hot) = (skin(false), skin(true));
+        assert_eq!(calm.len(), hot.len());
+        assert_eq!(calm.iter().zip(&hot).filter(|(a, b)| a != b).count(), 2, "only the two eyes change");
+    }
+
+    /// A burning Piantissimo's colours are flushed, and only while a burning clip plays.
+    #[test]
+    fn the_burning_piantissimo_flushes_red() {
+        let Some(mut v) = view() else { eprintln!("skipping: no assets/"); return };
+        if !v.load_skin(Skin::Piantissimo, None) {
+            eprintln!("SKIP: Piantissimo's model absent");
+            return;
+        }
+        v.set_skin(Skin::Piantissimo);
+        let (rig, _) = v.rig_body().expect("his body is loaded");
+        let a = libsms::Assets::discover(None).unwrap();
+        let mut sim = Sim::new(a.params, a.anim_table, Vec3::ZERO, 0);
+        let mut host = libsms::FlatHost::default();
+        let pad = libsms::Pad::default();
+        let tint = |v: &View| {
+            let d = v.draws.iter().find(|d| d.model == rig).expect("his body is drawn");
+            let c = v.colors[d.first_color as usize];
+            c[1] / c[0].max(0.001)
+        };
+        for _ in 0..30 {
+            sim.advance(&mut host, &pad, i16::MIN, 1.0 / 60.0);
+            v.update(&mut sim, 1.0 / 60.0);
+        }
+        let calm = tint(&v);
+        assert!(sim.mario.ignite());
+        for _ in 0..30 {
+            sim.advance(&mut host, &pad, i16::MIN, 1.0 / 60.0);
+            v.update(&mut sim, 1.0 / 60.0);
+        }
+        assert_eq!(sim.mario.anim.clip, "firejmp");
+        assert!(tint(&v) < calm * 0.8, "no flush: {calm} -> {}", tint(&v));
+    }
+
     #[test]
     fn the_burning_mario_wears_the_hot_face() {
         let dir = libsms::assets::find(None).expect("assets not found (set SMS_ASSETS)");
