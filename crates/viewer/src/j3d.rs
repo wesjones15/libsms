@@ -459,6 +459,9 @@ pub struct GpuModel {
 pub struct Look {
     /// Shapes not to draw (`J3DShpFlag_Visible` set).
     pub hidden: Vec<usize>,
+    /// Optional world-space correction for one identified shape, after skinning.
+    /// Used to fit FLUDD's belt without resizing the tank, straps or nozzle.
+    pub shape_transform: Option<(usize, Mat4)>,
     /// (material, texture map, texture) from texture pattern animations.
     pub tex_no: Vec<(usize, u8, u16)>,
     /// Replaces the model's own texture 0 (the caps and hands use the body's, `TMarioCap`).
@@ -660,8 +663,12 @@ impl Renderer {
             // Skin and light every vertex.
             let mat_c = mat.mat_colors.map(unit);
             let amb_c = mat.amb_colors.map(unit);
+            let correction=look.shape_transform.filter(|(shape,_)|*shape==b.shape).map(|(_,m)|m);
+            let correction_normal=correction.map(|m|Mat3::from_mat4(m).inverse().transpose());
             for (v, out) in b.src.iter().zip(b.scratch.chunks_exact_mut(FLOATS)) {
-                let (p, n) = pose.skin(v);
+                let (mut p,mut n) = pose.skin(v);
+                if let Some(m)=correction {p=m.transform_point3(p);}
+                if let Some(m)=correction_normal {n=m*n;}
                 let nv = (normal_to_view * n).normalize_or_zero();
                 let vc = v.colors.map(unit);
                 let c0 = channel(&mat.chans[0], mat_c[0], amb_c[0], vc[0], nv, lights, false);

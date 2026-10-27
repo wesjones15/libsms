@@ -191,6 +191,9 @@ pub enum UpperState {
 /// tuning that departs from the game on purpose. The defaults are the game.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Options {
+    /// Host aiming: turn an idle body toward the crosshair. A wearer with a separately
+    /// aimed head/back nozzle may disable this while retaining the same movement controls.
+    pub turn_to_aim: bool,
     /// `TNozzleBase::movement` (WaterGun.cpp): the continuous nozzles' output is
     /// `(pressed - gate)` where the gate climbs toward the pressed level at `mTriggerRate`
     /// per tick, so each press is a burst. A light press (the trigger's first tenth, under the
@@ -263,6 +266,7 @@ pub const STOMP_JUMP_WINDOW: u32 = 15;
 impl Default for Options {
     fn default() -> Options {
         Options {
+            turn_to_aim: true,
             spray_pressure_fades: true,
             spray_during_dive: false,
             redive_after_slide: false,

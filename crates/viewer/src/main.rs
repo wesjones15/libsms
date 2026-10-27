@@ -978,6 +978,7 @@ async fn main() {
         s.mario.params = params.clone();
         s.mario.anims = anims.clone();
         s.mario.give_fludd();
+        s.mario.options.turn_to_aim=!use_yoshi_skin;
         // `SMS_SPRAY_DIVE=1`: the host extension the RoR2 mod uses â€” the Spray nozzle may fire
         // during a B dive and the belly slide (`Options::spray_during_dive`).
         s.mario.options.spray_during_dive = std::env::var_os("SMS_SPRAY_DIVE").is_some();
@@ -1020,6 +1021,7 @@ async fn main() {
         sim.mario.upper = libsms::UpperState::HoldingObject;
     }
     let mut water = WaterManager::new(&params);
+    let mut juice_water=use_yoshi_skin.then(||WaterManager::new(&params));
     // Viewer-first host tuning: same procedural water and disc type, faster flight only.
     water.spray_speed = std::env::var("SMS_WATER_SPEED").ok().and_then(|v| v.parse().ok()).unwrap_or(1.0);
     water.reach = std::env::var("SMS_WATER_REACH").ok().and_then(|v| v.parse().ok()).unwrap_or(1.0);
@@ -1028,6 +1030,7 @@ async fn main() {
             params.nozzle(NozzleKind::Spray).particle_type, water.spray_speed, water.reach);
     }
     let mut water_view = assets.as_ref().and_then(|a| water::WaterView::load(&a.dir));
+    let mut juice_view=if use_yoshi_skin {assets.as_ref().and_then(|a|water::WaterView::load(&a.dir))}else{None};
     // The game's particle effects (nozzle mist, smoke, exhaust), run by libsms-present's View.
     let mut fx_layer = assets.as_ref().and_then(|a| fx::FxLayer::load(&a.dir));
     let mut water_ticks = 0u32;
@@ -1186,6 +1189,7 @@ async fn main() {
         if is_key_pressed(KeyCode::R) || sim.mario.pos.y < -2500.0 {
             sim = mk();
             water.particles.clear();
+            if let Some(juice)=&mut juice_water {juice.particles.clear();}
             if let Some(audio) = &mut audio {
                 audio.reset();
             }
@@ -1257,8 +1261,8 @@ async fn main() {
         let pi = std::f32::consts::PI;
         let aim = if let Some((deg, pitch)) = aim_env {
             Some((
-                to_angle(deg * 32768.0 / pi),
-                to_angle(pitch * 32768.0 / pi),
+                to_angle(deg.to_radians() * 32768.0 / pi),
+                to_angle(pitch.to_radians() * 32768.0 / pi),
             ))
         } else if pad.r_analog > 0
             && sim.mario.fludd.as_ref().is_some_and(|f| f.nozzle == NozzleKind::Spray)
@@ -1273,7 +1277,12 @@ async fn main() {
         sim.mario.aim = aim.map(|(yaw, pitch)| libsms::Aim { yaw, pitch });
         let t0 = std::time::Instant::now();
         sim.mario.water_underfoot = water.on_ground_near(sim.mario.pos);
+        let mut routed_emits=0;
         let ticks = sim.advance_observed(&mut world, &pad, camera_yaw, dt, |mario, world| {
+            if let Some(skin)=&yoshi_skin {
+                for w in world.emits.iter_mut().skip(routed_emits) {skin.route_emit(mario,w);}
+                routed_emits=world.emits.len();
+            }
             world.tick_fruits();
             world.tick_stus();
             if let Some(audio) = &mut audio {
@@ -1312,12 +1321,20 @@ async fn main() {
         }
         // FLUDD's water (`TModelWaterManager`): emitted every tick, moved once a frame.
         for e in std::mem::take(&mut world.emits) {
-            water.emit(&e);
+            if e.nozzle==NozzleKind::Yoshi && use_yoshi_skin {
+                if let Some(juice)=&mut juice_water {juice.emit_carried(&e);}
+            } else {water.emit(&e);}
         }
         water_ticks += ticks;
         while water_ticks >= 4 {
             water_ticks -= 4;
             water.step(&world, sim.mario.pos);
+            if let Some(juice)=&mut juice_water {
+                juice.step(&world,sim.mario.pos);
+                if let Some(v)=&mut juice_view {v.step(&juice.events);}
+                if let Some(a)=&mut audio {a.water(&juice.events);}
+                juice.events.clear();
+            }
             if sim.mario.wet_sliding() && portrait.is_none() {
                 water.slide_splashes(sim.mario.pos);
             }
@@ -1394,6 +1411,8 @@ async fn main() {
                 let upper = m
                     .upper_layer()
                     .and_then(|(c, f)| Some((r.clips.get(c)?, f, r.skeleton.find("jnt_chest")?)));
+                let upper=upper.filter(|_|!use_yoshi_skin || !yoshi_skin::SprayRoute::for_mario(m).mouth
+                    || !matches!(m.upper,libsms::UpperState::Pumping|libsms::UpperState::HoldingPump));
                 let mut joints = r
                     .skeleton
                     .pose_layered(r.clips.get(m.anim.clip).map(|c| (c, m.anim.frame)), upper);
@@ -1432,20 +1451,26 @@ async fn main() {
                     model.draw(&sim, &joints, mario_root, view, proj, get_time() as f32)
                 };
                 if let (Some(skin),Some(ym))=(&yoshi_skin,&mut yoshi_model) {
-                    let mut world=skin.pose(&joints);
+                    let route=yoshi_skin::SprayRoute::for_mario(m);
+                    let active=m.fludd.as_ref().is_some_and(|f|f.spray_amount()>0. && f.water>0 && pad.r_analog>0);
+                    let mut world=skin.pose_spray(&joints,route,active);
                     let offset=model.lowest(&joints)-ym.lowest(&world);
                     for joint in &mut world { joint.w_axis.y+=offset; }
+                    let mouth=skin.remember_mouth(&world);
                     ym.draw_mario_pose(&world,root,view,proj,get_time() as f32);
                     if let Some(f)=&mut luigi_fludd {
-                        let deployed=m.fludd.as_ref().is_some_and(|f|f.housed<0.5);
-                        muzzle_mtx=f.draw(m.fludd_look(),deployed,false,dt,
+                        f.belt_scale=1.5;
+                        let deployed=!route.mouth && m.fludd.as_ref().is_some_and(|f|f.housed<0.5);
+                        let muzzles=f.draw(skin.fludd_look(m,route),deployed,false,dt,
                             skin.chest(&world),root,view,proj,(true,true));
+                        muzzle_mtx=if route.mouth {vec![mouth]}else{muzzles};
                     }
                 }
                 if let Some(peach) = peach_model.as_mut().filter(|_| !show_melee_peach) {
                     let world = peach.pose(&joints, model.lowest(&joints),pose_name,pose_phase);
                     peach.draw(&world, root, view, proj, get_time() as f32);
                     if let Some(f) = &mut luigi_fludd {
+                        f.belt_scale=0.8;
                         let deployed = m.fludd.as_ref().is_some_and(|f| f.housed < 0.5);
                         muzzle_mtx = f.draw(m.fludd_look(), deployed, true, dt,
                             peach.chest(&world), root, view, proj, (true, true));
@@ -1455,6 +1480,7 @@ async fn main() {
                     let world = peach.pose(&joints, model.lowest(&joints),pose_name,pose_phase);
                     peach.draw(&world, root, view, proj);
                     if let Some(f) = &mut luigi_fludd {
+                        f.belt_scale=0.8;
                         let deployed = m.fludd.as_ref().is_some_and(|f| f.housed < 0.5);
                         muzzle_mtx = f.draw(m.fludd_look(), deployed, true, dt,
                             peach.chest(&world), root, view, proj, (true, true));
@@ -1592,6 +1618,9 @@ async fn main() {
             None if !clean => draw_water_plain(&water),
             None => {}
         }
+        if let (Some(juice),Some(view))=(&juice_water,&mut juice_view) {
+            view.draw(juice,&camera,1); // Sunshine's orange juice palette; old drops retain their colour.
+        }
         let t3 = std::time::Instant::now();
         if clean {
             // No 2D overlay; the capture is Mario and his effects alone.
@@ -1626,8 +1655,10 @@ async fn main() {
         frame_no += 1;
         if use_yoshi_skin {
             let pose=std::env::var("SMS_POSE").unwrap_or_else(|_|format!("{}, {:.1}",sim.mario.anim.clip,sim.mario.anim.frame));
+            let route=yoshi_skin::SprayRoute::for_mario(&sim.mario);
+            let mode=if route.mouth {"MOUTH JUICE / FLUDD REST"}else{"FLUDD"};
             draw_rectangle(0.,screen_height()-88.,screen_width(),24.,Color::new(0.04,0.04,0.08,0.85));
-            draw_text(&format!("MARI-YOSHI + FLUDD | wg_mdl1.bmd (WaterGun.cpp::init) | yoshi_model.bmd (Yoshi.cpp::init) | Mario: {pose} | Esc: quit"),
+            draw_text(&format!("MARI-YOSHI | {mode} | Yoshi.cpp null_tongue | NozzleYoshiMouth.prm type 12 | Mario: {pose} | Esc: quit"),
                 12.,screen_height()-71.,16.,WHITE);
         }
         if let Some(p) = pianta_models.get(pianta_index) {

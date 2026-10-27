@@ -39,6 +39,8 @@ pub const LEAN_FADE_TO: f32 = 180.0;
 
 /// One FLUDD: its body, its nozzles and every `watergun2` clip.
 pub struct Fludd {
+    /// Fit only shape 1 (_mat_froater) around the wearer; all other shapes retain scale.
+    pub belt_scale: f32,
     /// Its own renderer, so a character with no Mario model can own a FLUDD.
     renderer: Renderer,
     body: Part,
@@ -101,6 +103,7 @@ impl Fludd {
         }
         let centre = body.model.bmd.joint("nozzle_center");
         Ok(Fludd {
+            belt_scale: 1.,
             renderer,
             body,
             nozzles,
@@ -241,6 +244,11 @@ impl Fludd {
         for pass in [Pass::Opaque, Pass::Translucent] {
             if show.0 {
                 let pose = Pose::new(&self.body.model.bmd, root * base, &joints);
+                let mut body_look=body_look.clone();
+                if (self.belt_scale-1.).abs()>0.001 {
+                    let belt=pose.joints[1]; // G_center; shape 1 is rigidly attached here.
+                    body_look.shape_transform=Some((1,belt*Mat4::from_scale(Vec3::new(1.,self.belt_scale,self.belt_scale))*belt.inverse()));
+                }
                 self.renderer.draw(
                     &mut self.body.model,
                     &pose,

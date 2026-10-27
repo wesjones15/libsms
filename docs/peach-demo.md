@@ -1,5 +1,9 @@
 # Playable Peach retarget demo
 
+Both Peach variants fit FLUDD belt shape 1 (`wg_mdl1.bmd`, `_mat_froater`) at 0.8
+of its normal ring diameter. Only that rigid mesh is adjusted; the rest of FLUDD
+keeps its authored size. See `docs/yoshi-demo.md` for the shared belt-fit implementation.
+
 Run `target/release/sms-viewer.exe assets --peach-compare --peach-melee` from libsms.
 Tab switches between Melee and Sunshine Peach without resetting the Mario simulation.
 WASD moves, Space jumps, F dives/grabs, Z ground pounds, Shift sprays, 1–4 select

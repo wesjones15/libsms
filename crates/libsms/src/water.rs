@@ -76,6 +76,8 @@ pub struct Particle {
     pub spawn: Vec3,
     /// Units per original trajectory frame; use [`Self::velocity`] for world motion.
     pub vel: Vec3,
+    /// Host-carried motion exempt from the droplet's own flight-speed cap.
+    carry: Vec3,
     pub size: f32,
     /// Frames left (`mParticleLifetimeSOA`).
     pub life: f32,
@@ -218,6 +220,16 @@ impl WaterManager {
 
     /// `emitRequest` / `makeEmit`: adds up to `w.count` particles; returns how many fit.
     pub fn emit(&mut self, w: &WaterEmit) -> u32 {
+        self.emit_inner(w,Vec3::ZERO)
+    }
+
+    /// Emit while retaining the emitter's full carried motion. The speed cap applies
+    /// to the launched fluid relative to the emitter, not to its inherited movement.
+    pub fn emit_carried(&mut self,w:&WaterEmit)->u32 {
+        self.emit_inner(w,w.inherit)
+    }
+
+    fn emit_inner(&mut self,w:&WaterEmit,carry:Vec3)->u32 {
         let kind = (w.particle_type.max(0) as usize).min(16);
         if w.burst && w.count > 0 {
             let flat = Vec3::new(w.dir.x, 0.0, w.dir.z);
@@ -247,6 +259,7 @@ impl WaterManager {
                 pos: w.pos,
                 spawn: w.pos,
                 vel,
+                carry,
                 size,
                 life: self.types[kind].alive,
                 state: State::Flying,
@@ -427,12 +440,14 @@ impl WaterManager {
                 p.life = 0.0;
                 continue;
             }
-            let h2 = p.vel.x * p.vel.x + p.vel.z * p.vel.z;
+            let carry=if p.state==State::Flying {p.carry}else{Vec3::ZERO};
+            let relative=p.vel-carry;
+            let h2 = relative.x * relative.x + relative.z * relative.z;
             let cap = p.size * p.reach;
             if h2 > cap * cap {
                 let s = (cap - 0.1) / h2.sqrt();
-                p.vel.x *= s;
-                p.vel.z *= s;
+                p.vel.x=relative.x*s+carry.x;
+                p.vel.z=relative.z*s+carry.z;
             }
             match p.state {
                 State::Flying => {
@@ -627,6 +642,26 @@ mod tests {
             burst: false,
             spin: false,
         }
+    }
+
+    #[test]
+    fn carried_juice_keeps_running_velocity_after_the_flight_speed_cap() {
+        let mut water=WaterManager::new(&Params::default());
+        let mut shot=emit(Vec3::Z);
+        shot.nozzle=NozzleKind::Yoshi;shot.particle_type=12;
+        shot.pos.y=1000.;shot.power=45.;shot.size=35.;shot.inherit=Vec3::new(0.,0.,80.);
+        water.emit_carried(&shot);
+        let start=shot.pos;
+        for frame in 1..=4 {
+            water.step(&FlatHost::default(),Vec3::new(0.,1000.,80.*frame as f32));
+            let p=&water.particles[0];
+            assert!(p.velocity().z>80.,"juice must overtake its running emitter");
+            assert!(p.pos.z-start.z>80.*frame as f32,"juice fell behind its emitter");
+        }
+        // The ordinary water path retains its original total-speed cap.
+        let mut ordinary=WaterManager::new(&Params::default());ordinary.emit(&shot);
+        ordinary.step(&FlatHost::default(),Vec3::ZERO);
+        assert!(ordinary.particles[0].velocity().z<80.);
     }
 
     #[test]
