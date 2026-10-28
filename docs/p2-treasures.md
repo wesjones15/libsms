@@ -124,3 +124,40 @@ cleanly without the caches.
 Not verified: nothing has been drawn in a window, and nothing has been seen or heard in RoR2 or played by ear. The
 bake's colours were not compared with the game's screenshots, `Indirect::Yes` models look flatter than in game, and the
 AST decoder and the faint `OTAKARA_SCROLL` sound have only been judged by their numbers.
+
+## Ship Repair integration (shared repair)
+
+Wired 2026-10-28, built and staged, **never played**. Treasures are bonus objectives of the cooperative Ship Repair run;
+the race (competitive) mode has none.
+
+- **Core** (`libpikmin/crates/libpikmin/src/carry.rs`): a treasure is a ship-part pellet whose `ship_part` is
+  `TREASURE_PART_BASE (1000) + its index`. The Dolphin's Pikmin carry it to the receiver exactly like a part
+  (including the host receipt, `Event::ShipPartCollected`); a ship never keeps it among its fitted parts. Test:
+  `a_treasure_is_received_by_the_ship_without_fitting_it`.
+- **FFI** (`libpikmin-ffi`, no struct change, ABI stays 51): `pik_sim_treasure_count/weight/value/name`,
+  `pik_sim_spawn_treasure`, and `pik_p2_treasures_complete` / `pik_p2_extract_treasures` (first-run extraction from the
+  user's Pikmin 2 disc beside Louie's files). The sim reads `<assets>/p2/treasure` at creation; no cache means zero
+  treasures and an unchanged Ship Repair.
+- **Rule** (`ShipRepairTreasures.cs`, pure and tested in `tests/ShipRepairCheck`): per stage `TreasuresPerStage`
+  (default 5, 0-16) distinct treasures, drawn with the run seed and the stage number, never one already collected
+  this run, none needing more than `TreasureMaxCarriers` Pikmin (default 25; the table goes up to 101).
+  The tier comes first (Pokos under 60 common 55%, under 130 fine 28%, under 300 rare 14%, above that legendary
+  3%), then a treasure of the tier. Sites use the parts' rules: ground the Dolphin's Pikmin can carry from, 15-170
+  units from the receiver at first, 14 units clear of parts and of each other, off the arrival point.
+- **Score**: a separate category. A treasure adds `TreasureScoreWeight` (default 0.1, capped at 0.2) of a Dolphin part
+  times 1, 1.5, 2.5 or 4 by tier: 0.10 / 0.15 / 0.25 / 0.40 at the default, never 1.0 whatever the setting (tested).
+  The final score is parts + Pikmin/50 + whole parts' worth of treasure points (rounded down), so many small
+  treasures can add a point but no single one is a part. Weight 0 turns the category off.
+- **Delivery and UI**: `ShipRepairSession.Treasure.cs`. A "Treasure: NAME - needs N Pikmin" toast on discovery, a
+  floating name and carrier count until Pikmin lift it, a "+x.xx treasure points" toast on delivery, the HUD tally
+  "TREASURES n +x.xx" under the parts counter, and the count in the results line and the saved report. The state
+  message (`ShipRepairPacket` protocol 6) carries the tally and the stage's treasures so clients see the same.
+  A treasure that falls through the map goes back to its last safe ground.
+
+Not done: the **models** (treasures show as the generic white pellet of their size; drawing them needs the baked J3D
+models in the pellet draw path of `libpikmin-present`, which another session is changing), **competitive** mode
+(a per-racer tally in `ShipRepairRacer` and the packet), the JPA2 effects (appear dust, water splash, delivery
+sparkles) and the pickup/deliver sound effects and jingles in the plugin (the audio is verified in Rust only), carry
+motion, Pokos as a currency, and the Doomsday Apparatus (needs 128 Pikmin) and other 30+ carrier treasures
+(excluded by `TreasureMaxCarriers`). Nothing was run in RoR2 or with two players; the packet checks, the pick rule
+and the core delivery are headless tests.
