@@ -8,6 +8,7 @@ pub mod audio;
 pub mod body;
 pub mod coins;
 pub mod democam;
+pub mod enemy;
 pub mod hud;
 pub mod life;
 pub mod particles;
