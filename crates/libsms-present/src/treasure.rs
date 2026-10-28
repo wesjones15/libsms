@@ -98,11 +98,13 @@ mod tests {
         let Some(dir) = dir() else { eprintln!("SKIP: no Pikmin 2 treasure cache"); return };
         let table = Table::load(&dir).expect("table");
         let mut with_carry = 0;
+        let mut joints = std::collections::BTreeMap::new();
         let (mut tallest, mut widest) = ((String::new(), 0.0f32), (String::new(), 0.0f32));
         for c in table.all() {
             let t = Treasure::load(&dir, c).unwrap_or_else(|e| panic!("{}: {e}", c.name));
             assert!(!t.model.batches.is_empty() && t.model.batches.iter().all(|b| !b.indices.is_empty()), "{}", c.name);
             assert!(t.model.batch_texture.iter().any(|&x| x >= 0), "{}: no baked texture", c.name);
+            *joints.entry(t.rig.len()).or_insert(0) += 1;
             let s = t.size();
             assert!(s.is_finite() && s.min_element() >= 0.0 && s.max_element() > 1.0 && s.max_element() < 2000.0, "{} size {s}", c.name);
             if let Some(clip) = &t.carry {
@@ -115,7 +117,7 @@ mod tests {
             if s.y > tallest.1 { tallest = (c.name.clone(), s.y) }
             if s.x.max(s.z) > widest.1 { widest = (c.name.clone(), s.x.max(s.z)) }
         }
-        eprintln!("{} models, {with_carry} with a carry motion; tallest {tallest:?}, widest {widest:?}", table.all().count());
+        eprintln!("{} models, {with_carry} with a carry motion; tallest {tallest:?}, widest {widest:?}; joints {joints:?}", table.all().count());
         assert!(with_carry >= 150, "carry motions: {with_carry}");
     }
 }
