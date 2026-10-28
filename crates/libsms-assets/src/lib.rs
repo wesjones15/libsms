@@ -17,6 +17,7 @@ pub mod btp;
 pub mod btk;
 pub mod brk;
 pub mod jpa;
+pub mod jpa2;
 pub mod mario;
 pub mod pose;
 pub mod retarget;
