@@ -84,3 +84,6 @@ cloth variants (`moma`..`momd`, `mowa`..) are not worn. The Pianta has no foot c
 model, so long strides slide a little; the lowest vertex is anchored like Peach's.
 Captures: `../output/sms-peach-demo/pianta/`. Tests: `pianta::tests` (bone lengths held
 across five Mario clips, Piantissimo's hierarchy equals Mario's).
+
+The Pianta is also an alt-skin for Olimar in RoR2: the loading, bake and retarget moved to
+`libsms_present::body` (`Pianta`), and libpikmin-present draws it (`../ror2-olimar/DOCS/pianta-skin.md`).
