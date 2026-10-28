@@ -221,3 +221,86 @@ mod tests {
         }
     }
 }
+
+/// Files Louie needs under the Pikmin 2 cache (`libsms::extract::p2`).
+pub const LOUIE_FILES: [&str; 3] = ["piki/orima_model/orima3.bmd", "piki/motion/wait.bca", "piki/motion/walk.bca"];
+
+/// Pikmin 2's Louie (`NaviMgr::loadResources_float`: `orima_model/orima3.bmd`) with his own motions
+/// (`motion/*.bca`, driven by `animmgr.txt` in the game), from the cache `libsms::extract::p2` writes.
+/// His rig is the one the motions were made for, so they pose him directly, no retarget.
+pub struct Louie {
+    pub model: Model,
+    pub textures: Textures,
+    pub rig: Skeleton,
+    clips: HashMap<String, Clip>,
+}
+
+impl Louie {
+    pub fn load(dir: &Path) -> Result<Louie, String> {
+        let rel = LOUIE_FILES[0];
+        let data = std::fs::read(dir.join(rel)).map_err(|e| format!("{rel}: {e}"))?;
+        let bmd = Bmd::parse(&data).map_err(|e| format!("{rel}: {e}"))?;
+        let rig = Skeleton::from_bmd(&data).ok_or_else(|| format!("{rel}: invalid JNT1/INF1"))?;
+        let mut clips = HashMap::new();
+        let rd = std::fs::read_dir(dir.join("piki/motion")).map_err(|e| format!("piki/motion: {e}"))?;
+        for e in rd.flatten() {
+            let path = e.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("bca") { continue }
+            let Some(name) = path.file_stem().and_then(|s| s.to_str()) else { continue };
+            if let Some(c) = std::fs::read(&path).ok().and_then(|b| Clip::parse_bca(&b)) {
+                if c.joint_count() == rig.len() { clips.insert(name.to_owned(), c); }
+            }
+        }
+        if clips.is_empty() { return Err("no motion fits Louie's rig".into()) }
+        let mut textures = Textures::default();
+        let model = build(bmd, &|_, _| None, RIG_KEY_BASE + 0x40, &mut textures)?;
+        Ok(Louie { model, textures, rig, clips })
+    }
+
+    /// Standing height in the model's units (bind pose).
+    pub fn height(&self) -> f32 {
+        self.model.hi.y - self.model.lo.y
+    }
+
+    /// Length in frames of motion `name` (`wait`, `walk`, `run2`, ...; 30 per second).
+    pub fn clip_frames(&self, name: &str) -> Option<f32> {
+        self.clips.get(name).map(|c| c.frames)
+    }
+
+    /// His joints in motion `name` at `frame`, model space.
+    pub fn pose(&self, name: &str, frame: f32) -> Option<Vec<Mat4>> {
+        Some(self.rig.pose(self.clips.get(name)?, frame))
+    }
+
+    pub fn bind_world(&self) -> Vec<Mat4> {
+        self.rig.bind_world()
+    }
+}
+
+#[cfg(test)]
+mod louie_tests {
+    use super::*;
+
+    fn assets() -> Option<std::path::PathBuf> {
+        let dir = std::env::var_os("SMS_P2_ASSETS").map(std::path::PathBuf::from)
+            .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/p2"));
+        LOUIE_FILES.iter().all(|f| dir.join(f).is_file()).then_some(dir)
+    }
+
+    #[test]
+    fn louie_poses_from_his_own_motions() {
+        let Some(dir) = assets() else { eprintln!("SKIP: no Pikmin 2 cache"); return };
+        let l = Louie::load(&dir).expect("load");
+        assert!(l.height() > 5.0 && l.height() < 400.0, "height {}", l.height());
+        assert!(l.model.batch_texture.iter().any(|&t| t >= 0), "no baked texture");
+        let bind = l.bind_world();
+        for clip in ["wait", "walk", "run2", "throw", "nuku", "fue", "damage", "dead", "jump", "rolljmp"] {
+            let frames = l.clip_frames(clip).unwrap_or_else(|| panic!("no {clip}"));
+            for frame in [0.0, frames * 0.5, frames] {
+                let w = l.pose(clip, frame).unwrap();
+                assert_eq!(w.len(), bind.len());
+                assert!(w.iter().all(|m| m.is_finite()), "{clip}");
+            }
+        }
+    }
+}

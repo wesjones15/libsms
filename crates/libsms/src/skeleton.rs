@@ -323,6 +323,20 @@ impl Track {
         Some(Self { keys })
     }
 
+    /// A track of one value per frame (frame 0, 1, 2, ...), each key's slope the neighbours' average.
+    pub fn from_frames(v: &[f32]) -> Self {
+        if v.len() <= 1 {
+            return Self { keys: vec![(0., v.first().copied().unwrap_or(0.), 0., 0.)] };
+        }
+        let keys = (0..v.len())
+            .map(|i| {
+                let slope = (v[(i + 1).min(v.len() - 1)] - v[i.saturating_sub(1)]) / if i == 0 || i == v.len() - 1 { 1.0 } else { 2.0 };
+                (i as f32, v[i], slope, slope)
+            })
+            .collect();
+        Self { keys }
+    }
+
     pub fn value(&self, t: f32) -> f32 {
         let k = &self.keys;
         match k.len() {
@@ -435,6 +449,64 @@ impl Clip {
             mode,
             joints,
         })
+    }
+
+    /// A `J3D1bca1` joint animation (`.bca`, Pikmin 2's motions): `ANF1`, one value per frame for
+    /// every channel (`J3DAnmTransformFull`, J3DAnimation.cpp; the game takes the nearest frame, which
+    /// is smoothed here to a Hermite through the neighbours' slope so a 60 Hz host does not step).
+    pub fn parse_bca(d: &[u8]) -> Option<Clip> {
+        if d.get(0..8)? != b"J3D1bca1" {
+            return None;
+        }
+        let a = 0x20usize;
+        if d.get(a..a + 4)? != b"ANF1" {
+            return None;
+        }
+        let mode = match *d.get(a + 8)? {
+            0 => LoopMode::Once,
+            1 => LoopMode::OnceReset,
+            2 => LoopMode::Loop,
+            3 => LoopMode::MirrorOnce,
+            _ => LoopMode::MirrorLoop,
+        };
+        let angle_mult = *d.get(a + 9)? as i8;
+        let frames = be_u16(d, a + 10)? as f32;
+        let joint_count = be_u16(d, a + 12)? as usize;
+        let table_at = a + be_u32(d, a + 20)? as usize;
+        let scale_at = a + be_u32(d, a + 24)? as usize;
+        let rot_at = a + be_u32(d, a + 28)? as usize;
+        let trans_at = a + be_u32(d, a + 32)? as usize;
+        let rot_scale = (PI / 32768.0) * 2f32.powi(angle_mult as i32);
+
+        // One channel: `count` frames of values from `offset` in its table (a lone value is constant).
+        let channel = |kind: usize, count: usize, offset: usize| -> Option<Track> {
+            let value = |i: usize| -> Option<f32> {
+                match kind {
+                    0 => be_f32(d, scale_at + 4 * i),
+                    1 => Some(be_i16(d, rot_at + 2 * i)? as f32 * rot_scale),
+                    _ => be_f32(d, trans_at + 4 * i),
+                }
+            };
+            let n = count.max(1);
+            let v: Vec<f32> = (0..n).map(|f| value(offset + f)).collect::<Option<_>>()?;
+            Some(Track::from_frames(&v))
+        };
+        let mut joints = Vec::with_capacity(joint_count);
+        for j in 0..joint_count {
+            // Per joint x, y, z; each: scale (count, offset), rotation, translation.
+            let mut tracks: [Vec<Track>; 3] = Default::default();
+            for axis in 0..3 {
+                let e = table_at + (j * 3 + axis) * 12;
+                for kind in 0..3 {
+                    let count = be_u16(d, e + kind * 4)? as usize;
+                    let offset = be_u16(d, e + kind * 4 + 2)? as usize;
+                    tracks[kind].push(channel(kind, count, offset)?);
+                }
+            }
+            let [s, r, t] = tracks;
+            joints.push(s.into_iter().chain(r).chain(t).collect::<Vec<_>>().try_into().ok()?);
+        }
+        Some(Clip { frames, mode, joints })
     }
 
     pub fn joint_count(&self) -> usize {

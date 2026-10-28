@@ -19,6 +19,7 @@
 //! (RVZ, WIA, WBFS) are refused with a clear message; convert them or use the Python script.
 
 pub mod gcm;
+pub mod p2;
 pub mod rarc;
 pub mod yaz0;
 
