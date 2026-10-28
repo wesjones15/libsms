@@ -14,7 +14,7 @@ use libcommon::disc::Disc;
 use super::{ExtractError, rarc, safe_join, yaz0};
 
 /// Bump when the set of files changes, so an older cache is redone.
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 const MARKER: &str = "p2.ok";
 
 /// (disc path, folder under the cache the archive's files go to).
@@ -35,6 +35,7 @@ pub const NAVI_FILES: [&str; 3] = ["piki/orima_model/orima3.bmd", "piki/motion/w
 pub fn is_complete(dir: &Path) -> bool {
     std::fs::read_to_string(dir.join(MARKER)).is_ok_and(|s| s.trim() == VERSION.to_string())
         && NAVI_FILES.iter().all(|f| dir.join(f).is_file())
+        && audio_is_complete(dir)
 }
 
 fn disc_err(e: libcommon::disc::DiscError) -> ExtractError {
@@ -86,7 +87,55 @@ pub fn extract_navi(iso: &Path, out: &Path, log: &mut dyn FnMut(&str)) -> Result
         std::fs::write(target, data)?;
         wrote += 1;
     }
+    wrote += extract_audio(iso, out, log)?;
     std::fs::write(out.join(MARKER), VERSION.to_string())?;
+    Ok(wrote)
+}
+
+/// Bump when the set of sound files changes.
+pub const AUDIO_VERSION: u32 = 1;
+const AUDIO_MARKER: &str = "p2audio.ok";
+
+/// The sound files Louie's voice and effects need: the init data (instrument and wave banks, the sound table), the sound
+/// names, the sequences, and the wave archives (`Banks/wScene_N.aw`, all of them: which scene holds what is in the init data).
+pub const AUDIO_FILES: [&str; 3] = ["AudioRes/PSound.aaf", "AudioRes/PSound.asn", "AudioRes/Seqs/Seq.arc"];
+
+/// Whether `dir` holds a complete sound extraction of this version.
+pub fn audio_is_complete(dir: &Path) -> bool {
+    std::fs::read_to_string(dir.join(AUDIO_MARKER)).is_ok_and(|s| s.trim() == AUDIO_VERSION.to_string())
+        && AUDIO_FILES.iter().all(|f| dir.join(f).is_file())
+}
+
+/// Copies the sound files out of the Pikmin 2 disc at `iso` into `out` (same layout as the disc's `AudioRes/`).
+/// Skips the work when `out` is complete. Returns how many files were written.
+pub fn extract_audio(iso: &Path, out: &Path, log: &mut dyn FnMut(&str)) -> Result<usize, ExtractError> {
+    if audio_is_complete(out) {
+        log("Pikmin 2 sound files already extracted");
+        return Ok(0);
+    }
+    let disc = Disc::open(iso).map_err(disc_err)?;
+    if !disc.game_id.starts_with("GPV") {
+        return Err(ExtractError::WrongGame(disc.game_id.clone()));
+    }
+    let mut wrote = 0;
+    let mut wanted: Vec<String> = AUDIO_FILES.iter().map(|s| (*s).to_owned()).collect();
+    for f in disc.files() {
+        if f.path.starts_with("AudioRes/Banks/") && f.path.ends_with(".aw") {
+            wanted.push(f.path.clone());
+        }
+    }
+    for path in wanted {
+        let file = disc.find(&path).ok_or_else(|| ExtractError::Missing(path.clone()))?;
+        let data = disc.read(file).map_err(disc_err)?;
+        let target = safe_join(out, &path)?;
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(target, data)?;
+        wrote += 1;
+    }
+    log(&format!("{wrote} sound files"));
+    std::fs::write(out.join(AUDIO_MARKER), AUDIO_VERSION.to_string())?;
     Ok(wrote)
 }
 

@@ -585,6 +585,87 @@ fn water_sounds(sys: &mut SoundSystem, events: &[libsms::water::WaterEvent]) {
     }
 }
 
+/// Pikmin 2's sound effects on the default output device: Louie's voice and the sounds of what he does in RoR2 (his
+/// skin of Olimar). The same JAudio engine plays them (`SoundData::load_pikmin2`; ids are `SoundID.h`'s, e.g.
+/// `PSSE_PL_DAMAGE_LUI` 0x891). Positions and the listener use Sunshine-sized units like [`Audio`]'s, whoever converts them.
+pub struct Pikmin2Audio {
+    sys: Arc<Mutex<SoundSystem>>,
+    volume: Arc<AtomicU32>,
+    paused: Arc<AtomicBool>,
+    /// Seconds not yet run as the sound system's 30 Hz frames.
+    owed: f32,
+    _stream: cpal::Stream,
+    pub rate: u32,
+    pub channels: u16,
+}
+
+/// The sound system's frame rate (`JAIBasic` runs once per video frame; the game renders at 30).
+const FRAME: f32 = 1.0 / 30.0;
+
+impl Pikmin2Audio {
+    /// `dir` holds `AudioRes/` from the Pikmin 2 disc (`libsms::extract::p2`). Failure leaves a silent host.
+    pub fn start(dir: &Path) -> Option<Self> {
+        match Self::open(dir) {
+            Ok(a) => Some(a),
+            Err(e) => {
+                eprintln!("Pikmin 2 sound disabled: {e}");
+                None
+            }
+        }
+    }
+
+    pub fn open(dir: &Path) -> Result<Self, Box<dyn std::error::Error>> {
+        let sys = Arc::new(Mutex::new(SoundSystem::new(Arc::new(SoundData::load_pikmin2(dir)?))));
+        let volume = Arc::new(AtomicU32::new(1.0f32.to_bits()));
+        let paused = Arc::new(AtomicBool::new(false));
+        let device = cpal::default_host().default_output_device().ok_or("no output device")?;
+        let config = device.default_output_config()?;
+        let (rate, channels) = (config.sample_rate().0, config.channels());
+        let (v, p) = (volume.clone(), paused.clone());
+        let stream = match config.sample_format() {
+            cpal::SampleFormat::F32 => output::<f32>(&device, &config.into(), sys.clone(), v, p)?,
+            cpal::SampleFormat::I16 => output::<i16>(&device, &config.into(), sys.clone(), v, p)?,
+            cpal::SampleFormat::U16 => output::<u16>(&device, &config.into(), sys.clone(), v, p)?,
+            format => return Err(format!("unsupported output sample format {format}").into()),
+        };
+        stream.play()?;
+        Ok(Self { sys, volume, paused, owed: 0.0, _stream: stream, rate, channels })
+    }
+
+    /// Output gain, 0..1.
+    pub fn set_volume(&self, v: f32) {
+        self.volume.store(v.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
+    }
+
+    pub fn set_paused(&self, paused: bool) {
+        self.paused.store(paused, Ordering::Relaxed);
+    }
+
+    /// The listener as a world-to-camera matrix (camera looking down -Z) and its position.
+    pub fn set_listener(&self, view: Mat4, eye: Vec3) {
+        if let Ok(mut sys) = self.sys.lock() {
+            sys.set_listener(view, eye);
+        }
+    }
+
+    /// Plays sound effect `id` (`SoundID.h`); `pos` None sounds in the listener's ears. False when the id is not in
+    /// the table.
+    pub fn play(&self, id: u32, pos: Option<Vec3>, owner: u64) -> bool {
+        self.sys.lock().ok().is_some_and(|mut sys| sys.play_se(id, pos, owner).is_some())
+    }
+
+    /// Runs the sound system's frames for `dt` seconds of the host's time.
+    pub fn advance(&mut self, dt: f32) {
+        self.owed = (self.owed + dt.clamp(0.0, 0.25)).min(0.25);
+        if let Ok(mut sys) = self.sys.lock() {
+            while self.owed >= FRAME {
+                sys.frame();
+                self.owed -= FRAME;
+            }
+        }
+    }
+}
+
 fn output<T: cpal::SizedSample + cpal::FromSample<f32>>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,

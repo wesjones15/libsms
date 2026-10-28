@@ -65,6 +65,24 @@ impl SeqArchive {
         Ok(SeqArchive { entries, data: arc })
     }
 
+    /// Pikmin 2's `Seqs/Seq.arc` is a plain RARC of `.bms` files (no `BARC` header in the init data). The entries are
+    /// the files, in the archive's order, with `first` moved to index 0: the sequence that plays every sound effect
+    /// (`PSGame.cpp`: `new PSSystem::SeSeq("se.bms", ..)`) sits where Sunshine keeps `se.scom`.
+    pub fn from_rarc(arc: &libsms::extract::rarc::Archive, first: &str) -> Result<Self, Error> {
+        let mut names: Vec<String> = arc.paths().map(str::to_owned).collect();
+        let at = names.iter().position(|n| n == first).ok_or_else(|| Error::Bad(format!("no {first} in the archive")))?;
+        let lead = names.remove(at);
+        names.insert(0, lead);
+        let mut data = Vec::new();
+        let mut entries = Vec::with_capacity(names.len());
+        for name in names {
+            let bytes = arc.file(&name).ok_or_else(|| Error::Bad(format!("{name} is not a file")))?;
+            entries.push(Some(SeqEntry { name, offset: data.len() as u32, size: bytes.len() as u32 }));
+            data.extend_from_slice(bytes);
+        }
+        Ok(SeqArchive { entries, data })
+    }
+
     pub fn len(&self) -> usize {
         self.entries.len()
     }

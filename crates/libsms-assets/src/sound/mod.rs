@@ -41,6 +41,14 @@ pub const SEQ_ARC: &str = "AudioRes/Seqs/sequence.arc";
 pub const BANKS_DIR: &str = "AudioRes/Banks";
 pub const STREAMS_DIR: &str = "AudioRes/Streams";
 
+/// Pikmin 2's files (`libsms::extract::p2::extract_audio`): the same JAudio layout, its init data, names and sequence
+/// archive under other names.
+pub const P2_INIT_DATA: &str = "AudioRes/PSound.aaf";
+pub const P2_NAMES: &str = "AudioRes/PSound.asn";
+pub const P2_SEQ_ARC: &str = "AudioRes/Seqs/Seq.arc";
+/// The sequence that plays every sound effect.
+pub const P2_SE_SEQUENCE: &str = "se.bms";
+
 /// (wave bank, group, wave)
 pub type WaveKey = (usize, usize, usize);
 
@@ -77,6 +85,33 @@ impl SoundData {
             .ok()
             .and_then(|d| SoundNames::parse(&d).ok())
             .unwrap_or_default();
+        Ok(SoundData {
+            init,
+            seqs,
+            names,
+            dir: assets.to_path_buf(),
+            files: Mutex::default(),
+            pcm: Mutex::default(),
+            voice_pitch: Mutex::new(1.0),
+            voice_pending: AtomicBool::new(false),
+        })
+    }
+
+    /// Pikmin 2's sound data from the folder `assets` (`AudioRes/PSound.aaf`, `Seqs/Seq.arc`, `Banks/wScene_N.aw`).
+    /// Sound effects are ids in the table as in Sunshine (`SoundID.h` in the decomp: `PSSE_PL_DAMAGE_LUI = 0x891`).
+    pub fn load_pikmin2(assets: &Path) -> Result<Self, Error> {
+        let read = |rel: &str| {
+            let p = assets.join(rel);
+            std::fs::read(&p).map_err(|e| match e.kind() {
+                std::io::ErrorKind::NotFound => Error::NotFound(p),
+                _ => Error::Io(e),
+            })
+        };
+        let init = InitData::parse(&read(P2_INIT_DATA)?)?;
+        let arc = libsms::extract::rarc::Archive::parse(read(P2_SEQ_ARC)?)
+            .map_err(|e| Error::Bad(format!("Seq.arc: {e}")))?;
+        let seqs = SeqArchive::from_rarc(&arc, P2_SE_SEQUENCE)?;
+        let names = read(P2_NAMES).ok().and_then(|d| SoundNames::parse(&d).ok()).unwrap_or_default();
         Ok(SoundData {
             init,
             seqs,
