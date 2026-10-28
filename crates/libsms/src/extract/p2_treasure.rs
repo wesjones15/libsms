@@ -36,7 +36,6 @@ pub const STREAMS: [&str; 3] = ["ff_treasureget", "ff_treasureglad", "ff_treasur
 
 /// Disc files whose bytes are copied verbatim: (disc path, path under `DIR/`).
 const EFFECTS: &[(&str, &str)] = &[
-    ("user/Kando/effect/game.jpc", "effects/kando_game.jpc"),
     ("user/Ebisawa/effect/game.jpc", "effects/ebisawa_game.jpc"),
 ];
 

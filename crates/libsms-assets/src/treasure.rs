@@ -347,6 +347,22 @@ pub const NAME_GROUP: u32 = 101;
 pub const DESC_GROUP: u32 = 401;
 pub const NOTE_GROUP: u32 = 701;
 
+/// The particle effects the treasures and their delivery use: (resource ids in `game.jpc`, `ParticleID.h` name,
+/// the `efx::` struct that plays them and where). The container is `Ebisawa/effect/game.jpc`
+/// (`effects/ebisawa_game.jpc` in the cache); `Jpc::resources` has every id here.
+pub const EFFECTS: &[(&[u16], &str, &str)] = &[
+    (&[0x127, 0x128, 0x129], "OtakaraApL", "efx::TOtakaraApL: dust when a large treasure appears (TOtakaraAp, itemTreasure.cpp)"),
+    (&[0x12A, 0x12B], "OtakaraApS", "efx::TOtakaraApS: the same for a small one"),
+    (&[0x279, 0x27A, 0x27B], "OtakaraDive", "efx::TOtakaraDive: splash when a treasure lands in water (Pellet::onBounce, pelletMgr.cpp)"),
+    (&[0x17E, 0x17F], "PodGepu", "efx::TPodGepu: an Onion burps a pellet's seeds out (onyonMgr.cpp)"),
+    (&[0x180], "PodKira", "efx::TPodKira: sparkles on the Onion"),
+    (&[0x185, 0x186], "PodSuck", "efx::TPodSuck: the Onion's suction rings"),
+    (&[0x1C4, 0x1C5], "UfoPodGeku", "efx::TUfoPodGepu: the ship spits out seeds when a treasure is delivered"),
+    (&[0x1C8], "UfoPodOpenSuck", "efx::TUfoPodOpenSuck: rainbow rings at the ship's pod while it sucks"),
+    (&[0x1C9], "UfoPodSuck", "efx::TUfoPodSuck: the ship's suction"),
+    (&[0x142, 0x143, 0x144, 0x145], "PelKira", "pellet sparkles; no efx struct in the decomp uses them"),
+];
+
 /// A parsed set of treasure configs with their names.
 #[derive(Debug, Clone, Default)]
 pub struct Table {
@@ -453,6 +469,19 @@ mod tests {
         d.extend(mid);
         let m = Messages::parse(&d).unwrap();
         assert_eq!(m.group(5), Some("Hi!"));
+    }
+
+    #[test]
+    fn treasure_effects_are_in_the_container() {
+        let Some(dir) = cache() else { eprintln!("SKIP: no Pikmin 2 treasure cache"); return };
+        let Ok(bytes) = std::fs::read(dir.join("effects/ebisawa_game.jpc")) else { eprintln!("SKIP: no game.jpc"); return };
+        let jpc = crate::jpa2::Jpc::parse(&bytes).expect("game.jpc");
+        for (ids, name, _) in EFFECTS {
+            for id in *ids {
+                let (shape, _tex) = jpc.look(*id).unwrap_or_else(|| panic!("{name} {id:#x} missing or textureless"));
+                assert!(shape.size[0] > 0.0, "{name} {id:#x}");
+            }
+        }
     }
 
     fn cache() -> Option<std::path::PathBuf> {
