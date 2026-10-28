@@ -20,6 +20,7 @@
 
 pub mod gcm;
 pub mod p2;
+pub mod p2_treasure;
 pub mod rarc;
 pub mod yaz0;
 

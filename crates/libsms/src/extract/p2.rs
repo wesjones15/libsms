@@ -14,7 +14,7 @@ use libcommon::disc::Disc;
 use super::{ExtractError, rarc, safe_join, yaz0};
 
 /// Bump when the set of files changes, so an older cache is redone.
-pub const VERSION: u32 = 2;
+pub const VERSION: u32 = 3;
 const MARKER: &str = "p2.ok";
 
 /// (disc path, folder under the cache the archive's files go to).
@@ -26,10 +26,13 @@ const ARCHIVES: &[(&str, &str)] = &[
 const PLAIN: &[(&str, &str)] = &[
     ("user/Abe/piki/naviParms.txt", "parms/naviParms.txt"),
     ("user/Abe/piki/pikiParms.txt", "parms/pikiParms.txt"),
+    // The particle container with the navi lights (JPA2, `PID_OrimaLight_*`).
+    ("user/Ebisawa/effect/game.jpc", "effects/game.jpc"),
 ];
 
 /// What a Louie needs from the cache.
-pub const NAVI_FILES: [&str; 3] = ["piki/orima_model/orima3.bmd", "piki/motion/wait.bca", "piki_texts/animmgr.txt"];
+pub const NAVI_FILES: [&str; 4] =
+    ["piki/orima_model/orima3.bmd", "piki/motion/wait.bca", "piki_texts/animmgr.txt", "effects/game.jpc"];
 
 /// Whether `dir` holds a complete extraction of this version.
 pub fn is_complete(dir: &Path) -> bool {
@@ -38,7 +41,7 @@ pub fn is_complete(dir: &Path) -> bool {
         && audio_is_complete(dir)
 }
 
-fn disc_err(e: libcommon::disc::DiscError) -> ExtractError {
+pub(super) fn disc_err(e: libcommon::disc::DiscError) -> ExtractError {
     match e {
         libcommon::disc::DiscError::Io(e) => ExtractError::Io(e),
         libcommon::disc::DiscError::Missing(p) => ExtractError::Missing(p),
