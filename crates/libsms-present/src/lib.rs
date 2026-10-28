@@ -16,6 +16,7 @@ pub mod portal_cache;
 pub mod plaza;
 pub mod screenfx;
 pub mod tev;
+pub mod treasure;
 pub mod view;
 pub mod water;
 
