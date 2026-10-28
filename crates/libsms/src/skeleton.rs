@@ -469,14 +469,14 @@ impl Clip {
             3 => LoopMode::MirrorOnce,
             _ => LoopMode::MirrorLoop,
         };
-        let angle_mult = *d.get(a + 9)? as i8;
         let frames = be_u16(d, a + 10)? as f32;
         let joint_count = be_u16(d, a + 12)? as usize;
         let table_at = a + be_u32(d, a + 20)? as usize;
         let scale_at = a + be_u32(d, a + 24)? as usize;
         let rot_at = a + be_u32(d, a + 28)? as usize;
         let trans_at = a + be_u32(d, a + 32)? as usize;
-        let rot_scale = (PI / 32768.0) * 2f32.powi(angle_mult as i32);
+        // Full animations carry plain s16 angles (0x8000 = pi); the byte at +9 is only for key animations.
+        let rot_scale = PI / 32768.0;
 
         // One channel: `count` frames of values from `offset` in its table (a lone value is constant).
         let channel = |kind: usize, count: usize, offset: usize| -> Option<Track> {
