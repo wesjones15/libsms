@@ -140,7 +140,8 @@ the race (competitive) mode has none.
   treasures and an unchanged Ship Repair.
 - **Rule** (`ShipRepairTreasures.cs`, pure and tested in `tests/ShipRepairCheck`): per stage `TreasuresPerStage`
   (default 5, 0-16) distinct treasures, drawn with the run seed and the stage number, never one already collected
-  this run, none needing more than `TreasureMaxCarriers` Pikmin (default 25; the table goes up to 101).
+  this run, subject to an optional `TreasureMaxCarriers` (default 0 = no limit, as the mod has no carrier limit; the table goes up to
+  101, and the Doomsday Apparatus asks 128, which the FFI passes as 128 carriers where the game forced 1000).
   The tier comes first (Pokos under 60 common 55%, under 130 fine 28%, under 300 rare 14%, above that legendary
   3%), then a treasure of the tier. Sites use the parts' rules: ground the Dolphin's Pikmin can carry from, 15-170
   units from the receiver at first, 14 units clear of parts and of each other, off the arrival point.
@@ -158,6 +159,5 @@ Not done: the **models** (treasures show as the generic white pellet of their si
 models in the pellet draw path of `libpikmin-present`, which another session is changing), **competitive** mode
 (a per-racer tally in `ShipRepairRacer` and the packet), the JPA2 effects (appear dust, water splash, delivery
 sparkles) and the pickup/deliver sound effects and jingles in the plugin (the audio is verified in Rust only), carry
-motion, Pokos as a currency, and the Doomsday Apparatus (needs 128 Pikmin) and other 30+ carrier treasures
-(excluded by `TreasureMaxCarriers`). Nothing was run in RoR2 or with two players; the packet checks, the pick rule
+motion, Pokos as a currency, and tuning for the very heavy treasures (101 and 128 carriers can now lie in a stage). Nothing was run in RoR2 or with two players; the packet checks, the pick rule
 and the core delivery are headless tests.
