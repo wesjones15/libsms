@@ -503,6 +503,11 @@ impl Audio {
         }
     }
 
+    /// Sound effect `id` (a `JAISoundID`, as the animation sound keys hold them) at `pos`, for the sound `owner`.
+    pub fn play_id_at(&self, id: u32, pos: Vec3, owner: u64) -> bool {
+        self.sys.lock().ok().is_some_and(|mut sys| sys.play_se(id, Some(pos), owner).is_some())
+    }
+
     /// A host-owned object's sound effect (`MSD_SE_*`, as `startSoundActor` plays it) at `pos`, on
     /// its own actor group; false for a name the game doesn't have. The Shine's appearance is one.
     pub fn play_at(&self, name: &str, pos: Vec3) -> bool {

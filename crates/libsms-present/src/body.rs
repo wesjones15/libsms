@@ -364,3 +364,67 @@ mod ufo_probe {
         eprintln!("clips {names:?}");
     }
 }
+
+#[cfg(test)]
+mod pianta_facts {
+    use super::*;
+
+    /// Body colour 1 of the male table bakes blue (0 teal, 8 pale blue), and none of the Pianta's own clips moves his skirt
+    /// (`mino_null` is one joint under the hips, so the host sways it).
+    #[test]
+    fn colour_1_is_blue_and_no_clip_moves_the_skirt() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+        if !pianta_files(false).iter().all(|f| dir.join(f).is_file()) { eprintln!("SKIP: Sunshine assets absent"); return }
+        let mut blue_index = None;
+        for colour in 0..MALE_BODY.len() {
+            let p = Pianta::load(&dir, false, colour).expect("load");
+            // The body's baked texture: the batch whose material is `_hand_mat` is the one with the colour.
+            let mut sum = [0f64; 3];
+            let mut n = 0f64;
+            for (bi, b) in p.model.batches.iter().enumerate() {
+                let t = p.model.batch_texture.get(bi).copied().unwrap_or(-1);
+                if t < 0 { continue }
+                let name = &p.model.bmd.materials[b.material as usize].name;
+                if name != "_hand_mat" { continue }
+                let tex = &p.textures.list[t as usize];
+                for px in tex.rgba.chunks_exact(4).filter(|px| px[3] > 128) {
+                    for k in 0..3 { sum[k] += px[k] as f64 }
+                    n += 1.0;
+                }
+            }
+            if n > 0.0 {
+                let (r, g, b) = (sum[0] / n, sum[1] / n, sum[2] / n);
+                eprintln!("colour {colour}: mean rgb ({r:.0}, {g:.0}, {b:.0})");
+                if b > r * 1.3 && b > g * 1.1 && blue_index.is_none() { blue_index = Some(colour) }
+            }
+        }
+        eprintln!("first blue-looking colour: {blue_index:?}");
+        let blue = Pianta::load(&dir, false, 1).unwrap();
+        let mean_blue = blue.model.batches.iter().enumerate().any(|(bi, b)| {
+            let t = blue.model.batch_texture.get(bi).copied().unwrap_or(-1);
+            t >= 0 && blue.model.bmd.materials[b.material as usize].name == "_hand_mat" && {
+                let px: Vec<_> = blue.textures.list[t as usize].rgba.chunks_exact(4).filter(|p| p[3] > 128).collect();
+                let n = px.len().max(1) as f64;
+                let m = |k: usize| px.iter().map(|p| p[k] as f64).sum::<f64>() / n;
+                m(2) > m(0) * 1.3 && m(2) > m(1) * 1.3
+            }
+        });
+        assert!(mean_blue, "colour 1 does not bake blue");
+        let p = Pianta::load(&dir, false, 1).unwrap();
+        eprintln!("joints {:?}", p.rig.names);
+        let skirt = p.rig.find("mino_null");
+        for clip in ["wait", "walk", "run", "throw", "happy", "mad", "step", "talk"] {
+            let Some(c) = p.own.get(clip) else { continue };
+            let bind = p.rig.bind[skirt.unwrap()];
+            let mut moved = 0f32;
+            for f in 0..(c.frames as usize) {
+                if let (Some(j), Some(s)) = (skirt, c.sample(skirt.unwrap(), f as f32)) {
+                    let _ = j;
+                    moved = moved.max((s.rot.x - bind.rot.x).abs().max((s.rot.y - bind.rot.y).abs()).max((s.rot.z - bind.rot.z).abs()));
+                }
+            }
+            assert!(moved < 1e-4, "{clip} moves the skirt by {moved}");
+            eprintln!("skirt in {clip}: max rotation change from bind {moved}");
+        }
+    }
+}
