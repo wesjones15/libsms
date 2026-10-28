@@ -25,6 +25,7 @@ pub mod dress;
 mod reader;
 pub mod sound;
 pub mod texture;
+pub mod treasure;
 
 use std::fmt;
 use std::path::PathBuf;
