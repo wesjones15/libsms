@@ -225,6 +225,9 @@ mod tests {
 /// Files Louie needs under the Pikmin 2 cache (`libsms::extract::p2`).
 pub const LOUIE_FILES: [&str; 3] = ["piki/orima_model/orima3.bmd", "piki/motion/wait.bca", "piki/motion/walk.bca"];
 
+/// Purple and White Pikmin (Pikmin 2): `PikiMgr::loadBmd(Purple, "piki_p2_black")`, `White`, "piki_p2_white".
+pub const PIKMIN2_FILES: [&str; 2] = ["piki/piki_model/piki_p2_black.bmd", "piki/piki_model/piki_p2_white.bmd"];
+
 /// Pikmin 2's Louie (`NaviMgr::loadResources_float`: `orima_model/orima3.bmd`) with his own motions
 /// (`motion/*.bca`, driven by `animmgr.txt` in the game), from the cache `libsms::extract::p2` writes.
 /// His rig is the one the motions were made for, so they pose him directly, no retarget.
@@ -237,7 +240,12 @@ pub struct Louie {
 
 impl Louie {
     pub fn load(dir: &Path) -> Result<Louie, String> {
-        let rel = LOUIE_FILES[0];
+        Self::load_from(dir, LOUIE_FILES[0])
+    }
+
+    /// Any Pikmin 2 model whose rig the cache's `piki/motion/*.bca` fit: Louie, or a Pikmin (`PIKMIN2_FILES`),
+    /// which play their own `wait`/`walk`/`run2`/`nuku`... by the same names. `rel` is relative to `dir`.
+    pub fn load_from(dir: &Path, rel: &str) -> Result<Louie, String> {
         let data = std::fs::read(dir.join(rel)).map_err(|e| format!("{rel}: {e}"))?;
         let bmd = Bmd::parse(&data).map_err(|e| format!("{rel}: {e}"))?;
         let rig = Skeleton::from_bmd(&data).ok_or_else(|| format!("{rel}: invalid JNT1/INF1"))?;
@@ -253,7 +261,7 @@ impl Louie {
         }
         if clips.is_empty() { return Err("no motion fits Louie's rig".into()) }
         let mut textures = Textures::default();
-        let model = build(bmd, &|_, _| None, RIG_KEY_BASE + 0x40, &mut textures)?;
+        let model = build(bmd, &|_, _| None, RIG_KEY_BASE + 0x100 + (rel.bytes().fold(0u32, |a, b| a.wrapping_mul(31).wrapping_add(b as u32)) & 0xfff), &mut textures)?;
         Ok(Louie { model, textures, rig, clips })
     }
 
@@ -300,6 +308,31 @@ mod louie_tests {
                 let w = l.pose(clip, frame).unwrap();
                 assert_eq!(w.len(), bind.len());
                 assert!(w.iter().all(|m| m.is_finite()), "{clip}");
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod p2_pikmin_tests {
+    use super::*;
+
+    #[test]
+    fn purple_and_white_pikmin_pose_from_their_own_motions() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/p2");
+        for rel in PIKMIN2_FILES {
+            if !dir.join(rel).is_file() { eprintln!("SKIP: no Pikmin 2 cache ({rel})"); return }
+            let b = Louie::load_from(&dir, rel).expect("load");
+            assert_eq!(b.rig.len(), 11, "{rel}");
+            assert!(b.height() > 5.0 && b.height() < 60.0, "{rel} height {}", b.height());
+            let bind = b.bind_world();
+            for clip in ["wait", "walk", "run2", "nigeru", "throw", "nuku", "dead", "attack1", "kuttuku", "jump"] {
+                let frames = b.clip_frames(clip).unwrap_or_else(|| panic!("no {clip}"));
+                for frame in [0.0, frames * 0.5, frames] {
+                    let w = b.pose(clip, frame).unwrap();
+                    assert_eq!(w.len(), bind.len());
+                    assert!(w.iter().all(|m| m.is_finite()), "{clip}");
+                }
             }
         }
     }
