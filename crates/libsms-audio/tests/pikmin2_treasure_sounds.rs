@@ -82,3 +82,30 @@ fn treasure_sound_effects_make_sound() {
     }
     assert!(silent.is_empty(), "silent: {silent:?}");
 }
+
+/// The treasure jingles are `.ast` streams (`PSSTR_TREASURE_GET` 0x1001, `_GLAD` 0x1027, and the "all collected"
+/// one); the cache keeps them under `treasure/streams/`. Each decodes to a few seconds of stereo with real signal.
+#[test]
+fn treasure_jingles_decode() {
+    let Some(dir) = assets() else { eprintln!("SKIP: no Pikmin 2 sound files"); return };
+    let streams = dir.join("treasure/streams");
+    if !streams.is_dir() {
+        eprintln!("SKIP: no Pikmin 2 treasure streams");
+        return;
+    }
+    for stem in ["ff_treasureget", "ff_treasureglad", "ff_treasurecomp"] {
+        let bytes = std::fs::read(streams.join(format!("{stem}.ast"))).expect("stream");
+        let s = libsms_assets::sound::Stream::decode_ast(&bytes).unwrap_or_else(|e| panic!("{stem}: {e}"));
+        let frames = s.stereo.len() / 2;
+        let secs = frames as f32 / s.header.sample_rate as f32;
+        let peak = s.stereo.iter().map(|x| x.unsigned_abs()).max().unwrap_or(0);
+        let rms = (s.stereo.iter().map(|&x| (x as f64).powi(2)).sum::<f64>() / s.stereo.len() as f64).sqrt();
+        eprintln!("{stem}: {secs:.1} s at {} Hz, loop {} from {}, peak {peak}, rms {rms:.0}", s.header.sample_rate, s.header.looping, s.header.loop_start);
+        assert_eq!(s.header.sample_rate, 32000, "{stem}");
+        assert!(secs > 3.0 && secs < 60.0, "{stem} length {secs}");
+        assert!(peak > 3000 && rms > 300.0, "{stem} is silent: peak {peak} rms {rms}");
+        // The tail has sound too (the blocks all decoded, not just the first).
+        let tail = &s.stereo[s.stereo.len() * 3 / 4..];
+        assert!(tail.iter().any(|x| x.unsigned_abs() > 500), "{stem}: silent tail");
+    }
+}

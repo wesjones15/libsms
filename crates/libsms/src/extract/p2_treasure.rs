@@ -11,7 +11,7 @@
 //! descriptions are in `message/mesRes_eng.szs:pikmin2.bmg` (`zukan2D.cpp` `TOffsetMsgSet`).
 //!
 //! Layout under `<out>/treasure/`: `config/*.txt`, `models/<archive>/<file>`, `texts/<kind>/<name>/<file>`,
-//! `message/pikmin2.bmg`, `effects/*.jpc`.
+//! `message/pikmin2.bmg`, `effects/*.jpc`, `streams/*.ast`.
 
 use std::path::Path;
 
@@ -21,7 +21,7 @@ use super::p2::disc_err;
 use super::{ExtractError, rarc, safe_join, yaz0};
 
 /// Bump when the set of files changes, so an older cache is redone.
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 const MARKER: &str = "p2treasure.ok";
 /// Folder under the cache root everything here goes to.
 pub const DIR: &str = "treasure";
@@ -30,6 +30,9 @@ pub const DIR: &str = "treasure";
 pub const CONFIGS: [&str; 3] = ["otakara_config.txt", "item_config.txt", "carcass_config.txt"];
 /// Where the names and descriptions are (inside `DIR/`).
 pub const MESSAGE: &str = "message/pikmin2.bmg";
+
+/// The treasure jingles (`PSSTR_TREASURE_GET` / `_GLAD` / `_COMP`, SoundID.h): streams under `streams/`.
+pub const STREAMS: [&str; 3] = ["ff_treasureget", "ff_treasureglad", "ff_treasurecomp"];
 
 /// Disc files whose bytes are copied verbatim: (disc path, path under `DIR/`).
 const EFFECTS: &[(&str, &str)] = &[
@@ -43,6 +46,7 @@ pub fn is_complete(dir: &Path) -> bool {
     std::fs::read_to_string(dir.join(MARKER)).is_ok_and(|s| s.trim() == VERSION.to_string())
         && CONFIGS.iter().all(|f| root.join("config").join(f).is_file())
         && root.join(MESSAGE).is_file()
+        && STREAMS.iter().all(|s| root.join(format!("streams/{s}.ast")).is_file())
 }
 
 /// The disc's per-region folder under `user/Abe/Pellet/` (`GPVE` USA, `GPVP` PAL, `GPVJ` Japan).
@@ -144,6 +148,12 @@ pub fn extract(iso: &Path, out: &Path, log: &mut dyn FnMut(&str)) -> Result<usiz
     for (path, dest) in EFFECTS {
         let file = disc.find(path).ok_or_else(|| ExtractError::Missing((*path).to_owned()))?;
         write_to(&root, dest, &disc.read(file).map_err(disc_err)?)?;
+        wrote += 1;
+    }
+    for stem in STREAMS {
+        let path = format!("AudioRes/Stream/{stem}.w.32.c4.ast");
+        let file = disc.find(&path).ok_or_else(|| ExtractError::Missing(path.clone()))?;
+        write_to(&root, &format!("streams/{stem}.ast"), &disc.read(file).map_err(disc_err)?)?;
         wrote += 1;
     }
     log(&format!("{wrote} treasure files"));
