@@ -378,7 +378,7 @@ impl Skin {
 }
 
 /// Texture-cache keys for same-rig bodies sit above any model index.
-const RIG_KEY_BASE: u32 = 0x1000;
+pub(crate) const RIG_KEY_BASE: u32 = 0x1000;
 
 pub struct View {
     pub models: Vec<Model>,
@@ -618,7 +618,7 @@ fn fx_matrix(at: FxAt, root: Mat4, joints: &[Mat4], center: Option<usize>, muzzl
     }
 }
 
-fn load_bmd(dir: &Path, rel: &str) -> Result<Bmd, String> {
+pub(crate) fn load_bmd(dir: &Path, rel: &str) -> Result<Bmd, String> {
     let data = std::fs::read(dir.join(rel)).map_err(|e| format!("{rel}: {e}"))?;
     Bmd::parse(&data).map_err(|e| format!("{rel}: {e}"))
 }
@@ -626,7 +626,7 @@ fn load_bmd(dir: &Path, rel: &str) -> Result<Bmd, String> {
 /// Builds a model: its batches, texture images (`replace` swaps some first: the caps' and
 /// hands' texture 0 is the body's, `TMarioCap`; the nozzles' env-map stand-in is FLUDD's),
 /// unlit channel colours and plain bakes.
-fn build(
+pub(crate) fn build(
     bmd: Bmd,
     replace: &dyn Fn(usize, &str) -> Option<Tex>,
     index: u32,

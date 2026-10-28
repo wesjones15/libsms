@@ -35,6 +35,17 @@ impl Retarget {
     /// Reduce a joint's rotation delta without changing its translation or scale.
     /// Useful for adapting a high-knee gait to a long-legged character in a dress.
     pub fn pose_weighted(&self,target:&Skeleton,source_world:&[Mat4],weight:impl Fn(&str)->f32)->Vec<Mat4> {
+        self.pose_based(target, source_world, &target.bind, weight)
+    }
+
+    /// Like [`pose`](Self::pose), but joints with no source (and the translations and scales
+    /// of every joint) start from `base` instead of the bind pose: a target's own clip can keep
+    /// animating the parts the source has no counterpart for (a Pianta's palm and leaves).
+    pub fn pose_over(&self, target: &Skeleton, source_world: &[Mat4], base: &[Srt]) -> Vec<Mat4> {
+        self.pose_based(target, source_world, base, |_| 1.)
+    }
+
+    fn pose_based(&self,target:&Skeleton,source_world:&[Mat4],base:&[Srt],weight:impl Fn(&str)->f32)->Vec<Mat4> {
         let source_rot = rotations(source_world);
         let mut world_rot: Vec<Quat> = Vec::with_capacity(target.len());
         let mut locals: Vec<Srt> = Vec::with_capacity(target.len());
@@ -45,7 +56,7 @@ impl Retarget {
                 let delta = *r * self.source_bind[s].inverse();
                 Quat::IDENTITY.slerp(delta,weight(&target.names[i]).clamp(0.,1.)) * self.target_bind[i]
             }));
-            let mut local = target.bind[i];
+            let mut local = base.get(i).copied().unwrap_or(target.bind[i]);
             if let Some(desired) = desired {
                 let q = (parent_rot.inverse() * desired).normalize();
                 let (z, y, x) = q.to_euler(glam::EulerRot::ZYX);

@@ -5,6 +5,7 @@
 //! a cpal stream).
 
 pub mod audio;
+pub mod body;
 pub mod coins;
 pub mod democam;
 pub mod hud;
