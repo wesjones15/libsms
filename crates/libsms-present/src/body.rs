@@ -246,22 +246,34 @@ impl Louie {
     /// Any Pikmin 2 model whose rig the cache's `piki/motion/*.bca` fit: Louie, or a Pikmin (`PIKMIN2_FILES`),
     /// which play their own `wait`/`walk`/`run2`/`nuku`... by the same names. `rel` is relative to `dir`.
     pub fn load_from(dir: &Path, rel: &str) -> Result<Louie, String> {
+        Self::load_with(dir, rel, "piki/motion")
+    }
+
+    /// A Pikmin 2 model with the motions in `motions` (a folder under `dir`; `.bca` and `.bck` files whose joint count
+    /// fits the rig). The Hocotate Ship is `ufo/ufo.bmd` with `ufo/*.bck`.
+    pub fn load_with(dir: &Path, rel: &str, motions: &str) -> Result<Louie, String> {
         let data = std::fs::read(dir.join(rel)).map_err(|e| format!("{rel}: {e}"))?;
         let bmd = Bmd::parse(&data).map_err(|e| format!("{rel}: {e}"))?;
         let rig = Skeleton::from_bmd(&data).ok_or_else(|| format!("{rel}: invalid JNT1/INF1"))?;
         let mut clips = HashMap::new();
-        let rd = std::fs::read_dir(dir.join("piki/motion")).map_err(|e| format!("piki/motion: {e}"))?;
+        let rd = std::fs::read_dir(dir.join(motions)).map_err(|e| format!("{motions}: {e}"))?;
         for e in rd.flatten() {
             let path = e.path();
-            if path.extension().and_then(|s| s.to_str()) != Some("bca") { continue }
+            let ext = path.extension().and_then(|s| s.to_str());
             let Some(name) = path.file_stem().and_then(|s| s.to_str()) else { continue };
-            if let Some(c) = std::fs::read(&path).ok().and_then(|b| Clip::parse_bca(&b)) {
+            let clip = match ext {
+                Some("bca") => std::fs::read(&path).ok().and_then(|b| Clip::parse_bca(&b)),
+                Some("bck") => std::fs::read(&path).ok().and_then(|b| Clip::parse(&b)),
+                _ => None,
+            };
+            if let Some(c) = clip {
                 if c.joint_count() == rig.len() { clips.insert(name.to_owned(), c); }
             }
         }
-        if clips.is_empty() { return Err("no motion fits Louie's rig".into()) }
+        if clips.is_empty() { return Err(format!("no motion in {motions} fits {rel}'s rig")) }
         let mut textures = Textures::default();
-        let model = build(bmd, &|_, _| None, RIG_KEY_BASE + 0x100 + (rel.bytes().fold(0u32, |a, b| a.wrapping_mul(31).wrapping_add(b as u32)) & 0xfff), &mut textures)?;
+        let key = RIG_KEY_BASE + 0x100 + (rel.bytes().fold(0u32, |a, b| a.wrapping_mul(31).wrapping_add(b as u32)) & 0xfff);
+        let model = build(bmd, &|_, _| None, key, &mut textures)?;
         Ok(Louie { model, textures, rig, clips })
     }
 
@@ -335,5 +347,20 @@ mod p2_pikmin_tests {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod ufo_probe {
+    use super::*;
+
+    #[test]
+    fn probe_the_hocotate_ship() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/p2");
+        let b = match Louie::load_with(&dir, "ufo/ufo.bmd", "ufo") { Ok(b) => b, Err(e) => { eprintln!("SKIP or failed: {e}"); return } };
+        eprintln!("joints {:?} height {} lo {:?} hi {:?}", b.rig.names, b.height(), b.model.lo, b.model.hi);
+        let mut names: Vec<_> = b.clips.iter().map(|(k, c)| (k.clone(), c.frames)).collect();
+        names.sort_by(|a, b| a.0.cmp(&b.0));
+        eprintln!("clips {names:?}");
     }
 }

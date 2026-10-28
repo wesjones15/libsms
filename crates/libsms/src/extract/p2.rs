@@ -14,13 +14,15 @@ use libcommon::disc::Disc;
 use super::{ExtractError, rarc, safe_join, yaz0};
 
 /// Bump when the set of files changes, so an older cache is redone.
-pub const VERSION: u32 = 3;
+pub const VERSION: u32 = 4;
 const MARKER: &str = "p2.ok";
 
 /// (disc path, folder under the cache the archive's files go to).
 const ARCHIVES: &[(&str, &str)] = &[
     ("user/Kando/piki/pikis.szs", "piki"),
     ("user/Kando/piki/texts.szs", "piki_texts"),
+    // The Hocotate Ship (`ufo.bmd`, `ufo.bck`, `ufo.brk`, `ufoAnimMgr.txt`, `ufoColl.txt`; `ufo_gold` the gold one).
+    ("user/Kando/ufo/arc.szs", "ufo"),
 ];
 /// Plain files (the tuning text Louie and the Pikmin use).
 const PLAIN: &[(&str, &str)] = &[
