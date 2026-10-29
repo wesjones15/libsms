@@ -182,6 +182,32 @@ impl Hud {
         })
     }
 
+    /// One of the HUD's four nozzle icons (`nz01..04`: Spray, Hover, Rocket, Turbo), coloured as
+    /// the gauge draws it and on a transparent background. Hosts use these for a nozzle picker
+    /// instead of loading the disc's pictures themselves.
+    pub fn nozzle_icon(&self, index: usize) -> Option<Image> {
+        let p = self.nozzles.get(index)?;
+        let (b, w) = (rgba(p.black), rgba(p.white));
+        let mut image = Image {
+            width: p.image.width,
+            height: p.image.height,
+            rgba: vec![0; (p.image.width * p.image.height * 4) as usize],
+        };
+        for y in 0..p.image.height {
+            for x in 0..p.image.width {
+                let t = texel(&p.image, x, y);
+                let i = ((y * p.image.width + x) * 4) as usize;
+                for c in 0..3 {
+                    let v = b[c] + (w[c] - b[c]) * t[c];
+                    image.rgba[i + c] = (v * 255.0).round().clamp(0.0, 255.0) as u8;
+                }
+                let a = b[3] + (w[3] - b[3]) * t[3];
+                image.rgba[i + 3] = (a * 255.0).round().clamp(0.0, 255.0) as u8;
+            }
+        }
+        Some(image)
+    }
+
     /// Redraws the gauge for `g`, `frames` 30 Hz frames after the last call (the charge flash
     /// steps once a frame). Bumps `version` when the picture changed.
     pub fn update(&mut self, g: &Gauge, frames: u32) {
@@ -403,6 +429,24 @@ mod tests {
         let full = water_rows(&h);
         assert!(empty < half && half < full, "{empty} {half} {full}");
         assert!(full > 30, "{full}");
+    }
+
+    #[test]
+    fn the_four_nozzle_icons_are_pictures_on_transparency() {
+        let Some(h) = hud() else { return };
+        for i in 0..4 {
+            let icon = h.nozzle_icon(i).expect("HUD nozzle icon");
+            assert!(icon.width > 0 && icon.height > 0);
+            assert!(
+                icon.rgba.chunks_exact(4).any(|p| p[3] > 0),
+                "nozzle icon {i} is empty"
+            );
+            assert!(
+                icon.rgba.chunks_exact(4).any(|p| p[3] == 0),
+                "nozzle icon {i} has no transparent background"
+            );
+        }
+        assert!(h.nozzle_icon(4).is_none());
     }
 
     #[test]

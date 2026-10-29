@@ -187,6 +187,16 @@ impl Fludd {
         }
     }
 
+    /// Fits `to` at once, cancelling any backpack swing in progress. A host's radial menu uses
+    /// this: the player has already chosen the nozzle, so the game's halfway change must not
+    /// override it a moment later.
+    pub fn fit_nozzle(&mut self, to: NozzleKind, p: &Params) {
+        self.switch_speed = 0.0;
+        self.switch_progress = if to == NozzleKind::Spray { 0.0 } else { 1.0 };
+        self.cycle_to = None;
+        self.change_nozzle(to, false, p);
+    }
+
     /// `changeNozzle`: swaps the fitted nozzle, rescaling the tank to the new nozzle's capacity.
     pub fn change_nozzle(&mut self, to: NozzleKind, animate: bool, p: &Params) {
         let used = self.water as f32 / self.max_water(p).max(1) as f32;
@@ -1006,6 +1016,17 @@ fn np_chase(p: &Params, k: NozzleKind) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fitting_a_nozzle_cancels_a_backpack_swing() {
+        let p = crate::params::Params::default();
+        let mut f = Fludd::new(&p);
+        f.swap_nozzle(&p, true);
+        assert!(f.is_switching());
+        f.fit_nozzle(NozzleKind::Hover, &p);
+        assert!(!f.is_switching());
+        assert_eq!(f.nozzle, NozzleKind::Hover);
+    }
 
     #[test]
     fn a_spray_barrel_pointed_up_sends_the_fallback_direction_up() {

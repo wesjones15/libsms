@@ -1583,6 +1583,71 @@ pub unsafe extern "C" fn sms_view_hud_info(view: *mut SmsView, out: *mut SmsHudI
     }
 }
 
+/// One of FLUDD's nozzle icons from the HUD (`nz01..04`: 0 Spray, 1 Hover, 2 Rocket, 3 Turbo),
+/// as [`SmsHudInfo`] (width/height; `shown` is 1, x and y are 0). Returns 0 without the HUD's
+/// files. The pixels are [`sms_view_nozzle_icon_pixels`], RGBA with straight alpha and the top
+/// row first.
+///
+/// # Safety
+/// `view` from [`sms_view_new`]; `out` writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_nozzle_icon_info(
+    view: *mut SmsView,
+    index: u32,
+    out: *mut SmsHudInfo,
+) -> u8 {
+    // SAFETY: as documented.
+    unsafe {
+        with_view(view, 0, |v| {
+            let (Some(out), Some(icon)) = (
+                out.as_mut(),
+                v.view.hud.as_ref().and_then(|h| h.nozzle_icon(index as usize)),
+            ) else {
+                return 0;
+            };
+            *out = SmsHudInfo {
+                x: 0,
+                y: 0,
+                width: icon.width,
+                height: icon.height,
+                screen_w: libsms_present::hud::SCREEN[0] as u32,
+                screen_h: libsms_present::hud::SCREEN[1] as u32,
+                version: 0,
+                shown: 1,
+                _pad: [0; 3],
+            };
+            1
+        })
+    }
+}
+
+/// Copies nozzle icon `index`'s pixels (RGBA, straight alpha, top row first,
+/// `width * height * 4` bytes) to `rgba`. Returns 0 if `len` is short or there is no icon.
+///
+/// # Safety
+/// `view` from [`sms_view_new`]; `rgba` writable for `len` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_nozzle_icon_pixels(
+    view: *mut SmsView,
+    index: u32,
+    rgba: *mut u8,
+    len: u32,
+) -> u8 {
+    // SAFETY: as documented.
+    unsafe {
+        with_view(view, 0, |v| {
+            let Some(icon) = v.view.hud.as_ref().and_then(|h| h.nozzle_icon(index as usize)) else {
+                return 0;
+            };
+            if rgba.is_null() || icon.rgba.len() > len as usize {
+                return 0;
+            }
+            std::ptr::copy_nonoverlapping(icon.rgba.as_ptr(), rgba, icon.rgba.len());
+            1
+        })
+    }
+}
+
 /// Sets what Mario's life meter `which` shows (0 the HUD's, with the splash and "LIFE"; 1 the
 /// sun alone with ten rays, for a lock-on marker) and redraws it if that changed the rays: a
 /// share 0..1 of the meter lit in the game's colours for `health`, the rays after them in

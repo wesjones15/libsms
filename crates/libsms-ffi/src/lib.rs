@@ -29,7 +29,7 @@ use libsms::{
 use view::SmsView;
 
 /// ABI version, bumped when the C interface changes.
-pub const SMS_ABI_VERSION: u32 = 32;
+pub const SMS_ABI_VERSION: u32 = 33;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sms_abi_version() -> u32 {
@@ -1049,6 +1049,22 @@ pub unsafe extern "C" fn sms_sim_refill(sim: *mut SmsSim) {
     }
 }
 
+/// Fits FLUDD's nozzle at once, or takes FLUDD away: `slot` 0 no FLUDD, 1 Spray, 2 Hover,
+/// 3 Rocket, 4 Turbo. Returns 0 for an unknown slot. Fitting a nozzle while FLUDD is off gives
+/// it back with a full tank. Unlike the game's X button this has no backpack swing; a host's
+/// radial menu selects directly.
+///
+/// # Safety
+/// `sim` from [`sms_sim_new`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_sim_select_nozzle(sim: *mut SmsSim, slot: u32) -> u8 {
+    // SAFETY: the caller promised a valid pointer.
+    match unsafe { sim.as_mut() } {
+        Some(s) => s.sim.mario.select_nozzle(slot) as u8,
+        None => 0,
+    }
+}
+
 /// Sets the host's limits (see [`SmsLimits`]); a new sim has none, as the game.
 ///
 /// # Safety
@@ -1559,6 +1575,17 @@ mod tests {
             assert!(st.pos.x > 100.0, "ran along +X: {:?}", st.pos);
             assert!(st.pos.z.abs() < 0.2 * st.pos.x, "{:?}", st.pos);
             assert_eq!(st.has_fludd, 1);
+            // The radial menu's host call: fit a nozzle directly, then take FLUDD off and back.
+            assert_eq!(sms_sim_select_nozzle(sim, 2), 1);
+            sms_sim_state(sim, &mut st);
+            assert_eq!((st.has_fludd, st.nozzle), (1, 5));
+            assert_eq!(sms_sim_select_nozzle(sim, 0), 1);
+            sms_sim_state(sim, &mut st);
+            assert_eq!((st.has_fludd, st.nozzle), (0, 0));
+            assert_eq!(sms_sim_select_nozzle(sim, 3), 1);
+            sms_sim_state(sim, &mut st);
+            assert_eq!((st.has_fludd, st.nozzle), (1, 2));
+            assert_eq!(sms_sim_select_nozzle(sim, 99), 0);
             let jump = SmsPad { a: 1, ..run };
             for _ in 0..3 {
                 sms_sim_step(sim, &host, &jump, 0, 1.0 / 60.0, std::ptr::null_mut());

@@ -582,6 +582,46 @@ impl Mario {
         self.fludd = Some(Fludd::new(&self.params));
     }
 
+    /// Takes FLUDD away (a host's loadout choice). The tank, nozzle and upper-body pump state go
+    /// with it; a held object is not dropped.
+    pub fn remove_fludd(&mut self) {
+        self.fludd = None;
+        self.fludd_emitting = false;
+        self.turbo_held = false;
+        self.dash_speed = 0.0;
+        self.pump_cooldown = 0;
+        if self.upper != UpperState::HoldingObject {
+            self.upper = UpperState::Idle;
+        }
+    }
+
+    /// Fits FLUDD's `slot` (0 without FLUDD, else 1 Spray, 2 Hover, 3 Rocket, 4 Turbo), giving
+    /// FLUDD back if it was off. False for an unknown slot.
+    pub fn select_nozzle(&mut self, slot: u32) -> bool {
+        let kind = match slot {
+            0 => {
+                self.remove_fludd();
+                return true;
+            }
+            1 => NozzleKind::Spray,
+            2 => NozzleKind::Hover,
+            3 => NozzleKind::Rocket,
+            4 => NozzleKind::Turbo,
+            _ => return false,
+        };
+        if self.fludd.is_none() {
+            self.give_fludd();
+        }
+        let p = self.params.clone();
+        if let Some(f) = self.fludd.as_mut() {
+            // The radial menu fits the nozzle at once: no backpack swing, and no second nozzle
+            // change on top of the selection.
+            f.fit_nozzle(kind, &p);
+            return true;
+        }
+        false
+    }
+
     pub fn has_fludd(&self) -> bool {
         self.fludd.is_some()
     }
