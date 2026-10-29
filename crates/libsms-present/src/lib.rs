@@ -11,6 +11,7 @@ pub mod democam;
 pub mod enemy;
 pub mod hud;
 pub mod life;
+pub mod mtx_effect;
 pub mod particles;
 pub mod portal;
 pub mod portal_cache;

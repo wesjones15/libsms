@@ -63,6 +63,9 @@ pub struct Pianta {
     /// The Pianta's own clips (`mom_wait`, `mow_walk`, ...), by name without the prefix.
     own: HashMap<String, Clip>,
     from_mario: Retarget,
+    waist: Option<(usize, crate::mtx_effect::TimeLagParams)>,
+    /// TNpcInbetween's source blend duration, in seconds.
+    pub talk_blend_seconds: f32,
 }
 
 /// Joints Mario and Olimar have no counterpart for: the palm on the head, its two leaves and the
@@ -118,7 +121,18 @@ impl Pianta {
                 }
             }
         }
-        Ok(Pianta { model, textures, rig, mario, clips, own, from_mario })
+        // TBaseNPC::setMtxEffect_: type 0 on koshi_null, with a per-joint
+        // /Npc/MonteM(W)/MtxEffect<joint>.prm. The standard extractor copies these.
+        let waist = rig.find("koshi_null").and_then(|joint| {
+            let folder = if female { "montew" } else { "montem" };
+            let bytes = std::fs::read(dir.join(format!("params_npc/{folder}/mtxeffect{joint}.prm"))).ok()?;
+            crate::mtx_effect::TimeLagParams::parse(&bytes).ok().map(|p| (joint, p))
+        });
+        let blend = std::fs::read(dir.join("params_npc/npcnormal.prm")).ok()
+            .and_then(|b| libsms::prm::Prm::parse(&b).ok()).and_then(|p| p.i32("mMotionBlendFrame"))
+            .unwrap_or(20); // NpcSave.cpp::TNpcSaveNormalParams default.
+        Ok(Pianta { model, textures, rig, mario, clips, own, from_mario, waist,
+            talk_blend_seconds: blend.max(1) as f32 / 30.0 })
     }
 
     /// Standing height in the model's own units (bind pose).
@@ -177,6 +191,40 @@ impl Pianta {
     /// The Pianta's joints following `source_world` through `retarget`, in model space.
     pub fn pose_from(&self, retarget: &Retarget, source_world: &[Mat4], plant: Plant) -> Vec<Mat4> {
         retarget.pose_over(&self.rig, source_world, &self.base(plant))
+    }
+
+    /// Apply the game's waist callback before envelope skinning. `root` places
+    /// the body in Sunshine units, so movement and turns excite the spring.
+    pub fn apply_waist_lag(&self, world: &mut [Mat4], root: Mat4, time: f32, state: &mut crate::mtx_effect::TimeLag) {
+        let Some((joint, params)) = self.waist else { return };
+        let target = root * world[joint];
+        let lagged = state.update(target, time, params);
+        let correction = root.inverse() * lagged * world[joint].inverse();
+        for (j, matrix) in world.iter_mut().enumerate() {
+            if self.rig.under(j, joint) { *matrix = correction * *matrix; }
+        }
+    }
+
+    /// Graft the talk clip's palm and leaves onto the current body pose. Sunshine
+    /// requests kind 6 / mom_talk in NpcAnm.cpp::requestTalkAnm_ and
+    /// NpcInitAnmData.cpp::sMonteM_AnmIndex. Limbs and nose keep their current pose.
+    pub fn talk_plant(&self, world: &mut [Mat4], frame: f32, weight: f32) {
+        let Some(clip) = self.own.get("talk") else { return };
+        for name in ["yashi_jnt", "leafL_jnt", "leafR_jnt"] {
+            let Some(j) = self.rig.find(name) else { continue };
+            let Some(srt) = clip.sample(j, frame.rem_euclid(clip.frames.max(1.0))) else { continue };
+            let old = world[j];
+            let parent = self.rig.parents[j].map_or(Mat4::IDENTITY, |p| world[p]);
+            let (scale, rotation, translation) = (parent.inverse() * old).to_scale_rotation_translation();
+            let target = srt.matrix();
+            let (ts, tr, tt) = target.to_scale_rotation_translation();
+            let w = weight.clamp(0.0, 1.0);
+            let changed = parent * Mat4::from_scale_rotation_translation(scale.lerp(ts, w), rotation.slerp(tr, w), translation.lerp(tt, w));
+            let correction = changed * old.inverse();
+            for (k, matrix) in world.iter_mut().enumerate() {
+                if self.rig.under(k, j) { *matrix = correction * *matrix; }
+            }
+        }
     }
 }
 
@@ -369,8 +417,53 @@ mod ufo_probe {
 mod pianta_facts {
     use super::*;
 
-    /// Body colour 1 of the male table bakes blue (0 teal, 8 pale blue), and none of the Pianta's own clips moves his skirt
-    /// (`mino_null` is one joint under the hips, so the host sways it).
+    #[test]
+    fn runtime_waist_callback_deforms_the_skirt_and_talk_moves_only_the_plant() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+        if !pianta_files(false).iter().all(|f| dir.join(f).is_file()) { eprintln!("SKIP: Sunshine assets absent"); return }
+        for female in [false, true] {
+            let p = Pianta::load(&dir, female, 1).unwrap();
+            assert!(p.waist.is_some(), "disc waist parameters loaded");
+            let bind = p.bind_world();
+            let mut state = crate::mtx_effect::TimeLag::default();
+            let mut first = bind.clone();
+            p.apply_waist_lag(&mut first, Mat4::IDENTITY, 0.0, &mut state);
+            let mut deformed = bind.clone();
+            let root = Mat4::from_rotation_translation(glam::Quat::from_rotation_y(0.5), glam::Vec3::Z * 20.0);
+            p.apply_waist_lag(&mut deformed, root, 1.0 / 30.0, &mut state);
+            let rigid = libsms_assets::Pose::new(&p.model.bmd, Mat4::IDENTITY, &bind);
+            let warped = libsms_assets::Pose::new(&p.model.bmd, Mat4::IDENTITY, &deformed);
+            let mut moved = 0;
+            for batch in &p.model.batches {
+                for v in &batch.vertices {
+                    if rigid.skin(v).0.distance(warped.skin(v).0) > 0.01 { moved += 1; }
+                }
+            }
+            assert!(moved > 20, "actual skirt vertices deform, female={female}");
+            for name in ["body_jnt", "armRT_jnt", "legRT_jnt", "kubi", "yashi_jnt"] {
+                let j = p.rig.find(name).unwrap();
+                assert!(deformed[j].abs_diff_eq(bind[j], 1e-4), "waist leaves {name} alone");
+            }
+            let mut talking = bind.clone();
+            p.talk_plant(&mut talking, 20.0, 1.0);
+            let authored = p.pose_own("talk", 20.0).unwrap();
+            for name in ["yashi_jnt", "leafL_jnt", "leafR_jnt"] {
+                let j = p.rig.find(name).unwrap();
+                let parent = p.rig.parents[j].unwrap();
+                let actual = talking[parent].inverse() * talking[j];
+                let source = authored[parent].inverse() * authored[j];
+                assert!(actual.abs_diff_eq(source, 2e-4), "{name}: exact authored local pose");
+            }
+            assert!(!talking[p.rig.find("leafL_jnt").unwrap()].abs_diff_eq(bind[p.rig.find("leafL_jnt").unwrap()], 0.01));
+            for name in ["body_jnt", "koshi_null", "mino_null", "armRT_jnt", "legRT_jnt", "kubi", "nose_jnt"] {
+                let j = p.rig.find(name).unwrap();
+                assert_eq!(talking[j], bind[j], "talk overlay leaves {name} alone");
+            }
+        }
+    }
+
+    /// The BCKs do not rotate mino_null. The skirt instead deforms through the
+    /// runtime koshi_null callback; this test only establishes the clip data.
     #[test]
     fn colour_1_is_blue_and_no_clip_moves_the_skirt() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");

@@ -72,8 +72,9 @@ The viewer's `melee_peach` test checks finite HSD skinning across five clips.
 - **Pianta** (`montem/mom_model.bmd`, `montew/mow_model.bmd`) is a separate 20-joint rig:
   no waist/chest split, arms, legs and head hang off `body_jnt`. `pianta::ALIASES` maps
   limb to limb and `Retarget` keeps the Pianta's own (longer) arm and leg lengths.
-  The straw skirt, grass `mino_null`, palm and nose follow their parents; nothing
-  animates the skirt panels yet.
+  The original viewer retarget keeps the straw skirt rigid. The shared `body::Pianta`
+  now exposes Sunshine's `koshi_null` time-lag callback and the authored talk palm
+  overlay, consumed by Olimar's skin. See [Pianta waist and palm](pianta-waist.md).
 
 Drawing them needs the runtime edits the decomp makes: the `_mino_dummyI4` texture becomes
 `i_mom_mino_rgba.bti` / `i_mow_mino_rgba.bti` (`TMonte*BaseManager::changeTextureToStraw_`),

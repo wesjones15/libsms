@@ -1,5 +1,9 @@
 # Mario locomotion and FLUDD: behavior spec
 
+Pianta presentation: the shared body now applies Sunshine's runtime waist
+time-lag callback and exposes the authored talk palm overlay. Source evidence,
+disc parameters, host integration and verification: [Pianta waist and palm](pianta-waist.md).
+
 Written from the doldecomp/sms decomp (`../sms-main`, GMSP01 build, verified against the PAL
 disc). Function names in parentheses are decomp symbols. Numbers marked **(disc)** come from the
 `.prm` files in `params.szs` on the user's disc; the constructors' code defaults differ and are
