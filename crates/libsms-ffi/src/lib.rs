@@ -13,6 +13,7 @@
 //! of these structs.
 
 pub mod assets;
+pub mod heat_haze;
 pub mod view;
 
 use std::ffi::{CStr, CString, c_char, c_void};
@@ -28,7 +29,7 @@ use libsms::{
 use view::SmsView;
 
 /// ABI version, bumped when the C interface changes.
-pub const SMS_ABI_VERSION: u32 = 31;
+pub const SMS_ABI_VERSION: u32 = 32;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sms_abi_version() -> u32 {

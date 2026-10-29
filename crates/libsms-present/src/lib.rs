@@ -10,6 +10,7 @@ pub mod coins;
 pub mod democam;
 pub mod enemy;
 pub mod hud;
+pub mod heat_haze;
 pub mod life;
 pub mod mtx_effect;
 pub mod particles;

@@ -1,5 +1,9 @@
 # Mario locomotion and FLUDD: behavior spec
 
+Heat-haze presentation: the source `TShimmer` model, indirect map and BTK
+scroll are exposed through ABI 32 for Mario's camera in every skin.
+Source evidence, host adaptations and checks: [Heat haze](heat-haze.md).
+
 Pianta presentation: the shared body now applies Sunshine's runtime waist
 time-lag callback and exposes the authored talk palm overlay. Source evidence,
 disc parameters, host integration and verification: [Pianta waist and palm](pianta-waist.md).

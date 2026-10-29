@@ -108,7 +108,10 @@ pub const EXTRACTS: [(&str, &str, &str); 8] = [
 /// the paths in them are alternatives in the same order (`|`): a USA disc keeps them in
 /// `common.szs` and `subtitle.szs`, a European one in a pair per language (`cmn2d_en.szs`,
 /// `subtitle_en.szs`).
-pub const OPTIONAL_EXTRACTS: [(&str, &str, &str); 24] = [
+pub const OPTIONAL_EXTRACTS: [(&str, &str, &str); 26] = [
+    // Map/Shimmer.cpp::TShimmer; dolpic1's scene record names ShimmerLow.
+    ("scene/dolpic1.szs", "mapobj/shimmerlow.bmd", "heat_haze/shimmerlow.bmd"),
+    ("scene/dolpic1.szs", "mapobj/shimmerlow.btk", "heat_haze/shimmerlow.btk"),
     (
         "common.szs|cmn2d_en.szs",
         "2d/wipe_gameover.bti|wipe_gameover.bti",
