@@ -1319,6 +1319,12 @@ async fn main() {
                 ) * 100.0;
             m.damage(ahead, libsms::DamageKind::EnemyCommon);
         }
+        // Fire proof in the full Rust renderer, using the same host ignition path as RoR2.
+        // SMS_FIRE=<frame>; SMS_SHOT_TIME chooses the fire-hit or panic-run capture time.
+        if std::env::var("SMS_FIRE").ok().and_then(|v| v.parse::<u32>().ok()) == Some(frame_no) {
+            sim.mario.options.fire_panic_run = true;
+            sim.mario.ignite();
+        }
         // FLUDD's water (`TModelWaterManager`): emitted every tick, moved once a frame.
         for e in std::mem::take(&mut world.emits) {
             if e.nozzle==NozzleKind::Yoshi && use_yoshi_skin {

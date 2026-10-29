@@ -66,14 +66,34 @@ fn main() {
         )
     };
     let mut img = vec![[0.05f32, 0.06, 0.1]; W * H];
+    let mut depth = vec![f32::NEG_INFINITY; W * H];
+    let textures: Vec<_> = view.textures.list.iter().map(|t| libsms_present::particles::FxTexture {
+        width: t.width, height: t.height, rgba: t.rgba.clone(), version: 0,
+        wrap: t.wrap.map(|w| match w {
+            0 => libsms_assets::texture::Wrap::Repeat,
+            2 => libsms_assets::texture::Wrap::Mirror,
+            _ => libsms_assets::texture::Wrap::Clamp,
+        }),
+    }).collect();
+    let white = libsms_present::particles::FxTexture { width: 1, height: 1, rgba: vec![255; 4],
+        wrap: [libsms_assets::texture::Wrap::Clamp; 2], version: 0 };
     for d in &view.draws {
-        let n = view.models[d.model as usize].vertex_count;
-        for v in &view.positions[d.first_vertex as usize..d.first_vertex as usize + n] {
-            let p = d.pos + d.rot * *v;
-            let (x, y) = to_px(p);
-            if (0.0..W as f32).contains(&x) && (0.0..H as f32).contains(&y) {
-                img[y as usize * W + x as usize] = [0.45, 0.45, 0.5];
+        let mut first = d.first_vertex as usize;
+        for (bi, batch) in view.models[d.model as usize].batches.iter().enumerate() {
+            let color_index = d.first_color as usize + bi;
+            let tex = usize::try_from(view.texture_ids[color_index]).ok()
+                .and_then(|i| textures.get(i)).unwrap_or(&white);
+            for tri in batch.indices.chunks_exact(3) {
+                let verts = [tri[0], tri[1], tri[2]].map(|i| {
+                    let i = first + i as usize;
+                    libsms_present::particles::FxVertex {
+                        pos: d.pos + d.rot * view.positions[i],
+                        u: view.uvs[i][0], v: view.uvs[i][1], color: view.colors[color_index],
+                    }
+                });
+                raster(&mut img, verts, tex, blend::ALPHA, &to_px, &mut depth, true);
             }
+            first += batch.vertices.len();
         }
     }
     for b in &fx.batches {
@@ -82,7 +102,7 @@ fn main() {
             &fx.vertices[b.first_vertex as usize..(b.first_vertex + b.vertex_count) as usize];
         for q in verts.chunks_exact(4) {
             for tri in [[0, 1, 2], [0, 2, 3]] {
-                raster(&mut img, [q[tri[0]], q[tri[1]], q[tri[2]]], tex, b.blend, &to_px);
+                raster(&mut img, [q[tri[0]], q[tri[1]], q[tri[2]]], tex, b.blend, &to_px, &mut depth, false);
             }
         }
     }
@@ -97,7 +117,7 @@ fn main() {
         .collect();
     std::fs::write(&out, png(W as u32, H as u32, &rgba)).unwrap();
     std::fs::write(format!("{out}.txt"), format!(
-        "Particle emitter 6 / ms_firedmg_a.jpa / {secs} seconds / {:?}\nSource: System/MarDirectorLoadResource.cpp load 6; Player/MarioReceiveMsg.cpp::receiveMessage; Player/MarioMove.cpp::checkGraffitoFire. Bound to mPosition, not the head. Grey points are Mario's posed mesh.\n", sim.mario.status)).unwrap();
+        "Particle emitter 6 / ms_firedmg_a.jpa / {secs} seconds / {:?}\nSource: System/MarDirectorLoadResource.cpp load 6; Player/MarioReceiveMsg.cpp::receiveMessage; Player/MarioMove.cpp::checkGraffitoFire. Bound to mPosition, not the head. Textured Mario mesh and original particle batches rendered in Rust on the CPU.\n", sim.mario.status)).unwrap();
     eprintln!("wrote {out}");
 }
 
@@ -107,6 +127,8 @@ fn raster(
     tex: &libsms_present::particles::FxTexture,
     mode: u32,
     to_px: &dyn Fn(Vec3) -> (f32, f32),
+    depth: &mut [f32],
+    write_depth: bool,
 ) {
     let p: Vec<(f32, f32)> = t.iter().map(|v| to_px(v.pos)).collect();
     let area = (p[1].0 - p[0].0) * (p[2].1 - p[0].1) - (p[2].0 - p[0].0) * (p[1].1 - p[0].1);
@@ -143,6 +165,11 @@ fn raster(
                 .collect();
             let s = tex.sample_nearest(u, v);
             let a = s[3] as f32 / 255.0 * c[3];
+            if a < 0.01 { continue; }
+            let z = w0 * t[0].pos.z + w1 * t[1].pos.z + w2 * t[2].pos.z;
+            let index = y * W + x;
+            if z < depth[index] { continue; }
+            if write_depth { depth[index] = z; }
             let px = &mut img[y * W + x];
             for k in 0..3 {
                 let src = s[k] as f32 / 255.0 * c[k];
