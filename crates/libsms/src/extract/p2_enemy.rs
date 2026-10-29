@@ -18,7 +18,7 @@ use super::p2::disc_err;
 use super::{ExtractError, rarc, safe_join, yaz0};
 
 /// Bump when the set of files changes, so an older cache is redone.
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 const MARKER: &str = "p2enemy.ok";
 /// Folder under the cache root everything here goes to.
 pub const DIR: &str = "enemy";
@@ -26,12 +26,16 @@ pub const DIR: &str = "enemy";
 /// The parameter archive on the disc.
 const PARMS: &str = "enemy/parm/enemyParms.szs";
 const COMMON: &str = "enemy/common/enemyCommon.szs";
+/// Where the corpses' config is under `DIR/` (the disc's `user/Abe/Pellet/<region>/carcass_config.txt`: `PelletConfig`s with
+/// the carriers, seeds and size of each enemy's corpse, by enemy name).
+pub const CARCASS: &str = "carcass_config.txt";
 
 /// Whether `dir` (the cache root, the folder holding `p2.ok`) has a complete enemy extraction of this version.
 pub fn is_complete(dir: &Path) -> bool {
     std::fs::read_to_string(dir.join(MARKER)).is_ok_and(|s| s.trim() == VERSION.to_string())
         && dir.join(DIR).join("parm/kogane/enemyparm.txt").is_file()
         && dir.join(DIR).join("data/Kogane/model/enemy.bmd").is_file()
+        && dir.join(DIR).join(CARCASS).is_file()
 }
 
 fn write_to(root: &Path, rel: &str, data: &[u8]) -> Result<(), ExtractError> {
@@ -76,7 +80,16 @@ pub fn extract(iso: &Path, out: &Path, log: &mut dyn FnMut(&str)) -> Result<usiz
     let root = out.join(DIR);
     let mut wrote = unpack(&open_archive(&disc, PARMS)?, &root, "parm/")?;
     wrote += unpack(&open_archive(&disc, COMMON)?, &root, "common/")?;
-    log(&format!("parameters and common parts: {wrote} files"));
+    let region = match disc.game_id.get(3..4) {
+        Some("P") => "pal",
+        Some("J") => "jpn",
+        _ => "us",
+    };
+    let carcass = format!("user/Abe/Pellet/{region}/carcass_config.txt");
+    let f = disc.find(&carcass).ok_or_else(|| ExtractError::Missing(carcass.clone()))?;
+    write_to(&root, CARCASS, &disc.read(f).map_err(disc_err)?)?;
+    wrote += 1;
+    log(&format!("parameters, common parts and corpse config: {wrote} files"));
 
     let mut enemies = 0;
     let files: Vec<(String, String)> = disc
