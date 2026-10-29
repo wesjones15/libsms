@@ -336,7 +336,7 @@ impl Mario {
         false
     }
 
-    /// `canSquat`: disabled â€” the squat stance never triggers. (The left trigger's air
+    /// `canSquat`: disabled — the squat stance never triggers. (The left trigger's air
     /// ground pound is a separate path and is unaffected.)
     pub(crate) fn can_squat(&self) -> bool {
         false

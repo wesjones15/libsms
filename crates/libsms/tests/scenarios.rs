@@ -479,7 +479,7 @@ fn spray_can_start_and_stop_during_a_belly_slide() {
 #[test]
 fn the_pack_pumps_while_spraying_in_a_dive_or_belly_slide() {
     // `spray_during_dive` lets the Spray fire where no arm pump clip exists (`sldct`'s
-    // `gMarioAnimeData` row is 0xC8): Mario keeps his pose, but FLUDD's pack still pulses â€”
+    // `gMarioAnimeData` row is 0xC8): Mario keeps his pose, but FLUDD's pack still pulses —
     // `TWaterGun::calcAnimation` mirrors the pump frame onto `wg_pump`.
     for already_spraying in [false, true] {
         let mut s = Scene::flat();

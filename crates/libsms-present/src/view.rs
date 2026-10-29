@@ -2048,7 +2048,7 @@ impl View {
                 alpha: 1.0,
             });
         }
-        // Luigi's HSD body: CPU-skinned into the same buffers as the parts, Ã—10 from Melee
+        // Luigi's HSD body: CPU-skinned into the same buffers as the parts, ×10 from Melee
         // units into Sunshine's decomp units, drawn as one instance at the index after the J3D
         // models (dynamic, so the entrance's own extra models keep their earlier indices).
         if let (Some(luigi), Some(world)) = (self.luigi.as_ref(), luigi_world.as_ref()) {

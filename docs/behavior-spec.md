@@ -250,7 +250,7 @@ tips Mario's head back by `mHoverHeadAngle`; an upward-aimed nozzle tips it by h
 (`MarioHeadCtrl`; his other head turns, toward signs and walls, aren't done). The spin-shot's effects
 (`ms_m_spinshot_a`/`b`, `emitRotateShootEffect`) aren't ported.
 
-**Wet belly slide** (`checkCurrentPlane` â†’ `askHitWaterParticleOnGround`, `catching`,
+**Wet belly slide** (`checkCurrentPlane` → `askHitWaterParticleOnGround`, `catching`,
 `doSliding`). Touching ground (`isTouchGround4cm`) within 300 (summed over the axes) of a FLUDD
 particle stuck to the ground sets `MARIO_FLAG_RECENTLY_LEFT_WATER` (misnamed); `catching` then
 sets state 1, and on normal ground `doSliding` uses `mWasOnWaterSlip` (0.97) for the belly
