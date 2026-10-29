@@ -896,6 +896,7 @@ pub unsafe extern "C" fn sms_sim_step(
         let mut h = FfiHost(host, Vec::new());
         // Water on the ground under Mario makes a belly slide glide.
         s.sim.mario.water_underfoot = s.foreign_wet || s.water.on_ground_near(s.sim.mario.pos);
+        wet_from_own_spray(s);
         let mut emits: Vec<WaterEmit> = Vec::new();
         let n = s
             .sim
@@ -933,6 +934,7 @@ pub unsafe extern "C" fn sms_sim_step(
         while s.water_ticks >= 4 {
             s.water_ticks -= 4;
             s.water.step(&h, s.sim.mario.pos);
+            wet_from_own_spray(s);
             if s.slide_splashes && s.sim.mario.wet_sliding() {
                 s.water.slide_splashes(s.sim.mario.pos);
             }
@@ -1225,6 +1227,24 @@ pub unsafe extern "C" fn sms_sim_ignite(sim: *mut SmsSim) -> u8 {
     match unsafe { sim.as_mut() } {
         Some(s) => s.sim.mario.ignite() as u8,
         None => 0,
+    }
+}
+
+/// Actual body contact with another Mario's FLUDD: extinguish and stay wet for three seconds.
+/// # Safety
+/// `sim` from [`sms_sim_new`] or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_sim_wet(sim: *mut SmsSim) {
+    if let Some(s) = unsafe { sim.as_mut() }.filter(|s| !s.poisoned) {
+        s.sim.mario.wet();
+    }
+}
+
+fn wet_from_own_spray(s: &mut SmsSim) {
+    let p = s.sim.mario.pos;
+    // Upright body capsule, excluding the ground patches used by the slide mechanic.
+    if s.water.touches_segment(p + Vec3::Y * 35.0, p + Vec3::Y * 125.0, 35.0) {
+        s.sim.mario.wet();
     }
 }
 
@@ -1533,6 +1553,35 @@ mod tests {
                 math::diff(yaw, want).unsigned_abs() < 600,
                 "{x},{z}: {yaw} vs {want}"
             );
+        }
+    }
+
+    #[test]
+    fn water_body_quenches_only_real_nearby_sweeps() {
+        let Some(dir) = libsms::assets::find(None) else {
+            eprintln!("SKIP: no assets/");
+            return;
+        };
+        let dir = CString::new(dir.to_string_lossy().as_bytes()).unwrap();
+        unsafe {
+            let sim = sms_sim_new(dir.as_ptr(), &SmsVec3::default(), 0);
+            assert!(!sim.is_null());
+            let s = &mut *sim;
+            assert!(s.sim.mario.ignite());
+            // Ground patches belong to slides; no sweep means no body contact.
+            s.foreign_wet = true;
+            wet_from_own_spray(s);
+            assert!(s.sim.mario.on_fire());
+            s.water.contacts.push((Vec3::new(1000., 80., -100.), Vec3::new(1000., 80., 100.), 2.));
+            wet_from_own_spray(s);
+            assert!(s.sim.mario.on_fire(), "a distant stream must not quench him");
+            // Both endpoints outside the capsule: the intervening sweep still hits it.
+            s.water.contacts.push((Vec3::new(-100., 80., 0.), Vec3::new(100., 80., 0.), 2.));
+            wet_from_own_spray(s);
+            assert!(!s.sim.mario.on_fire());
+            assert!(s.sim.mario.is_wet());
+            assert!(!s.sim.mario.ignite());
+            sms_sim_free(sim);
         }
     }
 

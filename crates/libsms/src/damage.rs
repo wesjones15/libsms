@@ -142,6 +142,9 @@ impl Mario {
     /// ground pound, which the game doesn't knock him out of; on Yoshi, Yoshi is thrown off
     /// instead).
     pub fn ignite(&mut self) -> bool {
+        if self.options.fire_panic_run && (self.fire_rearm_ticks > 0 || self.is_wet()) {
+            return false;
+        }
         if self.is_down() || self.health <= 0 || self.status == Status::WinDemo {
             return false;
         }
@@ -176,6 +179,12 @@ impl Mario {
 
     /// The fire hit: `FIRE_DOWN` with its sound and flames.
     fn start_fire_down(&mut self) {
+        if self.options.fire_panic_run && (self.fire_rearm_ticks > 0 || self.is_wet()) {
+            return;
+        }
+        if self.options.fire_panic_run {
+            self.fire_voice_alt = !self.fire_voice_alt;
+        }
         self.change_status(Status::FireDown, 1, true);
         self.cue("MSD_SE_MA_DAMAGE_FIRE");
         self.fx("ms_firedmg_a", crate::event::FxAt::FeetFollow);
@@ -195,6 +204,20 @@ impl Mario {
             Status::FireDown | Status::FireJump | Status::FireLand | Status::FireDash
         )
     }
+
+    /// Host wet modifier: actual body contact with stage water or a swept FLUDD droplet.
+    /// Ends every fire phase, including the initial bounce and airborne panic hops.
+    /// Wetness lasts three seconds after the last contact; health damage is still the host's.
+    pub fn wet(&mut self) {
+        self.wet_ticks = 360;
+        if !self.on_fire() { return; }
+        let grounded = self.on_ground();
+        self.change_status(if grounded { Status::Run } else { Status::Landing }, 0, false);
+        self.set_anim(if grounded { crate::anim::clip::RUN2 } else { crate::anim::clip::LAND }, 1.0);
+        if self.options.fire_panic_run { self.fire_rearm_ticks = 600; }
+    }
+
+    pub fn is_wet(&self) -> bool { self.wet_ticks > 0 || self.in_water() }
 
     /// `damageExec` with any damage parameters.
     pub fn damage_by(&mut self, from: Vec3, p: &Damage) -> bool {

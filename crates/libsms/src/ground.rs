@@ -336,7 +336,7 @@ impl Mario {
         false
     }
 
-    /// `canSquat`: disabled — the squat stance never triggers. (The left trigger's air
+    /// `canSquat`: disabled â€” the squat stance never triggers. (The left trigger's air
     /// ground pound is a separate path and is unaffected.)
     pub(crate) fn can_squat(&self) -> bool {
         false
@@ -640,11 +640,7 @@ impl Mario {
     /// toward the stick a little each tick, and hops (A) or tumbles off edges, until the panic
     /// wears off after 0xA0 ticks or he reaches water.
     fn fire_dashing(&mut self, host: &mut dyn Host) -> bool {
-        // Host extension: the panic run retains the fire call after the bounce's
-        // recovery voice. Sunshine's fireDowning/fireJumping use this same cue (0x7849).
-        if self.status_timer == 0 {
-            self.voice("MSD_SE_MV05_DAMAGE_FIRE_01");
-        }
+        // The host panic uses one alternating fire voice per ignition, from fire_downing.
         if self.input.jump {
             return self.change_status(Status::FireJump, 0, false);
         }

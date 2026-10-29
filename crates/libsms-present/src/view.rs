@@ -590,6 +590,7 @@ const SUPER_POUND_IMPACTS: &[&str] = &[
 const FOLLOW_SLOTS: u32 = 1000;
 
 struct FxTick {
+    burning: bool,
     tick: u64,
     pos: Vec3,
     yaw: i16,
@@ -1534,6 +1535,7 @@ impl View {
     /// Queue effects until the next pose is available, preserving one-shots and short held
     /// effects between rendered frames. Empty ticks release held emitters at 30 Hz too.
     pub fn events(&mut self, events: &[Event], mario: &Mario) {        self.fx_ticks.push(FxTick {
+            burning: mario.on_fire(),
             tick: mario.ticks,
             pos: mario.pos,
             yaw: mario.model_yaw,
@@ -1797,6 +1799,7 @@ impl View {
         // Hosts which only pose the view still get the state-driven super pound flames.
         if self.fx_ticks.is_empty() {
             self.fx_ticks.push(FxTick {
+                burning: m.on_fire(),
                 tick: m.ticks,
                 pos,
                 yaw: m.model_yaw,
@@ -1844,6 +1847,10 @@ impl View {
                     }
                     self.fx.request_scaled(slot, cue.name, mtx, cue.scale);
                 }
+            }
+            if !tick.burning {
+                // Host presentation tail: stop flare/smoke within 0.35 s of recovery.
+                self.fx.fade_out("ms_firedmg_a", 10.0);
             }
             // emitBlurHipDropSuper, bound to getCenterAnmMtx during the flaming fall.
             if tick.pounding == 2 {
@@ -2041,7 +2048,7 @@ impl View {
                 alpha: 1.0,
             });
         }
-        // Luigi's HSD body: CPU-skinned into the same buffers as the parts, ×10 from Melee
+        // Luigi's HSD body: CPU-skinned into the same buffers as the parts, Ã—10 from Melee
         // units into Sunshine's decomp units, drawn as one instance at the index after the J3D
         // models (dynamic, so the entrance's own extra models keep their earlier indices).
         if let (Some(luigi), Some(world)) = (self.luigi.as_ref(), luigi_world.as_ref()) {

@@ -736,7 +736,9 @@ impl Mario {
     fn fire_downing(&mut self, host: &mut dyn Host) -> bool {
         // The yell comes on the second tick (`mStatusTimer == 1` before the increment).
         if self.status_timer == 1 {
-            self.voice("MSD_SE_MV05_DAMAGE_FIRE_01");
+            self.voice(if self.options.fire_panic_run && self.fire_voice_alt {
+                "MSD_SE_MV05_DAMAGE_FIRE_02"
+            } else { "MSD_SE_MV05_DAMAGE_FIRE_01" });
         }
         self.status_timer += 1;
         if self.input.stick {
@@ -787,7 +789,7 @@ impl Mario {
 
     /// `fireJumping`: a hop out of the panicked run, which goes on when he lands.
     fn fire_jumping(&mut self, host: &mut dyn Host) -> bool {
-        if self.status_timer == 1 {
+        if self.status_timer == 1 && !self.options.fire_panic_run {
             self.voice("MSD_SE_MV05_DAMAGE_FIRE_01");
         }
         self.status_timer += 1;

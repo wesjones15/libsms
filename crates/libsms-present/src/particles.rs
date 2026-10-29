@@ -350,6 +350,8 @@ struct Emitter {
     world_space: bool,
     fixed_height: bool,
     time: f32,
+    /// Host-requested fade (remaining, total 30 Hz frames).
+    fade: Option<(f32, f32)>,
     /// `JPADraw::mPrmColor`, `mEnvColor`, `mTexIdx`.
     prm: [u8; 4],
     env: [u8; 4],
@@ -1035,6 +1037,19 @@ impl Particles {
         }
     }
 
+    /// Stop this effect and fade its existing parents/children over a short host tail.
+    /// Repeated requests do not restart or extend an in-progress fade.
+    pub fn fade_out(&mut self, name: &str, frames: f32) {
+        let Some(&effect) = self.by_name.get(name) else { return };
+        self.wanted.retain(|w| w.1 != effect);
+        for e in self.emitters.iter_mut().filter(|e| e.effect == effect) {
+            e.status |= STOP_EMIT;
+            e.max_frame = -1;
+            e.slot = None;
+            if e.fade.is_none() { e.fade = Some((frames.max(1.0), frames.max(1.0))); }
+        }
+    }
+
     /// Any particles alive.
     pub fn active(&self) -> bool {
         self.emitters.iter().any(|e| {
@@ -1118,6 +1133,10 @@ impl Particles {
             e.time += effect.speed;
             while e.time >= 1.0 {
                 e.time -= 1.0;
+                if let Some((left, _)) = e.fade.as_mut() {
+                    *left -= 1.0;
+                    if *left <= 0.0 { return false; }
+                }
                 if !e.check_start_frame() {
                     continue;
                 }
@@ -1166,6 +1185,7 @@ impl Particles {
             world_space: self.effects[effect].world_space,
             fixed_height: self.effects[effect].fixed_height,
             time: 0.0,
+            fade: None,
             prm,
             env,
             texture: base.texture,
@@ -1198,6 +1218,7 @@ impl Particles {
         let up = up.normalize_or(Vec3::Y);
         let mut baked: Vec<(u32, Vec<u8>)> = Vec::new();
         for e in &self.emitters {
+            let fade_first = self.vertices.len();
             let fx = &self.effects[e.effect];
             if !shown(&fx.name) {
                 continue;
@@ -1465,6 +1486,10 @@ impl Particles {
                         },
                     });
                 }
+            }
+            if let Some((left, total)) = e.fade {
+                let alpha = (left / total).clamp(0.0, 1.0);
+                for vertex in &mut self.vertices[fade_first..] { vertex.color[3] *= alpha; }
             }
         }
         for (t, rgba) in baked {
@@ -2969,6 +2994,22 @@ mod tests {
             }
         }
         assert!(visible_child && !fx.active());
+    }
+
+    #[test]
+    fn named_fade_expires_without_restarting_or_affecting_other_effects() {
+        let mut p = puff();
+        p.add("other", p.effects[0].jpa.clone());
+        p.emit("puff", Mat4::IDENTITY, 1.0);
+        p.emit("other", Mat4::IDENTITY, 1.0);
+        p.advance(0);
+        p.fade_out("puff", 3.0);
+        p.advance(4);
+        p.fade_out("puff", 100.0);
+        p.advance(8);
+        p.advance(12);
+        assert!(!p.emitters.iter().any(|e| e.effect == p.by_name["puff"]));
+        assert!(p.emitters.iter().any(|e| e.effect == p.by_name["other"]));
     }
 
     fn puff() -> Particles {

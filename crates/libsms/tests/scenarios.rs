@@ -479,7 +479,7 @@ fn spray_can_start_and_stop_during_a_belly_slide() {
 #[test]
 fn the_pack_pumps_while_spraying_in_a_dive_or_belly_slide() {
     // `spray_during_dive` lets the Spray fire where no arm pump clip exists (`sldct`'s
-    // `gMarioAnimeData` row is 0xC8): Mario keeps his pose, but FLUDD's pack still pulses —
+    // `gMarioAnimeData` row is 0xC8): Mario keeps his pose, but FLUDD's pack still pulses â€”
     // `TWaterGun::calcAnimation` mirrors the pump frame onto `wg_pump`.
     for already_spraying in [false, true] {
         let mut s = Scene::flat();
@@ -4115,18 +4115,26 @@ fn a_host_fire_runs_him_about_in_a_panic_when_asked() {
     assert_eq!(s.mario().health, max, "the host keeps the health");
     assert_eq!(s.mario().status, Status::FireDown);
     assert!(s.until(2400, |m| m.status == Status::FireDash), "no panic: {:?}", s.mario().status);
-    let calls_before = sound_count(&s, "MSD_SE_MV05_DAMAGE_FIRE_01");
     // He runs at about 32 with nothing held, however long he does it, then calms down.
     let start = s.mario().pos;
     s.step(60);
-    assert!(sound_count(&s, "MSD_SE_MV05_DAMAGE_FIRE_01") > calls_before, "the panic run lost the fire voice");
+    assert_eq!(sound_count(&s, "MSD_SE_MV05_DAMAGE_FIRE_02"), 1, "first panic uses voice 02 once");
+    assert_eq!(sound_count(&s, "MSD_SE_MV05_DAMAGE_FIRE_01"), 0, "do not combine the voices");
     assert_eq!(s.mario().status, Status::FireDash);
     assert!((s.mario().forward_vel - 32.0).abs() < 1.0, "speed {}", s.mario().forward_vel);
     assert!(s.mario().pos.distance(start) > 100.0, "he didn't run");
-    assert!(s.until(400, |m| m.status == Status::Run || m.status == Status::Wait));
+    assert!(s.until(400, |m| !m.on_fire()));
     assert!(!s.mario().on_fire());
-    // Burning again once he is out.
+    // Repeated attempts during the five-second escape window must not chain a new run.
+    for elapsed in 0..599 {
+        assert!(!s.sim.mario.ignite(), "fire trap retriggered after {elapsed} grace ticks");
+        s.step(1);
+    }
+    s.step(1);
     assert!(s.sim.mario.ignite());
+    s.step(3);
+    assert_eq!(sound_count(&s, "MSD_SE_MV05_DAMAGE_FIRE_01"), 1, "next reaction alternates to 01");
+    assert_eq!(sound_count(&s, "MSD_SE_MV05_DAMAGE_FIRE_02"), 1, "one voice per reaction");
 }
 
 #[test]
@@ -4141,4 +4149,46 @@ fn burning_mario_cannot_be_lit_twice_or_while_down() {
     assert!(!s.sim.mario.ignite(), "already burning");
     s.sim.mario.knock_out();
     assert!(!s.sim.mario.ignite(), "down for good");
+}
+
+#[test]
+fn body_water_extinguishes_every_fire_phase_and_keeps_the_escape_grace() {
+    for phase in [Status::FireDown, Status::FireDash, Status::FireJump, Status::FireLand] {
+        let mut s = Scene::flat();
+        s.sim.mario.options.fire_panic_run = true;
+        s.step(2);
+        assert!(s.sim.mario.ignite());
+        s.sim.mario.status = phase;
+        let health = s.mario().health;
+        s.sim.mario.wet();
+        assert!(!s.mario().on_fire(), "{phase:?} was not extinguished");
+        assert!(s.mario().is_wet());
+        assert_eq!(s.mario().health, health);
+        s.step(360);
+        assert!(!s.mario().is_wet(), "wetness must dry after three seconds");
+        assert!(!s.sim.mario.ignite(), "quenching must retain five seconds of escape grace");
+        s.step(240);
+        assert!(s.sim.mario.ignite());
+    }
+}
+
+#[test]
+fn stage_water_quenches_the_initial_fire_bounce_and_continuously_renews_wetness() {
+    let mut s = Scene::flat();
+    s.sim.mario.options.fire_panic_run = true;
+    s.step(2);
+    assert!(s.sim.mario.ignite());
+    s.host.world.water = Some(10000.0);
+    s.step(1);
+    assert!(!s.mario().on_fire());
+    for _ in 0..800 {
+        s.step(1);
+        assert!(s.mario().is_wet());
+        assert!(!s.sim.mario.ignite());
+    }
+    s.host.world.water = None;
+    s.step(359);
+    assert!(!s.sim.mario.ignite());
+    s.step(1);
+    assert!(s.sim.mario.ignite());
 }

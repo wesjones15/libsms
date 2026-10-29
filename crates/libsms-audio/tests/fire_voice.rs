@@ -20,16 +20,18 @@ fn the_fire_yell_and_the_fire_sound_are_in_the_banks_and_play() {
     ] {
         assert!(data.names.id(name).is_some(), "{name} is not in mSound.asn");
     }
-    let mut s = SoundSystem::new(data);
-    s.set_listener(Mat4::IDENTITY, Vec3::ZERO);
-    s.set_voice_set(VoiceSet::Mario);
-    assert!(s.mario_voice("MSD_SE_MV05_DAMAGE_FIRE_01").is_some(), "the yell did not start");
-    let mut energy = 0f64;
-    let mut buf = vec![0f32; (32000 / 30) * 2];
-    for _ in 0..60 {
-        s.frame();
-        s.render(&mut buf, 32000.0);
-        energy += buf.iter().map(|x| (*x as f64).powi(2)).sum::<f64>();
+    for cue in ["MSD_SE_MV05_DAMAGE_FIRE_01", "MSD_SE_MV05_DAMAGE_FIRE_02"] {
+        let mut s = SoundSystem::new(data.clone());
+        s.set_listener(Mat4::IDENTITY, Vec3::ZERO);
+        s.set_voice_set(VoiceSet::Mario);
+        assert!(s.mario_voice(cue).is_some(), "{cue} did not start");
+        let mut energy = 0f64;
+        let mut buf = vec![0f32; (32000 / 30) * 2];
+        for _ in 0..60 {
+            s.frame();
+            s.render(&mut buf, 32000.0);
+            energy += buf.iter().map(|x| (*x as f64).powi(2)).sum::<f64>();
+        }
+        assert!(energy > 0.0, "{cue} is silent");
     }
-    assert!(energy > 0.0, "the yell is silent");
 }

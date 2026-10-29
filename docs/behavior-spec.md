@@ -250,7 +250,7 @@ tips Mario's head back by `mHoverHeadAngle`; an upward-aimed nozzle tips it by h
 (`MarioHeadCtrl`; his other head turns, toward signs and walls, aren't done). The spin-shot's effects
 (`ms_m_spinshot_a`/`b`, `emitRotateShootEffect`) aren't ported.
 
-**Wet belly slide** (`checkCurrentPlane` → `askHitWaterParticleOnGround`, `catching`,
+**Wet belly slide** (`checkCurrentPlane` â†’ `askHitWaterParticleOnGround`, `catching`,
 `doSliding`). Touching ground (`isTouchGround4cm`) within 300 (summed over the axes) of a FLUDD
 particle stuck to the ground sets `MARIO_FLAG_RECENTLY_LEFT_WATER` (misnamed); `catching` then
 sets state 1, and on normal ground `doSliding` uses `mWasOnWaterSlip` (0.97) for the belly
@@ -791,9 +791,19 @@ RoR2 in-game confirmation remains manual.
 `MarioReceiveMsg.cpp::receiveMessage` and `MarioMove.cpp::checkGraffitoFire`
 emit it once, bound to `mPosition`. The presenter now loads that previously
 missing effect and uses `FxAt::FeetFollow` to preserve its positional binding.
-The host panic extension replays `MSD_SE_MV05_DAMAGE_FIRE_01` (0x7849) when
-`FireDash` begins, after the bounce/recovery. This extra call is a host extension;
-the decomp's fireDowning/fireJumping use the same original cue. Emitter 6 is a
+The host panic extension alternates `MSD_SE_MV05_DAMAGE_FIRE_02` (0x784A) and
+`MSD_SE_MV05_DAMAGE_FIRE_01` (0x7849), beginning with 02, once per reaction.
+It does not repeat a voice when the dash starts or during hops. The original
+fireDowning/fireJumping use 01; the alternating policy is a host extension.
+The flare and smoke fade out over ten 30 Hz frames after the fire state ends.
+Host ignition is blocked for 600 ticks (five seconds) after the reaction ends;
+the host still applies fire damage normally. Stage water and actual FLUDD
+droplet/body contact quench every fire phase immediately. The wet modifier lasts
+360 ticks (three seconds) after contact, renewed while touching water, and blocks
+host panic ignition. Quenching retains the 600-tick escape grace. Own water uses
+the native swept-contact query against the body capsule; another Mario's contact
+is recorded as a Soaked replay op, independently of wet-slide ground patches.
+Emitter 6 is a
 low body flare, not a head flame. No separate Mario head-flame asset is proven.
 `viewer --example fire_panic -- output.png seconds` makes labeled native captures.
 
@@ -803,4 +813,4 @@ water frame, ending at the world-corrected position, including spent splashes.
 synthetic wet-slide stamps do not count. `sms_sim_water_touches_segment` exposes
 the query without changing existing C layouts; teleport clears contacts. RoR2
 uses it to extinguish individual fire-trail segments. Fire vulnerability and the
-20x water damage multiplier are host policy, not Sunshine damage behavior.
+5x water damage multiplier are host policy, not Sunshine damage behavior.

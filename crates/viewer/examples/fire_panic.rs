@@ -40,14 +40,40 @@ fn main() {
     let pad = Pad::default();
     sim.advance(&mut host, &pad, 0, dt);
     sim.mario.ignite();
+    let mut ended_at = None;
     for _ in 0..(secs * 120.0) as u32 {
         sim.advance_observed(&mut host, &pad, 0, dt, |mario, h| {
             view.events(&std::mem::take(&mut h.0), mario);
         });
         view.set_camera(Vec3::X, Vec3::Y);
         view.update(&mut sim, dt);
+        if !sim.mario.on_fire() && ended_at.is_none() { ended_at = Some(sim.mario.ticks); }
     }
-    eprintln!("Emitter 6 ms_firedmg_a / {:?}", sim.mario.status);
+    if std::env::args().any(|a| a == "--only-fire") {
+        view.fx.build_filtered(Vec3::X, Vec3::Y, |name| name == "ms_firedmg_a");
+        if ended_at.is_some_and(|t| sim.mario.ticks > t + 44) {
+            assert!(view.fx.vertices.is_empty(), "fire tail outlived the 0.35-second fade");
+        }
+    }
+    // Audition only the source-identified damage-run clip, before host changes.
+    let pose_frame = std::env::args().find_map(|a| a.strip_prefix("--dgrun=").and_then(|s| s.parse::<f32>().ok()));
+    if let Some(frame) = pose_frame {
+        sim.mario.anim.set("dgrun", 1.0, &sim.mario.anims);
+        sim.mario.anim.frame = frame;
+        sim.mario.model_yaw = 0x4000;
+        if std::env::args().any(|a| a == "--panic-preview") {
+            let skeleton = libsms::Skeleton::from_bmd(&std::fs::read(dir.join("bmd/ma_mdl1.bmd")).unwrap()).unwrap();
+            let clips = libsms::ClipLibrary::from_dir(&dir.join("bck"));
+            let run = clips.get("run2").unwrap();
+            let flail = clips.get("dgrun").unwrap();
+            view.set_pose_override(Some(skeleton.pose_layered(
+                Some((run, frame / flail.frames * run.frames)),
+                Some((flail, frame, skeleton.find("jnt_chest").unwrap())),
+            )));
+        }
+        view.update(&mut sim, 0.0);
+    }
+    eprintln!("Emitter 6 ms_firedmg_a / {:?} / {} frame {}", sim.mario.status, sim.mario.anim.clip, sim.mario.anim.frame);
     let fx = &view.fx;
     eprintln!(
         "Fire after {secs} s: {} batches, {} corners, {} textures; Mario at {:?}",
@@ -117,7 +143,7 @@ fn main() {
         .collect();
     std::fs::write(&out, png(W as u32, H as u32, &rgba)).unwrap();
     std::fs::write(format!("{out}.txt"), format!(
-        "Particle emitter 6 / ms_firedmg_a.jpa / {secs} seconds / {:?}\nSource: System/MarDirectorLoadResource.cpp load 6; Player/MarioReceiveMsg.cpp::receiveMessage; Player/MarioMove.cpp::checkGraffitoFire. Bound to mPosition, not the head. Textured Mario mesh and original particle batches rendered in Rust on the CPU.\n", sim.mario.status)).unwrap();
+        "Particle emitter 6 / ms_firedmg_a.jpa / {secs} seconds / {:?}\nAnimation: {} frame {}. dgrun = ANIM_DGRUN 0xD5, file table 0x4A, mario.szs:bck/ma_dgrun.bck. Source: Player/MarioDraw.cpp gMarioAnimeData[0xD5], Player/MarioAnimeFiles.inc[0x4A]. The original fireDashing selects firejmp; dgrun is a host adaptation.\nSource: System/MarDirectorLoadResource.cpp load 6; Player/MarioReceiveMsg.cpp::receiveMessage; Player/MarioMove.cpp::checkGraffitoFire. Bound to mPosition, not the head. Textured Mario mesh and original particle batches rendered in Rust on the CPU.\n", sim.mario.status, sim.mario.anim.clip, sim.mario.anim.frame)).unwrap();
     eprintln!("wrote {out}");
 }
 

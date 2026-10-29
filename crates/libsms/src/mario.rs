@@ -349,6 +349,11 @@ pub struct Mario {
     /// and ticks spent spinning (`unk22`).
     spin_voice_due: bool,
     spin_ticks: u16,
+    /// Host fire panic: alternate one voice per reaction and allow five seconds to escape.
+    pub(crate) fire_voice_alt: bool,
+    pub(crate) fire_rearm_ticks: u16,
+    /// Recent body contact with water; host panic cannot ignite while wet (three seconds).
+    pub(crate) wet_ticks: u16,
     /// A spin jump started out of a rocket nozzle's thrust: the still-held spray must not fling him
     /// back into the rocket until that spin is over (cleared by any real status change).
     pub(crate) rocket_spin: bool,
@@ -509,6 +514,9 @@ impl Mario {
             fall_start_y: pos.y,
             spin_voice_due: true,
             spin_ticks: 0,
+            fire_voice_alt: false,
+            fire_rearm_ticks: 0,
+            wet_ticks: 0,
             rocket_spin: false,
             corkscrew: 0,
             corkscrew_speed: 0.0,
@@ -864,6 +872,10 @@ impl Mario {
 
     /// One 120 Hz step (`TMario::playerControl`).
     pub fn tick(&mut self, host: &mut dyn Host, pad: &Pad, camera_yaw: Angle) {
+        self.fire_rearm_ticks = self.fire_rearm_ticks.saturating_sub(1);
+        self.wet_ticks = self.wet_ticks.saturating_sub(1);
+        let was_on_fire = self.on_fire();
+        self.think_water_surface(host);
         // The host's limits may hold R back (`limits.rs`); the game's never do.
         let pad = &self.limit_pad(pad);
         self.camera_yaw = camera_yaw;
@@ -897,6 +909,9 @@ impl Mario {
         }
         self.yoshi_calc_anim();
         self.sound_movement();
+        if was_on_fire && !self.on_fire() && self.options.fire_panic_run {
+            self.fire_rearm_ticks = 600; // Five seconds at 120 Hz, after the reaction ends.
+        }
         self.pad_prev = *pad;
         for e in self.events.drain(..) {
             host.event(e);
@@ -945,6 +960,7 @@ impl Mario {
         self.in_water = level.is_some();
         if let Some(level) = level {
             self.water_surface = level;
+            self.wet();
         }
     }
 
