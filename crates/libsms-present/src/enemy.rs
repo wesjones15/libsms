@@ -27,6 +27,11 @@ impl EnemyBody {
     /// Loads `model_rel` and the `.bca`/`.bck` clips in `clips_rel` (both relative to `dir`, the Pikmin 2 cache) whose
     /// joint count fits the rig; the model's first texture is replaced by `texture_rel` when given.
     pub fn load(dir: &Path, model_rel: &str, clips_rel: &str, texture_rel: Option<&str>) -> Result<EnemyBody, String> {
+        Self::load_swapped(dir, model_rel, clips_rel, texture_rel.as_slice())
+    }
+
+    /// As [`EnemyBody::load`] with the model's textures 0, 1, .. replaced by the files `textures` names (`changeImage(tex, n)`).
+    pub fn load_swapped(dir: &Path, model_rel: &str, clips_rel: &str, textures: &[&str]) -> Result<EnemyBody, String> {
         let data = std::fs::read(dir.join(model_rel)).map_err(|e| format!("{model_rel}: {e}"))?;
         let bmd = Bmd::parse(&data).map_err(|e| format!("{model_rel}: {e}"))?;
         let rig = Skeleton::from_bmd(&data).ok_or_else(|| format!("{model_rel}: invalid JNT1/INF1"))?;
@@ -48,18 +53,16 @@ impl EnemyBody {
         if clips.is_empty() {
             return Err(format!("no clip in {clips_rel} fits {model_rel}'s rig"));
         }
-        let swap = match texture_rel {
-            Some(rel) => {
-                let b = std::fs::read(dir.join(rel)).map_err(|e| format!("{rel}: {e}"))?;
-                let t = read_bti(&b, rel.to_owned()).map_err(|e| format!("{rel}: {e}"))?;
-                Some(Tex::new(t.image, t.wrap_s, t.wrap_t))
-            }
-            None => None,
-        };
-        let hash = (model_rel.bytes().chain(texture_rel.unwrap_or("").bytes())).fold(0u32, |a, b| a.wrapping_mul(31).wrapping_add(b as u32));
+        let mut swaps: Vec<Tex> = Vec::new();
+        for rel in textures {
+            let b = std::fs::read(dir.join(rel)).map_err(|e| format!("{rel}: {e}"))?;
+            let t = read_bti(&b, (*rel).to_owned()).map_err(|e| format!("{rel}: {e}"))?;
+            swaps.push(Tex::new(t.image, t.wrap_s, t.wrap_t));
+        }
+        let hash = (model_rel.bytes().chain(textures.iter().flat_map(|t| t.bytes()))).fold(0u32, |a, b| a.wrapping_mul(31).wrapping_add(b as u32));
         let key = RIG_KEY_BASE + 0x2000 + (hash & 0xfff);
         let mut textures = Textures::default();
-        let model = build(bmd, &|i, _| if i == 0 { swap.clone() } else { None }, key, &mut textures)?;
+        let model = build(bmd, &|i, _| swaps.get(i).cloned(), key, &mut textures)?;
         Ok(EnemyBody { model, textures, rig, clips })
     }
 
