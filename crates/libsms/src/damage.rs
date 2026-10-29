@@ -178,13 +178,13 @@ impl Mario {
     fn start_fire_down(&mut self) {
         self.change_status(Status::FireDown, 1, true);
         self.cue("MSD_SE_MA_DAMAGE_FIRE");
-        self.fx_once("ms_firedmg_a", 0);
+        self.fx("ms_firedmg_a", crate::event::FxAt::FeetFollow);
     }
 
     /// The burning keeps flaring up around him every quarter second or so while a fire status lasts.
     pub(crate) fn fire_flicker(&mut self) {
         if self.status_timer % 30 == 0 {
-            self.fx_once("ms_firedmg_a", 0);
+            self.fx("ms_firedmg_a", crate::event::FxAt::FeetFollow);
         }
     }
 

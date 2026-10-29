@@ -115,6 +115,8 @@ pub enum FxAt {
     Joint(u16),
     /// `emitAndBindToPosPtr(id, &mPosition, 1, this)`: held, at Mario's feet.
     Feet,
+    /// One-shot `emitAndBindToPosPtr(.., &mPosition, 0, ..)`, following Mario.
+    FeetFollow,
     /// `emitAndBindToMtxPtr(id, getEmitMtx(n), 1, this)` / `emitAndBindToPosPtr(id, &getEmitPos0(), ..)`:
     /// held on FLUDD's `n`th muzzle as drawn, asked for again every tick it lasts.
     Muzzle(u8),

@@ -518,6 +518,8 @@ pub const MARIO_EFFECTS: &[&str] = &[
     "ms_m_rocket_c",
     "ms_m_rocket_d",
     "ms_nozzlesmoke",
+    // MarDirectorLoadResource.cpp: emitter 6; MarioReceiveMsg.cpp fire damage.
+    "ms_firedmg_a",
     // The Turbo's dash (`TMarioEffect::perform`): bound to the muzzle while it lasts.
     "ms_watboost_a",
     "ms_watboost_b",
@@ -606,7 +608,7 @@ fn fx_matrix(at: FxAt, root: Mat4, joints: &[Mat4], center: Option<usize>, muzzl
         FxAt::Center => center.and_then(|j| joints.get(j)).map(|j| root * *j),
         FxAt::Joint(j) => joints.get(j as usize).map(|j| root * *j),
         // emitAndBindToPosPtr follows position only, not Mario's rotation.
-        FxAt::Feet => Some(Mat4::from_translation(root.w_axis.truncate())),
+        FxAt::Feet | FxAt::FeetFollow => Some(Mat4::from_translation(root.w_axis.truncate())),
         // FLUDD's muzzle as drawn this frame (the nozzle's `null_G_muzzle` joints).
         FxAt::Muzzle(i) => muzzles.get(i as usize).map(|m| root * *m),
         // `rocketEffectStart`: emitAndBindToPosPtr(.., &mWaterGun->getEmitPos0()) follows the muzzle's
@@ -1803,7 +1805,7 @@ impl View {
                 };
                 if matches!(cue.at, FxAt::Once { .. }) {
                     self.fx.emit(cue.name, mtx, cue.scale);
-                } else if let FxAt::MuzzleFollow(_) = cue.at {
+                } else if matches!(cue.at, FxAt::MuzzleFollow(_) | FxAt::FeetFollow) {
                     // Its own slot (past the held effects'), kept bound to the muzzle as it moves.
                     if let Some(i) = MARIO_EFFECTS.iter().position(|&n| n == cue.name) {
                         let slot = FOLLOW_SLOTS + i as u32;
@@ -2716,6 +2718,26 @@ mod tests {
             }
             assert!(changed, "{} wears the same eyes as the idle face", f.clip);
         }
+    }
+
+    #[test]
+    fn fire_damage_loads_and_draws_the_bound_emitter_six() {
+        let Some(mut v) = view() else { eprintln!("SKIP: no assets/"); return };
+        assert!(v.fx.has("ms_firedmg_a"), "emitter 6 was never loaded");
+        let a = libsms::Assets::discover(None).unwrap();
+        let mut sim = Sim::new(a.params, a.anim_table, Vec3::ZERO, 0);
+        let mut host = Collect(Vec::new());
+        sim.mario.options.fire_panic_run = true;
+        sim.mario.ignite();
+        for _ in 0..36 {
+            sim.advance_observed(&mut host, &libsms::Pad::default(), 0, 1. / 120., |m, h| {
+                v.events(&std::mem::take(&mut h.0), m);
+            });
+            v.set_camera(Vec3::X, Vec3::Y);
+            v.update(&mut sim, 1. / 120.);
+        }
+        assert!(!v.fx.vertices.is_empty(), "the fire flare is invisible");
+        assert!(v.fx_binds.iter().any(|(_, at)| *at == FxAt::FeetFollow), "the flare was left behind at the hit position");
     }
 
     #[test]

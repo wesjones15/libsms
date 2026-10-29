@@ -163,6 +163,9 @@ mod k {
 
 #[derive(Debug, Clone)]
 pub struct WaterManager {
+    /// Actual droplet sweeps from the most recent water frame, clipped by world contacts.
+    /// Hosts may test these against hazards without changing the water simulation.
+    pub contacts: Vec<(Vec3, Vec3, f32)>,
     pub particles: Vec<Particle>,
     pub wet_patches: Vec<WetPatch>,
     pub types: [WaterParticle; 17],
@@ -190,6 +193,7 @@ const BURST_SPACING: f32 = 0.8;
 impl WaterManager {
     pub fn new(params: &Params) -> WaterManager {
         WaterManager {
+            contacts: Vec::with_capacity(SLOTS),
             particles: Vec::with_capacity(SLOTS),
             wet_patches: Vec::with_capacity(SLOTS),
             types: params.water_particles.clone(),
@@ -422,6 +426,7 @@ impl WaterManager {
     }
 
     pub fn step(&mut self, host: &dyn Host, mario: Vec3) {
+        self.contacts.clear();
         if let Some((forward, kind)) = self.stamp.take() {
             self.lay_burst(host, mario, forward, kind);
         }
@@ -431,6 +436,8 @@ impl WaterManager {
         self.wet_patches
             .retain(|p| p.life > 0.0 && p.pos.distance_squared(mario) < k::RANGE * k::RANGE);
         self.hit_enemies(host);
+        let starts: Vec<_> = self.particles.iter()
+            .map(|p| (p.pos, p.size, p.life > 0.0)).collect();
         // Fly, slide, fall; cap horizontal speed at the particle's size.
         for i in 0..self.particles.len() {
             let gravity = self.kind(i).gravity;
@@ -613,13 +620,60 @@ impl WaterManager {
                 None => *last = Some(i),
             }
         }
+        for ((from, size, alive), p) in starts.into_iter().zip(&self.particles) {
+            if alive {
+                self.contacts.push((from, p.pos, size.max(0.0)));
+            }
+        }
         self.particles.retain(|p| p.life > 0.0);
     }
+
+    /// Whether a real water sweep touches a capsule segment. No synthetic wet-slide
+    /// stamp is used: spraying must reach the flame itself.
+    pub fn touches_segment(&self, a: Vec3, b: Vec3, radius: f32) -> bool {
+        if !a.is_finite() || !b.is_finite() || !radius.is_finite() || radius < 0.0 {
+            return false;
+        }
+        self.contacts.iter().any(|&(from, to, size)| {
+            segment_distance_squared(a, b, from, to) <= (radius + size).powi(2)
+        })
+    }
+}
+
+/// Closest points of two finite line segments, including parallel and point segments.
+fn segment_distance_squared(a: Vec3, b: Vec3, c: Vec3, d: Vec3) -> f32 {
+    let (u, v, w) = (b - a, d - c, a - c);
+    let (aa, bb, cc, dd, ee) = (u.dot(u), u.dot(v), v.dot(v), u.dot(w), v.dot(w));
+    if aa <= 1e-8 && cc <= 1e-8 { return w.length_squared(); }
+    if aa <= 1e-8 { return (w - v * (ee / cc).clamp(0.0, 1.0)).length_squared(); }
+    if cc <= 1e-8 { return (w + u * (-dd / aa).clamp(0.0, 1.0)).length_squared(); }
+    let denom = aa * cc - bb * bb;
+    let mut s = if denom > 1e-8 { ((bb * ee - cc * dd) / denom).clamp(0.0, 1.0) } else { 0.0 };
+    let mut t = (bb * s + ee) / cc;
+    if t < 0.0 { t = 0.0; s = (-dd / aa).clamp(0.0, 1.0); }
+    else if t > 1.0 { t = 1.0; s = ((bb - dd) / aa).clamp(0.0, 1.0); }
+    (w + u * s - v * t).length_squared()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn water_sweeps_touch_only_intersected_fire_segments() {
+        let mut water = WaterManager::new(&Params::default());
+        // A fast drop crosses a flame between water frames; neither endpoint is inside it.
+        water.contacts.push((Vec3::new(-100., 20., 0.), Vec3::new(100., 20., 0.), 2.));
+        assert!(water.touches_segment(Vec3::ZERO, Vec3::Y * 40., 3.));
+        assert!(!water.touches_segment(Vec3::Z * 10., Vec3::Z * 10. + Vec3::Y * 40., 3.));
+        assert!(water.touches_segment(Vec3::new(0., 20., 5.), Vec3::new(0., 20., 5.), 3.));
+        assert!(!water.touches_segment(Vec3::splat(f32::NAN), Vec3::ZERO, 1.));
+        // Parallel and degenerate segments must not produce NaNs or false intersections.
+        assert_eq!(segment_distance_squared(Vec3::ZERO, Vec3::X, Vec3::Y, Vec3::X + Vec3::Y), 1.);
+        assert_eq!(segment_distance_squared(Vec3::ZERO, Vec3::ZERO, Vec3::X, Vec3::X), 1.);
+        water.step(&crate::FlatHost::default(), Vec3::ZERO);
+        assert!(!water.touches_segment(Vec3::ZERO, Vec3::Y * 40., 3.), "old sweeps survived an empty water frame");
+    }
     use crate::host::FlatHost;
     use crate::params::NozzleKind;
 

@@ -767,11 +767,11 @@ impl Mario {
                     self.set_player_velocity(0.5 * self.forward_vel);
                     self.status_state += 1;
                 } else {
-                    self.voice("MSD_SE_MV07_DAMAGE_REACT_01");
                     // The game lies down (`FIRE_JUMP_END`); the host's option gets up running.
                     let to = if self.options.fire_panic_run {
                         Status::FireDash
                     } else {
+                        self.voice("MSD_SE_MV07_DAMAGE_REACT_01");
                         Status::FireJumpEnd
                     };
                     self.change_status(to, 0, false);

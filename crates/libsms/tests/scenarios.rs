@@ -4115,9 +4115,11 @@ fn a_host_fire_runs_him_about_in_a_panic_when_asked() {
     assert_eq!(s.mario().health, max, "the host keeps the health");
     assert_eq!(s.mario().status, Status::FireDown);
     assert!(s.until(2400, |m| m.status == Status::FireDash), "no panic: {:?}", s.mario().status);
+    let calls_before = sound_count(&s, "MSD_SE_MV05_DAMAGE_FIRE_01");
     // He runs at about 32 with nothing held, however long he does it, then calms down.
     let start = s.mario().pos;
     s.step(60);
+    assert!(sound_count(&s, "MSD_SE_MV05_DAMAGE_FIRE_01") > calls_before, "the panic run lost the fire voice");
     assert_eq!(s.mario().status, Status::FireDash);
     assert!((s.mario().forward_vel - 32.0).abs() < 1.0, "speed {}", s.mario().forward_vel);
     assert!(s.mario().pos.distance(start) > 100.0, "he didn't run");

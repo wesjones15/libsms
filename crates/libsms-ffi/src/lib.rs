@@ -430,6 +430,20 @@ pub unsafe extern "C" fn sms_sim_wet_at(sim: *const SmsSim, pos: *const SmsVec3)
     }
 }
 
+/// Tests actual FLUDD droplet sweeps against a host hazard segment, in sim units.
+/// # Safety
+/// `sim` live or null; `a` and `b` readable or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_sim_water_touches_segment(
+    sim: *const SmsSim, a: *const SmsVec3, b: *const SmsVec3, radius: f32,
+) -> u32 {
+    match (unsafe { sim.as_ref() }, unsafe { a.as_ref() }, unsafe { b.as_ref() }) {
+        (Some(s), Some(a), Some(b)) if !s.poisoned => u32::from(s.water.touches_segment(
+            Vec3::new(a.x, a.y, a.z), Vec3::new(b.x, b.y, b.z), radius)),
+        _ => 0,
+    }
+}
+
 /// Tells this sim whether another Mario's wet ground is under it for the next step.
 ///
 /// # Safety
@@ -1018,6 +1032,7 @@ pub unsafe extern "C" fn sms_sim_teleport(sim: *mut SmsSim, pos: *const SmsVec3)
     if let (Some(s), Some(pos)) = (unsafe { sim.as_mut() }, unsafe { pos.as_ref() }) {
         s.sim.mario.teleport((*pos).into());
         s.water.particles.clear();
+        s.water.contacts.clear();
     }
 }
 

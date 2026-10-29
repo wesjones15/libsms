@@ -640,6 +640,11 @@ impl Mario {
     /// toward the stick a little each tick, and hops (A) or tumbles off edges, until the panic
     /// wears off after 0xA0 ticks or he reaches water.
     fn fire_dashing(&mut self, host: &mut dyn Host) -> bool {
+        // Host extension: the panic run retains the fire call after the bounce's
+        // recovery voice. Sunshine's fireDowning/fireJumping use this same cue (0x7849).
+        if self.status_timer == 0 {
+            self.voice("MSD_SE_MV05_DAMAGE_FIRE_01");
+        }
         if self.input.jump {
             return self.change_status(Status::FireJump, 0, false);
         }

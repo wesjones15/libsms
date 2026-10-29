@@ -784,3 +784,23 @@ frames with the normal viewer shader/sampler. Native regressions check RGBA
 mirroring, child timing/inheritance/expiry and the real-disc child settings; the
 FFI check verifies mirrored parent and clamped child draw batches. Viewer checked;
 RoR2 in-game confirmation remains manual.
+
+## Fire host presentation and water contact queries (2026-10-28)
+
+`MarDirectorLoadResource.cpp` loads `ms_firedmg_a.jpa` as particle emitter 6.
+`MarioReceiveMsg.cpp::receiveMessage` and `MarioMove.cpp::checkGraffitoFire`
+emit it once, bound to `mPosition`. The presenter now loads that previously
+missing effect and uses `FxAt::FeetFollow` to preserve its positional binding.
+The host panic extension replays `MSD_SE_MV05_DAMAGE_FIRE_01` (0x7849) when
+`FireDash` begins, after the bounce/recovery. This extra call is a host extension;
+the decomp's fireDowning/fireJumping use the same original cue. Emitter 6 is a
+low body flare, not a head flame. No separate Mario head-flame asset is proven.
+`viewer --example fire_panic -- output.png seconds` makes labeled native captures.
+
+`WaterManager.contacts` records actual droplet sweeps through the most recent
+water frame, ending at the world-corrected position, including spent splashes.
+`touches_segment` tests those swept droplets against a host capsule segment;
+synthetic wet-slide stamps do not count. `sms_sim_water_touches_segment` exposes
+the query without changing existing C layouts; teleport clears contacts. RoR2
+uses it to extinguish individual fire-trail segments. Fire vulnerability and the
+20x water damage multiplier are host policy, not Sunshine damage behavior.
