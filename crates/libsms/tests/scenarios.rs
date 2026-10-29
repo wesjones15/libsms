@@ -1670,6 +1670,43 @@ fn yoshi_runs_faster_and_flutters() {
 }
 
 #[test]
+fn yoshi_skin_flutters_without_riding_and_lands_ready_again() {
+    if need_disc() {
+        return;
+    }
+    // The skin starts it with a fresh A press anywhere in the air, once per airtime.
+    let mut s = yoshi_scene(vec![]);
+    s.sim.mario.options.yoshi_skin = true;
+    s.pad.a = true;
+    s.step(30);
+    s.pad.a = false;
+    s.step(20);
+    assert!(!s.mario().fluttering());
+    s.pad.a = true;
+    let mut fluttered = false;
+    for _ in 0..60 {
+        s.step(1);
+        fluttered |= s.mario().fluttering();
+    }
+    assert!(fluttered, "a fresh A press in the air should flutter the skin");
+    // Let go: the flutter ends, and the landing arms it again.
+    s.pad.a = false;
+    s.secs(2.0);
+    assert!(!s.mario().fluttering());
+    s.pad.a = true;
+    s.step(30);
+    s.pad.a = false;
+    s.step(20);
+    s.pad.a = true;
+    let mut again = false;
+    for _ in 0..60 {
+        s.step(1);
+        again |= s.mario().fluttering();
+    }
+    assert!(again, "the next jump flutters again after landing");
+}
+
+#[test]
 fn yoshi_tongues_fruit_and_spits_its_juice() {
     let mut s = yoshi_scene(vec![(Vec3::new(0.0, 0.0, 3000.0), libsms::Fruit::Banana)]);
     mount(&mut s, None);

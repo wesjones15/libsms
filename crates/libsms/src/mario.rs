@@ -260,6 +260,10 @@ pub struct Options {
     pub fire_panic_run: bool,
     /// Host fire audio, anti-chain grace and water extinguishing; keeps vanilla's burn hop.
     pub host_fire_reaction: bool,
+    /// A Yoshi skin wearing Mario's moves: the rider's flutter (`TYoshi::thinkHoldOut`) without
+    /// Yoshi being ridden, and his orange juice in FLUDD. A host turns it on for that skin only;
+    /// false: the game's (flutter only on Yoshi, water is water).
+    pub yoshi_skin: bool,
 }
 
 /// Ticks either side of a stomp in which A counts for [`Options::stomp_jump`].
@@ -290,6 +294,7 @@ impl Default for Options {
             knockdown_cancel: false,
             fire_panic_run: false,
             host_fire_reaction: false,
+            yoshi_skin: false,
         }
     }
 }
@@ -447,6 +452,12 @@ pub struct Mario {
     /// Ticks since A was pressed, and a stomp's late-press window ([`Options::stomp_jump`]):
     /// ticks since the bounce and the boosted take-off speed.
     pub(crate) a_age: u32,
+    /// Ticks since the feet last left the ground, for a skin flutter started with a fresh
+    /// press in the air (not the take-off press itself).
+    pub(crate) air_ticks: u32,
+    /// The host's presentation says this tick's Spray leaves a Yoshi skin's mouth: the water
+    /// then carries his full run (`TYoshi`'s juice), not vanilla's 0.125 share.
+    pub juice_mouth: bool,
     pub(crate) stomp_late: Option<(u32, f32)>,
     /// `mHealth`, out of `mHPMax`.
     pub health: i16,
@@ -569,6 +580,8 @@ impl Mario {
             last_pound_drop: 0.0,
             pound_rebound: None,
             a_age: u32::MAX,
+            air_ticks: 0,
+            juice_mouth: false,
             stomp_late: None,
             health,
             invincible: 0,
@@ -883,6 +896,20 @@ impl Mario {
         self.camera_yaw = camera_yaw;
         self.pad = *pad;
         self.prev_pos = self.pos;
+        // A Yoshi skin's flutter is available again after any landing, however he got airborne.
+        if self.options.yoshi_skin
+            && !self.on_yoshi()
+            && self.on_ground()
+            && self.yoshi.flutter == 2
+        {
+            self.yoshi.flutter = 0;
+            self.yoshi.flutter_timer_reset();
+        }
+        self.air_ticks = if self.on_ground() {
+            0
+        } else {
+            self.air_ticks.saturating_add(1)
+        };
 
         self.check_player_action(host, pad);
         if self.limit_air_jump() {
@@ -1471,8 +1498,10 @@ impl Mario {
             let v = (8.0 * self.params.jump.gravity * h).sqrt();
             self.vel.y = self.vel.y.max(v);
         }
-        if self.on_yoshi() {
-            self.vel.y *= self.params.yoshi.jump_yoshi_mult;
+        if self.on_yoshi() || self.options.yoshi_skin {
+            if self.on_yoshi() {
+                self.vel.y *= self.params.yoshi.jump_yoshi_mult;
+            }
             self.yoshi.flutter = 0;
             self.yoshi.flutter_timer_reset();
         }

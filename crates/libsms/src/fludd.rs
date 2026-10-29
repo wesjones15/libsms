@@ -870,7 +870,13 @@ impl Mario {
         } else {
             dir
         };
-        let inherit = Vec3::new(self.vel.x * 0.125, 0.0, self.vel.z * 0.125);
+        let inherit = if self.juice_mouth && kind == NozzleKind::Spray {
+            // The skin's juice keeps Yoshi's full carried motion (`emit_carried` exempts it
+            // from the droplet speed cap); ordinary spray keeps vanilla's eighth.
+            self.vel
+        } else {
+            Vec3::new(self.vel.x * 0.125, 0.0, self.vel.z * 0.125)
+        };
         let (mut size, mut dir_tremble) = (np.size, np.dir_tremble);
 
         let (count, attack, power, reaction);

@@ -924,7 +924,11 @@ pub unsafe extern "C" fn sms_sim_step(
             });
         // `TModelWaterManager`: emitted every tick, moved once a 30 Hz frame.
         for e in &emits {
-            s.water.emit(e);
+            if s.sim.mario.juice_mouth && e.nozzle == libsms::NozzleKind::Spray {
+                s.water.emit_carried(e);
+            } else {
+                s.water.emit(e);
+            }
             s.last_spray = SmsSpray {
                 pos: e.pos.into(),
                 dir: e.dir.into(),
@@ -1356,6 +1360,20 @@ pub unsafe extern "C" fn sms_sim_portrait(
         }
     }
     1
+}
+
+/// Host option: draw and play a Yoshi skin wearing Mario's moves. On, the rider's flutter
+/// (`TYoshi::thinkHoldOut`) works without Yoshi being ridden, a fresh A press starts it
+/// anywhere in the air, and FLUDD's water is drawn in Yoshi's juice colour. Off: the game's.
+///
+/// # Safety
+/// `sim` from [`sms_sim_new`] or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_sim_set_yoshi_skin(sim: *mut SmsSim, on: u8) {
+    // SAFETY: the caller promised a valid pointer.
+    if let Some(s) = unsafe { sim.as_mut() } {
+        s.sim.mario.options.yoshi_skin = on != 0;
+    }
 }
 
 /// Sets host tuning (see [`SmsTuning`]); a new sim has the game's.

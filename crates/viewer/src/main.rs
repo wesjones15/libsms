@@ -1005,6 +1005,12 @@ async fn main() {
         s.mario.anims = anims.clone();
         s.mario.give_fludd();
         s.mario.options.turn_to_aim=!use_yoshi_skin;
+        // `SMS_NOFLUDD=1`: the RoR2 radial's "No FLUDD", for skin captures.
+        if std::env::var_os("SMS_NOFLUDD").is_some() {
+            s.mario.fludd = None;
+        }
+        // The skin's flutter (TYoshi::thinkHoldOut without riding), for the demo and captures.
+        s.mario.options.yoshi_skin=use_yoshi_skin;
         // `SMS_SPRAY_DIVE=1`: the host extension the RoR2 mod uses â€” the Spray nozzle may fire
         // during a B dive and the belly slide (`Options::spray_during_dive`).
         s.mario.options.spray_during_dive = std::env::var_os("SMS_SPRAY_DIVE").is_some();
@@ -1203,6 +1209,13 @@ async fn main() {
         if portrait.as_deref() == Some("fludd") {
             pad.r_analog = 255;
             pad.r = true;
+        }
+        // `SMS_FLUTTER=1` scripts a double jump: take off, release, press A again in the air, so
+        // the Yoshi skin flutters; for captures. Sim ticks, so the timing does not depend on the
+        // render rate.
+        if std::env::var_os("SMS_FLUTTER").is_some() {
+            let t = sim.mario.ticks;
+            pad.a = (60..80).contains(&t) || (95..900).contains(&t);
         }
         // `SMS_B=<frame>` presses B on that frame (for screenshots of the tongue).
         if std::env::var("SMS_B")
@@ -1489,17 +1502,24 @@ async fn main() {
                 if let (Some(skin),Some(ym))=(&yoshi_skin,&mut yoshi_model) {
                     let route=yoshi_skin::SprayRoute::for_mario(m);
                     let active=m.fludd.as_ref().is_some_and(|f|f.spray_amount()>0. && f.water>0 && pad.r_analog>0);
-                    let mut world=skin.pose_spray(&joints,route,active);
+                    let (native,frame)=skin.choose(m,pose_name,pose_phase);
+                    let base=match native {
+                        Some(name)=>skin.pose_native(name,frame),
+                        None=>skin.pose(&joints),
+                    };
+                    let mut world=skin.spray_world(base,route,active);
                     let offset=model.lowest(&joints)-ym.lowest(&world);
                     for joint in &mut world { joint.w_axis.y+=offset; }
                     let mouth=skin.remember_mouth(&world);
                     ym.draw_mario_pose(&world,root,view,proj,get_time() as f32);
-                    if let Some(f)=&mut luigi_fludd {
-                        f.belt_scale=1.5;
-                        let deployed=!route.mouth && m.fludd.as_ref().is_some_and(|f|f.housed<0.5);
-                        let muzzles=f.draw(skin.fludd_look(m,route),deployed,false,dt,
-                            skin.chest(&world),root,view,proj,(true,true));
-                        muzzle_mtx=if route.mouth {vec![mouth]}else{muzzles};
+                    if m.fludd.is_some() {
+                        if let Some(f)=&mut luigi_fludd {
+                            f.belt_scale=1.5;
+                            let deployed=!route.mouth && m.fludd.as_ref().is_some_and(|f|f.housed<0.5);
+                            let muzzles=f.draw(skin.fludd_look(m,route),deployed,false,dt,
+                                skin.chest(&world),root,view,proj,(true,true));
+                            muzzle_mtx=if route.mouth {vec![mouth]}else{muzzles};
+                        }
                     }
                 }
                 if let Some(peach) = peach_model.as_mut().filter(|_| !show_melee_peach) {

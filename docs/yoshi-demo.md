@@ -1,11 +1,17 @@
 # Sunshine Yoshi wearing Mario motion
 
+This is the viewer demo and the visual reference for the **RoR2 Yoshi skin** (unlocked by
+beating the stage 5 teleporter event as Mario). In RoR2, `libsms-present` draws the same body;
+his wait/walk/run and flutter clips play on his own rig, Mario's air clips are retargeted, a
+fresh A press in the air flutters him, and the front Spray leaves his mouth with FLUDD at rest
+(the same routing, carried motion and 1.5x belt fit as below).
+
 Run `target/release/sms-viewer.exe assets --yoshi-mario` from libsms.
-The standalone viewer uses Mario's simulation and `ma_*.bck` motion on Yoshi's
-own 38-joint skeleton and geometry. WASD moves, Space jumps, F dives/grabs,
-Z ground pounds, Shift sprays, 1–4 choose Spray/Hover/Rocket/Turbo, X switches
-nozzles, G refills, arrows orbit the camera, R respawns and Escape quits.
-This is a standalone Rust viewer demo, not a RoR2 deployment.
+The standalone viewer uses Mario's simulation and his own 38-joint skeleton and geometry.
+WASD moves, Space jumps, F dives/grabs, Z ground pounds, Shift sprays, 1–4 choose
+Spray/Hover/Rocket/Turbo, X switches nozzles, G refills, arrows orbit the camera, R respawns
+and Escape quits. `SMS_FLUTTER=1` scripts a double jump that shows the skin's flutter.
+This is a standalone Rust viewer demo; the separate `MarioTest` plugin is the RoR2 host.
 
 Exact asset: `yoshi.szs:yoshi_model.bmd`, identified by
 `sms-main/src/Player/Yoshi.cpp::TYoshi::init`; its normal hand shapes, materials,
@@ -19,6 +25,12 @@ preserving Yoshi's bind translations/scales. Matching limb names map directly;
 the disc's `yoshi_eat.bck` held end pose while spitting. These are host retargeting choices.
 The body anchors its lowest skinned point to Mario's current lowest point.
 No Yoshi riding/body animation replaces Mario's motion in this mode.
+
+**Animation mix (RoR2 and the viewer).** `yoshi_wait`/`yoshi_walk`/`yoshi_run` (and
+`yoshi_pivot` for turns) play on Yoshi's own rig while Mario's clip is a ground clip; every
+air clip (jump, double jump, dive, flip, pound) still retargets Mario's pose onto him. The
+flutter plays `yoshi_hold_jump` at the disc's 0.5-frame rate (0.125 clip frames per 120 Hz
+tick). The clip list is `crates/libsms-present/src/yoshi_skin.rs::ground_clip`.
 
 FLUDD reuses the existing viewer component and water simulation. Its exact assets
 are `mario.szs:watergun2/body/wg_mdl1.bmd` and the `normal_wg`, `hover_wg`,
@@ -63,6 +75,9 @@ Viewer-first evidence: labelled idle, run frames 6/21/36, jump and dive captures
 in `../output/sms-yoshi-demo/`. The `yoshi_skin` test samples seven Mario clips
 at four frames, checking bind-pose identity, every target bone length and finite
 skinned vertices. Original Yoshi riding/egg rendering still uses its own pose path.
+The skin's own animation mix and flutter are captured as `skin-*.png` in the same
+folder (`skin-idle`, `skin-walk`, `skin-run`, `skin-jump`, `skin-flutter`,
+`skin-flutter-nofludd`). `SMS_FLUTTER=1` drives the scripted double jump.
 
 The model and clips remain in the ignored local disc cache. Never commit or
 distribute the extracted data. A local launcher is in `../output/sms-yoshi-demo/`.

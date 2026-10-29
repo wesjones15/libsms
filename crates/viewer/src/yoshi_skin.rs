@@ -3,6 +3,7 @@
 //! in sms-main/src/Player/Yoshi.cpp. Motion: mario.szs:bck/ma_*.bck.
 //! Host adaptation: the neck maps onto Mario's torso/head; tail and mouth inherit
 //! their authored local transforms. This does not use Yoshi's riding animations.
+use std::collections::HashMap;
 use std::path::Path;
 use glam::{Mat4,Quat,Vec3};
 use libsms::{Skeleton,Mario,NozzleKind,WaterEmit,Params};
@@ -15,6 +16,18 @@ const ALIASES: &[(&str,&str)] = &[
     ("chn_head","jnt_head"),
 ];
 
+/// Yoshi's own ground clips, for the skin's idle and movement. Mario's jumps, dives, flips
+/// and pounds stay Mario's (retargeted); the flutter plays `yoshi_hold_jump`.
+const GROUND: &[(&str,&str)] = &[
+    ("wait","yoshi_wait"),
+    ("walk","yoshi_walk"),
+    ("run1","yoshi_run"),
+    ("run2","yoshi_run"),
+    ("turn","yoshi_pivot"),
+    ("pivot","yoshi_pivot"),
+];
+const FLUTTER: &str = "yoshi_hold_jump";
+
 pub struct YoshiSkin {
     rig: Skeleton,
     retarget: Retarget,
@@ -24,6 +37,8 @@ pub struct YoshiSkin {
     head: usize,
     jaw: usize,
     eat: libsms::Clip,
+    /// Yoshi's own clips by file stem (`yoshi_wait`, `yoshi_run`, `yoshi_hold_jump`, ...).
+    clips: HashMap<&'static str, libsms::Clip>,
     mouth_frame: std::cell::Cell<Mat4>,
 }
 
@@ -76,19 +91,51 @@ impl YoshiSkin {
         let eat=libsms::Clip::parse(&std::fs::read(dir.join("yoshi/yoshi_eat.bck")).map_err(|e|e.to_string())?)
             .ok_or("Yoshi eat/jaw animation missing")?;
         let mouth_frame=std::cell::Cell::new(rig.bind_world()[mouth]);
-        eprintln!("Yoshi skin: yoshi.szs:yoshi_model.bmd, 38 joints; TYoshi::init (Player/Yoshi.cpp); Mario's 29-joint clips");
-        Ok(Self{rig,retarget,chest,chest_align,mouth,head,jaw,eat,mouth_frame})
+        // Yoshi's own clips for the skin's idle, movement and flutter.
+        let mut clips=HashMap::new();
+        for name in ["yoshi_wait","yoshi_walk","yoshi_run","yoshi_pivot",FLUTTER] {
+            let data=std::fs::read(dir.join(format!("yoshi/{name}.bck"))).map_err(|e|format!("{name}: {e}"))?;
+            let clip=libsms::Clip::parse(&data).ok_or_else(||format!("invalid {name}.bck"))?;
+            clips.insert(name,clip);
+        }
+        eprintln!("Yoshi skin: yoshi.szs:yoshi_model.bmd, 38 joints; TYoshi::init (Player/Yoshi.cpp); Mario's 29-joint clips for the air");
+        Ok(Self{rig,retarget,chest,chest_align,mouth,head,jaw,eat,clips,mouth_frame})
     }
 
     pub fn pose(&self,source:&[Mat4])->Vec<Mat4> { self.retarget.pose(&self.rig,source) }
 
+    /// One of Yoshi's own clips on his own rig, in his authored units.
+    pub fn pose_native(&self,name:&str,frame:f32)->Vec<Mat4> {
+        let clip=&self.clips[name];
+        self.rig.pose(clip,frame)
+    }
+
+    /// Which clip to draw for this frame: Yoshi's on the ground and in the flutter, Mario's
+    /// in the air (retargeted). `pose_name` and `phase` (0..1 through Mario's clip) may be a
+    /// capture override.
+    pub fn choose(&self,m:&Mario,pose_name:&str,phase:f32)->(Option<&'static str>,f32) {
+        if m.fluttering() {
+            let frames=self.clips[FLUTTER].frames.max(1.0);
+            return (Some(FLUTTER),(m.ticks as f32*0.125).rem_euclid(frames));
+        }
+        if let Some(&(_,name))=GROUND.iter().find(|(mario,_)|*mario==pose_name) {
+            let frames=self.clips[name].frames.max(1.0);
+            return (Some(name),phase.rem_euclid(1.0)*frames);
+        }
+        (None,0.0)
+    }
+
     pub fn chest(&self,world:&[Mat4])->Mat4 { world[self.chest]*self.chest_align }
 
     pub fn pose_spray(&self,source:&[Mat4],route:SprayRoute,active:bool)->Vec<Mat4> {
-        let mut world=self.pose(source);
+        self.spray_world(self.pose(source),route,active)
+    }
+
+    /// The mouth opening and head aim on an already-posed body (Yoshi's own clip or Mario's).
+    pub fn spray_world(&self,mut world:Vec<Mat4>,route:SprayRoute,active:bool)->Vec<Mat4> {
         if route.mouth && active {
-            // TYoshi::thinkUpper uses yoshi_eat over the mouth region. Keep the Mario
-            // torso/arms while opening only the authored jaw at its held final pose.
+            // TYoshi::thinkUpper uses yoshi_eat over the mouth region. Keep the body while
+            // opening only the authored jaw at its held final pose.
             if let Some(local)=self.eat.sample(self.jaw,self.eat.frames) {
                 world[self.jaw]=world[self.rig.parents[self.jaw].unwrap()]*local.matrix();
             }

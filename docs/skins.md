@@ -11,6 +11,7 @@ out when he arrived. A new skin should be a row, not a new code path.
 | `Mario` | `ma_mdl1.bmd` + cap + hands | the clip's joints | Mario |
 | `SameRig(file)` | a J3D model with **Mario's exact joint parents** | Mario's joint matrices as they are, no retarget, no anchor; the model carries its own cap and hands | Piantissimo (`npc/monteman/monteman_model.bmd`); Shadow Mario (`enemy/kagemario/default.bmd`) is the same shape, unverified |
 | `Hsd` | an HSD model from the Melee cache | retarget from Mario's 29 joints, feet anchor, hang offset, FLUDD lean | Luigi |
+| `Yoshi` | `yoshi.szs:yoshi_model.bmd`, a **different** 38-joint rig | his own wait/walk/run and flutter clips on his rig; Mario's air clips through `Retarget`; feet anchor; FLUDD on `jnt_neck_1` | Yoshi |
 | (not a skin yet) | a J3D model on a **different** rig | `libsms_assets::retarget::Retarget` with an alias table; see `crates/viewer/src/{peach,pianta}.rs` | Sunshine Peach, Pianta |
 
 How to tell: compare joint parent lists (`libsms::Skeleton::from_bmd`). Equal parents means
@@ -46,6 +47,30 @@ normal model.
 - `sms_view_set_voice_pitch(view, ratio)`: pitch (Luigi 1.14; Piantissimo and Mario 1).
 - `sms_view_voice_set(view, set)`: 0 Mario's voice, 1 Piantissimo's, 2 Piantissimo strict.
   `sms_view_skin` already picks 0 or 1 from the skin (`Skin::voice_set`).
+
+## Yoshi
+
+Yoshi is the first skin whose body plays **its own clips**. `libsms-present::yoshi_skin` loads
+`yoshi.szs:yoshi_model.bmd` (38 joints, `Player/Yoshi.cpp::TYoshi::init`) and keeps his wait,
+walk, run and `yoshi_hold_jump` clips on his own rig. Mario's jump, dive, flip and pound clips
+go through `Retarget` (aliases `chn_neck`, `jnt_neck_1/2`, `chn_head`), and his lowest skinned
+point is anchored to Mario's. FLUDD rides `jnt_neck_1` in Mario's authored centred chest frame
+(`WaterGun.cpp::init`), without Luigi's side lean.
+
+The flutter is a host option, `Options::yoshi_skin` (`sms_sim_set_yoshi_skin`): `TYoshi`'s
+`thinkHoldOut` runs without Yoshi being ridden, a fresh A press starts it after two ticks in the
+air, it holds A for up to `FLUTTER_TIME`, and it plays `MSD_SE_YV_FUNBARI` at the start. The
+same option draws FLUDD's water in Yoshi's juice colour (`Mario::juice_color` returns 1).
+Landing re-arms it; each jump also resets it. A front Spray within the mouth's clearance
+envelope leaves `null_tongue` (jaw at the held `yoshi_eat` end pose, head turned to the aim,
+`NozzleYoshiMouth.prm`) while FLUDD plays its house clip, and FLUDD's belt shape is widened
+1.5x for his hips. Both are ported from the viewer; the water also carries his full run
+(`Mario::juice_mouth`, `WaterManager::emit_carried`) instead of vanilla's 0.125 share.
+`yoshi_skin_draws_his_body_and_routes_a_front_spray_to_his_mouth` covers the body and mouth
+emitter.
+
+Not ported from the viewer yet: Yoshi's own voice (the skin speaks with Mario's). Not
+played in game.
 
 ## What a skin gets for free vs what Luigi needed
 

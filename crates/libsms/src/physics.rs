@@ -327,7 +327,7 @@ impl Mario {
         } else {
             self.vel.y -= j.gravity;
         }
-        if self.on_yoshi() {
+        if self.on_yoshi() || self.options.yoshi_skin {
             self.think_hold_out();
         }
         if self.vel.y < -75.0 {

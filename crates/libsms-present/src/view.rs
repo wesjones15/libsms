@@ -67,6 +67,10 @@ pub use entrance::{Entrance, entrance_fall, entrance_pose, entrance_fast_pose, E
 mod luigi_skin;
 pub use luigi_skin::{HsdBatch, Luigi, LUIGI_HANG_OFFSET, LUIGI_ROD_SHAPE};
 
+#[path = "yoshi_skin.rs"]
+mod yoshi_skin;
+pub use yoshi_skin::Yoshi;
+
 /// Model indices.
 pub mod models {
     pub const BODY: u32 = 0;
@@ -328,6 +332,10 @@ pub enum Skin {
     /// Piantissimo's `monteman_model.bmd`: Mario's 29 joints in Mario's order, so Mario's own
     /// pose drives it as it does in the game (`TEnemyMario`, enemyMario.cpp), with Mario's FLUDD.
     Piantissimo,
+    /// Sunshine Yoshi (`yoshi.szs:yoshi_model.bmd`, 38 joints, `TYoshi::init`): his own
+    /// wait/walk/run and flutter clips on his own rig, Mario's air clips retargeted onto it,
+    /// with FLUDD. The skin's flutter is [`libsms::Options::yoshi_skin`].
+    Yoshi,
 }
 
 pub use libsms_audio::VoiceSet;
@@ -343,11 +351,13 @@ pub enum SkinBody {
     SameRig(&'static str),
     /// A model from the Melee cache posed through the retarget ([`Luigi`]).
     Hsd,
+    /// Yoshi's J3D body on his own 38-joint rig: his own clips plus Mario's retargeted.
+    Yoshi,
 }
 
 impl Skin {
     /// Every skin, in ABI order.
-    pub const ALL: [Skin; 3] = [Skin::Mario, Skin::Luigi, Skin::Piantissimo];
+    pub const ALL: [Skin; 4] = [Skin::Mario, Skin::Luigi, Skin::Piantissimo, Skin::Yoshi];
 
     pub const fn id(self) -> u32 {
         self as u32
@@ -373,6 +383,7 @@ impl Skin {
             Skin::Luigi => SkinBody::Hsd,
             // `OPTIONAL_EXTRACTS`: mamma4.szs:map/map/pad/monteman_model.bmd.
             Skin::Piantissimo => SkinBody::SameRig("npc/monteman/monteman_model.bmd"),
+            Skin::Yoshi => SkinBody::Yoshi,
         }
     }
 }
@@ -452,6 +463,8 @@ pub struct View {
     pub texture_ids: Vec<i32>,
     /// Luigi's HSD mesh, when the Melee cache was loaded ([`Self::set_luigi`]).
     pub luigi: Option<Luigi>,
+    /// Yoshi's body and clips, when the skin was loaded ([`Self::load_skin`]).
+    pub yoshi: Option<Yoshi>,
     /// Same-rig skin bodies loaded into [`Self::models`] ([`Self::load_skin`]): skin, model.
     rig_bodies: Vec<(Skin, u32)>,
     /// The Sunshine assets folder, kept for loading Luigi's rig and clips later.
@@ -1145,6 +1158,7 @@ impl View {
             colors: Vec::new(),
             texture_ids: Vec::new(),
             luigi: None,
+            yoshi: None,
             rig_bodies: Vec::new(),
             assets_dir: dir.to_path_buf(),
         })
@@ -1228,6 +1242,7 @@ impl View {
             colors,
             texture_ids,
             luigi: None,
+            yoshi: None,
             rig_bodies: Vec::new(),
             assets_dir: PathBuf::new(),
         })
@@ -1320,6 +1335,7 @@ impl View {
             colors: Vec::new(),
             texture_ids: Vec::new(),
             luigi: None,
+            yoshi: None,
             rig_bodies: Vec::new(),
             assets_dir: PathBuf::new(),
         };
@@ -1482,6 +1498,20 @@ impl View {
         match skin.body() {
             SkinBody::Mario => true,
             SkinBody::Hsd => melee_dir.is_some_and(|d| self.set_luigi(d)),
+            SkinBody::Yoshi => {
+                if self.yoshi.is_some() {
+                    return true;
+                }
+                let index = self.models.len() as u32;
+                match Yoshi::load(&self.assets_dir, &self.skeleton, &mut self.textures, index) {
+                    Ok((yoshi, model)) => {
+                        self.models.push(model);
+                        self.yoshi = Some(yoshi);
+                        true
+                    }
+                    Err(_) => false,
+                }
+            }
             SkinBody::SameRig(rel) => {
                 if self.rig_bodies.iter().any(|(s, _)| *s == skin) {
                     return true;
@@ -1589,7 +1619,12 @@ impl View {
         let upper = m
             .upper_layer()
             .and_then(|(c, f)| Some((self.clips.get(c)?, f, self.skeleton.find("jnt_chest")?)));
-        let look = m.fludd_look();
+        let route = (self.skin == Skin::Yoshi).then(|| yoshi_skin::SprayRoute::for_mario(m));
+        let yoshi_spraying = m
+            .fludd
+            .as_ref()
+            .is_some_and(|f| f.spray_amount() > 0.0 && f.water > 0);
+        let mut look = m.fludd_look();
         // `MarioHeadCtrl`: the head turns what hangs on it (the cap). Rocketing, with water to spray, it tips
         // back by `mHoverHeadAngle`; otherwise it follows a FLUDD aimed upward, by half the gun's angle.
         // (The game's other head turns, toward a sign or a wall or deep water, aren't here.)
@@ -1613,6 +1648,53 @@ impl View {
             Some(p) if p.len() == joints.len() => p.clone(),
             _ => joints,
         };
+
+        // Yoshi's own rig: his wait/walk/run and flutter clips on his skeleton, Mario's air
+        // clips through the retarget, anchored feet to feet.
+        let mut yoshi_world: Option<Vec<Mat4>> = None;
+        let mut yoshi_chest: Option<Mat4> = None;
+        let mut yoshi_mouth: Option<Mat4> = None;
+        if self.skin == Skin::Yoshi
+            && let Some(y) = self.yoshi.as_mut()
+        {
+            let picked = yoshi_skin::clip_for(m, back, y, &self.clips);
+            if let Some((clip, frame, native)) = picked {
+                let world = if native {
+                    y.pose_native(clip, frame)
+                } else {
+                    Some(y.pose_retarget(&joints))
+                };
+                if let Some(mut world) = world {
+                    let mario_low = body_lowest(&self.models[models::BODY as usize], &joints);
+                    let anchor =
+                        mario_low - yoshi_skin::lowest(&self.models[y.model as usize], &world);
+                    for mtx in &mut world {
+                        mtx.w_axis.y += anchor;
+                    }
+                    // Mouth juice: open the jaw and turn the head inside the clearance envelope.
+                    if let Some(route) = route {
+                        world = y.spray_world(world, route, yoshi_spraying);
+                    }
+                    if route.is_some_and(|r| r.mouth && yoshi_spraying) {
+                        yoshi_mouth = Some(y.mouth(&world));
+                    }
+                    yoshi_chest = look.and(Some(y.chest(&world)));
+                    yoshi_world = Some(world);
+                }
+            }
+        }
+        // While the juice leaves Yoshi's mouth, FLUDD is at rest (its house clip and nozzle).
+        // The head aim above already used the fitted Spray's route.
+        let mouth_route = route.is_some_and(|r| r.mouth && yoshi_spraying);
+        if let (true, Some(l)) = (mouth_route, look.as_mut()) {
+            l.body_clip = libsms::fludd_anim::body_clip::HOUSE;
+            l.body_frame = m.anims.get(l.body_clip).frames;
+            l.nozzle_clip = Some("normal_wg_house");
+            l.nozzle_frame = m.anims.get("normal_wg_house").frames;
+            l.gun_angle = 0.0;
+            l.aimed = false;
+            l.aim_turn = 0;
+        }
 
         // Blink every few seconds (the game runs `ma_wink_tx` on idle; 30 frames a second).
         if self.time > self.blink_at + 2.0 {
@@ -1693,11 +1775,18 @@ impl View {
             luigi_chest = Some(luigi.chest(&world));
             luigi_world = Some(world);
         }
-        // Mario's chest, or Luigi's `WaistN`-aligned chest, carrying FLUDD.
-        let chest_frame = luigi_chest.or_else(|| look.and(self.chest).and_then(|c| joints.get(c)).copied());
+        // Mario's chest, Luigi's `WaistN`-aligned chest, or Yoshi's `jnt_neck_1`, carrying FLUDD.
+        let chest_frame = yoshi_chest
+            .or(luigi_chest)
+            .or_else(|| look.and(self.chest).and_then(|c| joints.get(c)).copied());
         let fludd_base = chest_frame.map(|chest| {
-            let lean = chest.x_axis.truncate().normalize_or_zero().y.abs();
-            chest * Mat4::from_rotation_z(deg(lean * 6144.0 - 6144.0))
+            if self.skin == Skin::Yoshi {
+                // The pack follows Yoshi's authored centred neck; the chest lean is Mario's.
+                chest
+            } else {
+                let lean = chest.x_axis.truncate().normalize_or_zero().y.abs();
+                chest * Mat4::from_rotation_z(deg(lean * 6144.0 - 6144.0))
+            }
         });
         let fludd = &self.models[models::FLUDD as usize].bmd;
         let mut fludd_joints = fludd.pose(
@@ -1721,6 +1810,19 @@ impl View {
                 fludd_hidden.push(LUIGI_ROD_SHAPE);
             }
         }
+        // Yoshi's hips are wider than Mario's: only the belt (`_mat_froater`, shape 1, rigid on
+        // `G_center`) is widened in its ring plane, as the viewer does. Tank and straps stay.
+        let belt_xform = if self.skin == Skin::Yoshi {
+            fludd_base.and_then(|base| {
+                fludd_joints.get(1).map(|joint| {
+                    let belt = base * *joint;
+                    belt * Mat4::from_scale(Vec3::new(1.0, 1.5, 1.5)) * belt.inverse()
+                })
+            })
+        } else {
+            None
+        };
+        let belt_normal = belt_xform.map(|m| m.inverse().transpose());
         let slot = look.map(|l| match l.nozzle {
             NozzleKind::Spray => 0,
             NozzleKind::Hover | NozzleKind::Underwater => 1,
@@ -1788,6 +1890,14 @@ impl View {
                 .iter()
                 .map(|m| (m.w_axis.truncate(), m.x_axis.truncate()))
                 .collect();
+        }
+        // The juice leaves Yoshi's `null_tongue` instead of FLUDD's nozzle while the mouth
+        // route is active; the fitted Spray still supplies the drop parameters.
+        if mouth_route
+            && let (Some(mouth), Some(route)) = (yoshi_mouth, route)
+        {
+            muzzle_mtx = vec![mouth];
+            muzzles = vec![(mouth.w_axis.truncate(), route.direction())];
         }
 
         // The Turbo corkscrew dive: the spin jump's motion tipped head first and spun about his own length,
@@ -1932,15 +2042,16 @@ impl View {
             Some((models::WATERBOOST, at, js))
         });
 
-        // Mario's own parts: body, cap and hands. Luigi's body is the HSD mesh drawn below; his
-        // FLUDD and nozzle are the same models, on his chest.
+        // Mario's own parts: body, cap and hands. Luigi's body is the HSD mesh drawn below;
+        // Yoshi's is his own rig. Their FLUDD and nozzle are the same models, on their chests.
         let luigi_body = self.skin == Skin::Luigi;
+        let yoshi_body = self.skin == Skin::Yoshi && yoshi_world.is_some();
         let rig_body = self.rig_body();
         let mut parts: Vec<(u32, Mat4, &[Mat4])> = Vec::new();
         if let Some((model, _)) = rig_body {
             // A same-rig skin: its model on Mario's joints, cap and hands included.
             parts.push((model, Mat4::IDENTITY, &joints));
-        } else if !luigi_body {
+        } else if !luigi_body && !yoshi_body {
             parts.push((models::BODY, Mat4::IDENTITY, &joints));
             if let Some(h) = self.head.and_then(|h| joints.get(h)) {
                 let cap = if return_landing && m.anim.frame < 157. { self.return_parts.map_or(models::CAP, |p| p[0]) } else { models::CAP };
@@ -1963,6 +2074,9 @@ impl View {
                     }
                 }
             }
+        }
+        if let (Some(world), Some(y)) = (&yoshi_world, self.yoshi.as_ref()) {
+            parts.push((y.model, Mat4::IDENTITY, world));
         }
         if let Some(base) = fludd_base {
             parts.push((models::FLUDD, base, &fludd_joints));
@@ -1998,7 +2112,13 @@ impl View {
                         self.uvs.push([v.uv[0].x, v.uv[0].y]);
                         continue;
                     }
-                    let (p, n) = pose.skin(v);
+                    let (mut p, mut n) = pose.skin(v);
+                    if model == models::FLUDD && b.shape == 1
+                        && let (Some(m), Some(nm)) = (belt_xform, belt_normal)
+                    {
+                        p = m.transform_point3(p);
+                        n = nm.transform_vector3(n);
+                    }
                     let n = n.normalize_or_zero();
                     // A hidden shape collapses to a point.
                     self.positions.push(p);
@@ -2078,6 +2198,7 @@ impl View {
             let kind = f.nozzle;
             sim.mario.set_emitters(kind, &muzzles);
         }
+        sim.mario.juice_mouth = mouth_route;
     }
 }
 
@@ -2099,6 +2220,31 @@ mod tests {
             let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../libssbm/assets");
             p.is_dir().then_some(p)
         })
+    }
+
+    #[test]
+    fn yoshi_skin_loads_his_rig_and_poses_his_own_ground_clips() {
+        let Some(dir) = libsms::assets::find(None) else {
+            eprintln!("SKIP: Sunshine assets absent");
+            return;
+        };
+        let mut v = View::load(&dir).unwrap();
+        assert!(v.load_skin(Skin::Yoshi, None), "Yoshi's body should load from the Sunshine assets");
+        assert!(v.load_skin(Skin::Yoshi, None), "loading a skin twice must stay true");
+        let y = v.yoshi.as_mut().unwrap();
+        assert_eq!(v.models.len(), models::COUNT as usize + 1, "one body added to the table");
+        let wait = y.pose_native("yoshi_wait", 0.0).expect("yoshi_wait");
+        assert_eq!(wait.len(), 38, "Yoshi's 38 joints");
+        assert!(wait.iter().all(|m| m.is_finite()));
+        let run = y.pose_native("yoshi_run", 6.0).expect("yoshi_run");
+        assert_eq!(run.len(), 38);
+        // The retarget still carries Mario's air clips onto Yoshi.
+        let mario = v.skeleton.bind_world();
+        let jump = y.pose_retarget(&mario);
+        assert_eq!(jump.len(), 38);
+        let low = yoshi_skin::lowest(&v.models[y.model as usize], &jump);
+        assert!(low.is_finite(), "a finite lowest point");
+        assert!(y.chest(&jump).is_finite());
     }
 
     #[test]
@@ -2346,6 +2492,38 @@ mod tests {
         // The texture cache key must not collide with Mario's body (each is its own bake).
         let total: usize = v.draws.iter().map(|d| v.models[d.model as usize].vertex_count).sum();
         assert_eq!(v.positions.len(), total);
+    }
+
+    #[test]
+    fn yoshi_skin_draws_his_body_and_routes_a_front_spray_to_his_mouth() {
+        let Some(mut v) = view() else {
+            eprintln!("skipping: no assets/");
+            return;
+        };
+        if !v.load_skin(Skin::Yoshi, None) {
+            eprintln!("SKIP: Yoshi's model absent");
+            return;
+        }
+        v.set_skin(Skin::Yoshi);
+        let yoshi_model = v.yoshi.as_ref().unwrap().model;
+        let a = libsms::Assets::discover(None).unwrap();
+        let mut sim = Sim::new(a.params, a.anim_table, Vec3::ZERO, 0);
+        sim.mario.give_fludd();
+        sim.mario.options.yoshi_skin = true;
+        let mut host = libsms::FlatHost::default();
+        let pad = libsms::Pad { r_analog: 255, ..Default::default() };
+        for _ in 0..30 {
+            sim.advance(&mut host, &pad, i16::MIN, 1.0 / 60.0);
+            v.update(&mut sim, 1.0 / 60.0);
+        }
+        let drawn: Vec<u32> = v.draws.iter().map(|d| d.model).collect();
+        assert!(drawn.contains(&yoshi_model), "{drawn:?}");
+        assert!(!drawn.contains(&models::BODY), "Mario's body must not draw under Yoshi: {drawn:?}");
+        assert!(drawn.contains(&models::FLUDD), "FLUDD stays on Yoshi's back: {drawn:?}");
+        assert!(v.positions.iter().all(|p| p.is_finite()));
+        // The front Spray leaves the mouth (well above the belt), not FLUDD's nozzle.
+        let (pos, _) = sim.mario.fludd.as_ref().unwrap().emitter(0).expect("the mouth emitter");
+        assert!(pos.y > 80.0, "emitter at {pos:?} is not the mouth");
     }
 
     #[test]

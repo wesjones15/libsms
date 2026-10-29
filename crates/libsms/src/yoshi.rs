@@ -310,9 +310,15 @@ impl Mario {
     }
 
     /// The juice colour FLUDD's water is drawn with (`TModelWaterManager::unk5D5F`):
-    /// Yoshi's while riding him, else plain water.
+    /// Yoshi's while riding him, orange for a Yoshi skin, else plain water.
     pub fn juice_color(&self) -> u8 {
-        if self.on_yoshi() { self.yoshi.color } else { 0 }
+        if self.on_yoshi() {
+            self.yoshi.color
+        } else if self.options.yoshi_skin {
+            1
+        } else {
+            0
+        }
     }
 
     /// The host's posed `null_tongue` joint, in Yoshi's model space (position, X axis).
@@ -640,16 +646,25 @@ impl Mario {
     }
 
     /// `thinkHoldOut`: the flutter. Holding A while falling faster than 5 pushes up by
-    /// `FLUTTER_ACCEL` a tick for up to `FLUTTER_TIME` ticks, once per jump.
+    /// `FLUTTER_ACCEL` a tick for up to `FLUTTER_TIME` ticks, once per jump. A Yoshi skin
+    /// (`Options::yoshi_skin`) may also start it with a fresh A press anywhere in the air.
     pub(crate) fn think_hold_out(&mut self) {
+        let skin = self.options.yoshi_skin && !self.on_yoshi();
         match self.yoshi.flutter {
             0 => {
-                if self.vel.y < FLUTTER_START_VY && self.pad.a {
+                let early = skin && self.input.jump && self.air_ticks > 2;
+                if self.pad.a && (self.vel.y < FLUTTER_START_VY || early) {
                     self.yoshi.flutter = 1;
+                    // The skin's own cue starts with the flutter; riding keeps the game's,
+                    // played where the fall is arrested (below).
+                    if skin {
+                        let p = self.pos;
+                        self.yoshi_sound("MSD_SE_YV_FUNBARI", p);
+                    }
                 }
             }
             1 => {
-                if self.vel.y < 0.0 && 0.0 <= FLUTTER_ACCEL + self.vel.y {
+                if self.on_yoshi() && self.vel.y < 0.0 && 0.0 <= FLUTTER_ACCEL + self.vel.y {
                     let p = self.yoshi.pos;
                     self.yoshi_sound("MSD_SE_YV_FUNBARI", p);
                 }
@@ -667,9 +682,9 @@ impl Mario {
         }
     }
 
-    /// Whether Yoshi is fluttering (`mFlutterState == 1`).
-    pub(crate) fn fluttering(&self) -> bool {
-        self.on_yoshi() && self.yoshi.flutter == 1
+    /// Whether Yoshi is fluttering (`mFlutterState == 1`), ridden or worn as a skin.
+    pub fn fluttering(&self) -> bool {
+        (self.on_yoshi() || self.options.yoshi_skin) && self.yoshi.flutter == 1
     }
 
     /// `emitTongue`: shoot, then run it up to 10 steps at once until it is `TONGUE_THROW` out.
