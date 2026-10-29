@@ -127,7 +127,7 @@ AST decoder and the faint `OTAKARA_SCROLL` sound have only been judged by their 
 
 ## Ship Repair integration (shared repair and the race)
 
-Wired 2026-10-28, built and staged, **never played**: nothing here has run in RoR2, alone or with two players. Treasures are
+Wired 2026-10-28 (models, sounds and sparkles the same day), built and staged, **never played**: nothing here has run in RoR2, alone or with two players. Treasures are
 bonus objectives in both modes (the race is the plugin's default, `CompetitiveMode = true`).
 
 - **Core** (`libpikmin/crates/libpikmin/src/carry.rs`): a treasure is a ship-part pellet whose `ship_part` is
@@ -162,6 +162,33 @@ bonus objectives in both modes (the race is the plugin's default, `CompetitiveMo
   stage's treasures (index and pellet), so clients show the same labels and scores; the packet checks reject a point total
   above 99 per treasure and a duplicate treasure. A treasure that falls through the map goes back to its last safe ground.
 
+## Looking and sounding like Pikmin 2 treasures (libpikmin-present)
+
+`libpikmin-present/src/treasure.rs`, `View::load_treasures`, `pik_view_load_treasures` (no struct change, ABI stays 51).
+
+- **Models:** `load_treasures(<cache>/p2)` appends 188 models to the view's table, in `otakara_config.txt` order (13 MB of bakes,
+  127 000 vertices, about half a second). A treasure pellet (ship part id 1000+index) is drawn with its own model at the model's
+  own scale (Pikmin 2 units are Pikmin 1's), its lowest point on the pellet's ground, turned with the pellet, shrinking as the
+  ship sucks it in, and on its `carry.bck` wobble (looped between the `animmgr.txt` frames) while carried or sucked in. It uses
+  the Hocotate Ship's CPU-skinned `push_body` path. Without the cache it stays a plain pellet.
+- **Sounds** (Pikmin 2 output, the one Louie's voice uses; started on the first cue): the moments are found by
+  `treasure::moments` from the pellet's state between frames: it appears (`PSSE_EV_TREASURE_JUMP_OUT`, 0x3833), is lifted
+  (`PSSE_PK_VC_LIFT_SUCCESS` 0x282D, then `_MOVE` 0x282E, repeated every 2.5 s while carried), is dropped (landing on soil,
+  0x3808 + size by footprint 10 and 30; the water landings 0x380B-D are not triggered, the view does not know the water), is
+  sucked in (`PSSE_EV_HOME_PELLET_BACUUM` 0x3804) and is taken (`_FINISH` 0x3805). These ids are the ones verified audible
+  in `pikmin2_treasure_sounds.rs`. The jingles (`PSSTR_TREASURE_GET` and friends) are not played.
+- **Effects** (stand-ins, no JPA2 emitter): like Louie's navi light, a glow from the resource's own texture and colours,
+  additive. A treasure on the map gets three twinkles circling it (`PID_PelKira_3`, 0x144); a treasure appearing gets an
+  expanding dust glow (`PID_OtakaraApL_1`, 0x127); one taken in gets a pale flash (`PID_UfoPodGeku_2`, 0x1C5); each burst lasts
+  0.8 s. The real effects are particle emitters with many particles, keys and fields, so these are only a hint of them.
+- **Host** (`ShipRepairSession.LoadTreasuresInto`, called by `PikminModels.Create` when Ship Repair is on): loads the models
+  into a new view before its meshes are built, when the treasure cache is complete.
+
+Tests: `treasure::tests` (the moments in order, the landing sizes, all 188 into the table with consistent model and texture
+offsets, the three effects' quads), `tests/treasure_view.rs` (a treasure pellet in a real view: drawn with model
+`first + 5`, resting on its ground, one appearing cue, quiet while still, sparkle quads), and the FFI test
+`treasure_models_join_the_view_table_through_the_abi`.
+
 ## Verified and not verified (Ship Repair)
 
 Verified headless: the core delivery (both modes), the FFI spawn and extraction exports, the pick rule, the worth bounds,
@@ -169,12 +196,14 @@ the race tally and score, and the packet round trips and rejections (`tests/Ship
 its own because the file's earlier roster assertions currently fail on the Pikmin 2 enemy kinds another session added:
 `TekiRoster` now has 30 kinds), and `build.ps1` builds and stages.
 
-Never done or seen: any run in RoR2; two players or the race with treasures; how the results columns, labels and HUD
-text sit on screen (the layout is arithmetic, not looked at); whether the sites are carryable on real stages; the
-extraction from the disc inside the plugin on first run (the same function was run from the command line).
+Never done or seen: any run in RoR2; two players or the race with treasures; how the results columns, labels and HUD text
+sit on screen (the layout is arithmetic, not looked at); how the treasure models look in the game's lighting (they are baked
+the way Louie's are, at full diffuse light) and whether their size reads right beside Pikmin 1's Pikmin; how the sparkles and
+bursts look (they are stand-ins from base shapes alone); whether the sounds are mixed at a good level and place next to
+Pikmin 1's own pellet sounds (Pikmin 1's own lift sounds very likely play as well; not checked); whether the sites are carryable on real
+stages; the first-run extraction inside the plugin (the same function was run from the command line); the host building 188 more
+meshes at view creation (the load time and memory were not measured in the game).
 
-Not done: the **models** (treasures show as the generic white pellet of their size; drawing them needs the baked J3D
-models in the pellet draw path of `libpikmin-present`, which another session is changing), the JPA2 effects (appear dust,
-water splash, delivery sparkles), the pickup/deliver sound effects and jingles in the plugin (the audio is verified in Rust
-only), carry motion, Pokos as a currency, and tuning for the very heavy treasures (101 and 128 carriers can now lie in a
+Not done: the water landing sounds, the treasure jingles, the real JPA2 emitters (no engine), refracting `Indirect::Yes`
+materials, the drop shadow, Pokos as a currency, and tuning for the very heavy treasures (101 and 128 carriers can now lie in a
 stage).
