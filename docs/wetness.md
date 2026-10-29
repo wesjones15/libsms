@@ -41,6 +41,11 @@ five seconds of escape grace, extinguishing on actual body water contact, and
 applying the vanilla runoff timer to FLUDD contact too. The decomp's runoff timer
 itself does not implement burn immunity. RoR2 damage continues normally.
 
+While Mario is wet, that same runoff timer also qualifies him for a wet slide on
+dry ground. It uses the existing slide rules: wetness renews the slide's duration,
+then its configured timer runs down once both Mario and the ground are dry.
+This is a host adaptation; it does not mark the underlying ground wet.
+
 Checks cover the owned-disc launch force, hop apex and rebound count, absence of
 `FireDash`, runoff cadence/expiry, disc emit parameters, exclusion of Spray tuning
 and runoff feedback, and droplets reaching the native water renderer. In-game

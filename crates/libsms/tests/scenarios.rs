@@ -2984,6 +2984,30 @@ fn a_pound_reports_its_start() {
 }
 
 #[test]
+fn a_wet_mario_can_start_a_wet_slide_on_dry_ground_until_he_dries() {
+    for (soaked, dry_first) in [(false, false), (true, false), (true, true)] {
+        // A genuinely dry floor: no stage water, WET flag, or FLUDD ground patches.
+        let mut s = Scene::flat();
+        s.sim.mario.limits.wet_slide = Some(libsms::WetSlide::timed(60, true));
+        s.run_forward();
+        s.step(120);
+        if soaked {
+            s.sim.mario.wet();
+            if dry_first { s.step(120); }
+        }
+        s.press_a();
+        s.step(10);
+        s.pad.b = true;
+        s.step(1);
+        s.pad.b = false;
+        assert!(s.until(600, |m| m.status == Status::Catch));
+        s.step(1);
+        assert_eq!(s.mario().wet_sliding(), soaked && !dry_first,
+            "dry-ground slide: soaked={soaked}, dried before takeoff={dry_first}");
+    }
+}
+
+#[test]
 fn a_launch_throws_mario_and_he_lands() {
     let mut s = Scene::flat();
     s.sim.mario.face_yaw = 0;

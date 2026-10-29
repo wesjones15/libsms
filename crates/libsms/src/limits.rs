@@ -37,7 +37,7 @@ pub struct WetSlide {
 }
 
 impl WetSlide {
-    /// Duration-limited wet slides: wet ground is required and every slide uses the cap,
+    /// Duration-limited wet slides: wet ground or a wet Mario is required; every slide uses the cap,
     /// including slides in shallow water. Hosts refresh this each step; no cooldown needed.
     pub fn timed(max_ticks: u32, glide: bool) -> Self {
         Self {
@@ -378,21 +378,23 @@ impl Mario {
     /// `catching`'s wet slide with [`Limits::wet_slide`]: whether the belly slide glides
     /// this tick. The game's rule is any slide over FLUDD's water.
     pub(crate) fn limit_wet_slide(&mut self) -> bool {
+        // Host adaptation: Mario's runoff timer can wet a slide over otherwise dry terrain.
+        let wet = self.wet_ground || self.is_wet();
         // Out of a corkscrew dive it is always a wet slide, with no charge spent.
         if self.wet_dive {
             return true;
         }
         let Some(mut w) = self.limits.wet_slide else {
-            return self.wet_ground || self.status_state == 1;
+            return wet || self.status_state == 1;
         };
         if !self.lim.wet_decided {
-            if w.water_free && self.wet_ground {
+            if w.water_free && wet {
                 // The game's: over FLUDD's water it glides, and stays wet to the end.
                 self.lim.wet_decided = true;
                 self.lim.wet_charged = false;
                 return true;
             }
-            if w.ready && (w.anywhere || self.wet_ground) {
+            if w.ready && (w.anywhere || wet) {
                 self.lim.wet_decided = true;
                 self.lim.wet_charged = true;
                 self.lim.wet_left = w.max_ticks;
@@ -414,9 +416,8 @@ impl Mario {
         if w.max_ticks == 0 {
             return true;
         }
-        // Over wet ground or water the count starts again; off it, it runs down, and the slide ends
-        // `max_ticks` after its last wet contact.
-        if self.wet_ground {
+        // Wet terrain or a wet Mario renew the timer; after both dry, the existing cap runs down.
+        if wet {
             self.lim.wet_left = w.max_ticks;
             return true;
         }
