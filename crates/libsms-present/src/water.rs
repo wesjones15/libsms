@@ -187,7 +187,7 @@ impl WaterLook {
                         came = 0.0;
                     }
                     // Nor behind the nozzle as it is drawn now.
-                    if let Some(n) = self.nozzle {
+                    if let Some(n) = self.nozzle.filter(|_| !p.body_drip) {
                         came = came.min((c - n).dot(heading).max(0.0));
                     }
                     let at = |x: f32, y: f32| c + right * x + up * y;

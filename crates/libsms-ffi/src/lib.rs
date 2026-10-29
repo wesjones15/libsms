@@ -828,8 +828,8 @@ pub unsafe extern "C" fn sms_sim_new(
         // RoR2 permits the primary Spray while B-diving or belly sliding.
         sim.mario.options.spray_during_dive = true;
         sim.mario.options.redive_after_slide = true;
-        // A burning Mario runs about in a panic (the decomp's FIRE_DASH) rather than lying down.
-        sim.mario.options.fire_panic_run = true;
+        // The decomp's burn hop and recovery, with host audio/escape grace only.
+        sim.mario.options.host_fire_reaction = true;
         Some(sim)
     });
     match made {
@@ -898,12 +898,17 @@ pub unsafe extern "C" fn sms_sim_step(
         s.sim.mario.water_underfoot = s.foreign_wet || s.water.on_ground_near(s.sim.mario.pos);
         wet_from_own_spray(s);
         let mut emits: Vec<WaterEmit> = Vec::new();
+        let mut drips = Vec::new();
         let n = s
             .sim
             .advance_observed(&mut h, &pad, camera_yaw, dt, |mario, h| {
                 let events = std::mem::take(&mut h.1);
                 emits.extend(events.iter().filter_map(|e| match e {
                     Event::WaterEmit(w) => Some(*w),
+                    _ => None,
+                }));
+                drips.extend(events.iter().filter_map(|e| match e {
+                    Event::BodyDrip { pos, velocity } => Some((*pos, *velocity)),
                     _ => None,
                 }));
                 // SAFETY: the caller promised `view` is null or live.
@@ -930,6 +935,7 @@ pub unsafe extern "C" fn sms_sim_step(
                 emits: s.last_spray.emits.wrapping_add(1),
             };
         }
+        for (pos, velocity) in drips { s.water.emit_body_drip(pos, velocity); }
         s.water_ticks += n;
         while s.water_ticks >= 4 {
             s.water_ticks -= 4;
@@ -1215,8 +1221,9 @@ pub unsafe extern "C" fn sms_sim_knock_down(
 }
 
 /// Sets Mario on fire (the host's burning, with no attacker and no sim health lost): he is
-/// thrown up by the decomp's `FIRE_DOWN`, yells, bounces twice and runs about in a panic
-/// (`FIRE_DASH`). Not while he is down, already burning, or diving or pounding. Returns 1 if
+/// thrown up by the decomp's `FIRE_DOWN`, yells, bounces twice and recovers through
+/// `FIRE_JUMP_END`, with no panic run. Not while he is down, already burning,
+/// wet, inside the escape grace, or diving or pounding. Returns 1 if
 /// it took.
 ///
 /// # Safety
@@ -1230,7 +1237,7 @@ pub unsafe extern "C" fn sms_sim_ignite(sim: *mut SmsSim) -> u8 {
     }
 }
 
-/// Actual body contact with another Mario's FLUDD: extinguish and stay wet for three seconds.
+/// Actual body contact with another Mario's FLUDD: extinguish and start vanilla's runoff timer.
 /// # Safety
 /// `sim` from [`sms_sim_new`] or null.
 #[unsafe(no_mangle)]
@@ -1610,7 +1617,8 @@ mod tests {
             assert!((*sim).sim.mario.options.spray_during_dive);
             assert!((*sim).sim.mario.options.redive_after_slide);
             assert_eq!((*sim).water.spray_speed, 1.4);
-            assert!((*sim).sim.mario.options.fire_panic_run);
+            assert!((*sim).sim.mario.options.host_fire_reaction);
+            assert!(!(*sim).sim.mario.options.fire_panic_run);
             let run = SmsPad {
                 move_x: 1.0,
                 use_move: 1,

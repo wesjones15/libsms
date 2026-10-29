@@ -4103,27 +4103,38 @@ fn a_fire_hit_throws_mario_up_burning_and_he_lies_down_after_two_bounces() {
 }
 
 #[test]
-fn a_host_fire_runs_him_about_in_a_panic_when_asked() {
+fn a_host_fire_keeps_the_vanilla_burn_hop_without_a_panic_run() {
     if need_disc() {
         return;
     }
     let mut s = Scene::flat();
-    s.sim.mario.options.fire_panic_run = true;
+    s.sim.mario.options.host_fire_reaction = true;
     s.step(2);
     let max = s.mario().health;
     assert!(s.sim.mario.ignite());
     assert_eq!(s.mario().health, max, "the host keeps the health");
     assert_eq!(s.mario().status, Status::FireDown);
-    assert!(s.until(2400, |m| m.status == Status::FireDash), "no panic: {:?}", s.mario().status);
-    // He runs at about 32 with nothing held, however long he does it, then calms down.
-    let start = s.mario().pos;
-    s.step(60);
-    assert_eq!(sound_count(&s, "MSD_SE_MV05_DAMAGE_FIRE_02"), 1, "first panic uses voice 02 once");
+    assert_eq!(s.mario().params.jump.fire_down_force, 50.0, "owned-disc burn-hop tuning");
+    assert_eq!(s.mario().vel.y, 50.0, "setStatusToJumping uses mFireDownForce directly");
+    let mut peak = 0.0f32;
+    let mut bounces = 0;
+    for _ in 0..600 {
+        let before = s.mario().vel.y;
+        s.step(1);
+        peak = peak.max(s.mario().pos.y);
+        assert_ne!(s.mario().status, Status::FireDash, "vanilla never enters the panic run");
+        if s.mario().status == Status::FireDown && before < 0.0 && s.mario().vel.y > 0.0 {
+            bounces += 1;
+            assert!((s.mario().vel.y + before * 0.4).abs() < 1.0, "bounce must retain 40% of downward speed");
+        }
+        if !s.mario().on_fire() { break; }
+        assert_eq!(s.mario().anim.clip, "firejmp");
+    }
+    assert_eq!(bounces, 2);
+    assert!((315.0..=325.0).contains(&peak), "burn-hop apex {peak}");
+    assert_eq!(s.mario().status, Status::FireJumpEnd);
+    assert_eq!(sound_count(&s, "MSD_SE_MV05_DAMAGE_FIRE_02"), 1, "first reaction uses voice 02 once");
     assert_eq!(sound_count(&s, "MSD_SE_MV05_DAMAGE_FIRE_01"), 0, "do not combine the voices");
-    assert_eq!(s.mario().status, Status::FireDash);
-    assert!((s.mario().forward_vel - 32.0).abs() < 1.0, "speed {}", s.mario().forward_vel);
-    assert!(s.mario().pos.distance(start) > 100.0, "he didn't run");
-    assert!(s.until(400, |m| !m.on_fire()));
     assert!(!s.mario().on_fire());
     // Repeated attempts during the five-second escape window must not chain a new run.
     for elapsed in 0..599 {
@@ -4155,7 +4166,7 @@ fn burning_mario_cannot_be_lit_twice_or_while_down() {
 fn body_water_extinguishes_every_fire_phase_and_keeps_the_escape_grace() {
     for phase in [Status::FireDown, Status::FireDash, Status::FireJump, Status::FireLand] {
         let mut s = Scene::flat();
-        s.sim.mario.options.fire_panic_run = true;
+        s.sim.mario.options.host_fire_reaction = true;
         s.step(2);
         assert!(s.sim.mario.ignite());
         s.sim.mario.status = phase;
@@ -4164,10 +4175,10 @@ fn body_water_extinguishes_every_fire_phase_and_keeps_the_escape_grace() {
         assert!(!s.mario().on_fire(), "{phase:?} was not extinguished");
         assert!(s.mario().is_wet());
         assert_eq!(s.mario().health, health);
-        s.step(360);
-        assert!(!s.mario().is_wet(), "wetness must dry after three seconds");
+        s.step(120);
+        assert!(!s.mario().is_wet(), "vanilla runoff timer lasts 120 ticks");
         assert!(!s.sim.mario.ignite(), "quenching must retain five seconds of escape grace");
-        s.step(240);
+        s.step(480);
         assert!(s.sim.mario.ignite());
     }
 }
@@ -4175,7 +4186,7 @@ fn body_water_extinguishes_every_fire_phase_and_keeps_the_escape_grace() {
 #[test]
 fn stage_water_quenches_the_initial_fire_bounce_and_continuously_renews_wetness() {
     let mut s = Scene::flat();
-    s.sim.mario.options.fire_panic_run = true;
+    s.sim.mario.options.host_fire_reaction = true;
     s.step(2);
     assert!(s.sim.mario.ignite());
     s.host.world.water = Some(10000.0);
@@ -4187,8 +4198,25 @@ fn stage_water_quenches_the_initial_fire_bounce_and_continuously_renews_wetness(
         assert!(!s.sim.mario.ignite());
     }
     s.host.world.water = None;
-    s.step(359);
+    // Escape grace expired in the pool, but vanilla's 120-tick timer begins on exit.
+    s.step(119);
     assert!(!s.sim.mario.ignite());
     s.step(1);
     assert!(s.sim.mario.ignite());
+}
+
+#[test]
+fn vanilla_runoff_requests_real_droplets_every_eight_ticks_after_water_exit() {
+    let mut s = Scene::new(FlatHost { water: Some(10.0), ..Default::default() });
+    s.step(2);
+    s.host.events.clear();
+    s.host.world.water = None;
+    for elapsed in 1..=120 {
+        s.step(1);
+        let count = s.host.events.iter().filter(|e| matches!(e, Event::BodyDrip { .. })).count();
+        assert_eq!(count, elapsed / 8, "checkWet cadence at tick {elapsed}");
+    }
+    assert!(!s.mario().is_wet());
+    s.step(30);
+    assert_eq!(s.host.events.iter().filter(|e| matches!(e, Event::BodyDrip { .. })).count(), 15);
 }

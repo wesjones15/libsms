@@ -94,6 +94,9 @@ const DOWNS: [Status; 16] = [
 ];
 
 impl Mario {
+    pub(crate) fn guarded_fire(&self) -> bool {
+        self.options.host_fire_reaction || self.options.fire_panic_run
+    }
     pub(crate) fn cue(&mut self, name: &'static str) {
         self.events.push(Event::Sound(SoundCue {
             name,
@@ -142,7 +145,7 @@ impl Mario {
     /// ground pound, which the game doesn't knock him out of; on Yoshi, Yoshi is thrown off
     /// instead).
     pub fn ignite(&mut self) -> bool {
-        if self.options.fire_panic_run && (self.fire_rearm_ticks > 0 || self.is_wet()) {
+        if self.guarded_fire() && (self.fire_rearm_ticks > 0 || self.is_wet()) {
             return false;
         }
         if self.is_down() || self.health <= 0 || self.status == Status::WinDemo {
@@ -179,10 +182,10 @@ impl Mario {
 
     /// The fire hit: `FIRE_DOWN` with its sound and flames.
     fn start_fire_down(&mut self) {
-        if self.options.fire_panic_run && (self.fire_rearm_ticks > 0 || self.is_wet()) {
+        if self.guarded_fire() && (self.fire_rearm_ticks > 0 || self.is_wet()) {
             return;
         }
-        if self.options.fire_panic_run {
+        if self.guarded_fire() {
             self.fire_voice_alt = !self.fire_voice_alt;
         }
         self.change_status(Status::FireDown, 1, true);
@@ -207,14 +210,14 @@ impl Mario {
 
     /// Host wet modifier: actual body contact with stage water or a swept FLUDD droplet.
     /// Ends every fire phase, including the initial bounce and airborne panic hops.
-    /// Wetness lasts three seconds after the last contact; health damage is still the host's.
+    /// Uses the vanilla 120-tick runoff timer; health damage is still the host's.
     pub fn wet(&mut self) {
-        self.wet_ticks = 360;
+        self.wet_ticks = 120;
         if !self.on_fire() { return; }
         let grounded = self.on_ground();
         self.change_status(if grounded { Status::Run } else { Status::Landing }, 0, false);
         self.set_anim(if grounded { crate::anim::clip::RUN2 } else { crate::anim::clip::LAND }, 1.0);
-        if self.options.fire_panic_run { self.fire_rearm_ticks = 600; }
+        if self.guarded_fire() { self.fire_rearm_ticks = 600; }
     }
 
     pub fn is_wet(&self) -> bool { self.wet_ticks > 0 || self.in_water() }

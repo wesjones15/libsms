@@ -14,7 +14,7 @@ const W: usize = 512;
 const H: usize = 512;
 
 /// Flat ground, and the sim's events kept for the view.
-struct Collect(Vec<Event>);
+struct Collect(Vec<Event>, Option<f32>);
 
 impl Host for Collect {
     fn ground(&self, p: Vec3) -> Option<libsms::GroundHit> {
@@ -23,6 +23,7 @@ impl Host for Collect {
     fn event(&mut self, e: Event) {
         self.0.push(e);
     }
+    fn water_level(&self, _: Vec3) -> Option<f32> { self.1 }
 }
 
 fn main() {
@@ -34,44 +35,47 @@ fn main() {
     let mut view = View::load(&dir).expect("Mario's models");
     assert!(view.fx.has("ms_firedmg_a"), "emitter 6 missing");
     let mut sim = Sim::new(a.params, a.anim_table, Vec3::ZERO, 0);
-    sim.mario.options.fire_panic_run = true;
-    let mut host = Collect(Vec::new());
+    sim.mario.options.host_fire_reaction = true;
+    let wet_demo = std::env::args().any(|a| a == "--wet");
+    let mut water = libsms::water::WaterManager::new(&sim.mario.params);
+    let mut water_view = libsms_present::water::WaterLook::load(&dir);
+    let mut host = Collect(Vec::new(), wet_demo.then_some(10.0));
     let dt = 1.0 / 120.0;
-    let pad = Pad::default();
+    let pad = if wet_demo { Pad { stick: glam::Vec2::new(0.55, 0.0), ..Default::default() } } else { Pad::default() };
     sim.advance(&mut host, &pad, 0, dt);
-    sim.mario.ignite();
+    host.1 = None;
+    if !wet_demo { sim.mario.ignite(); }
     let mut ended_at = None;
-    for _ in 0..(secs * 120.0) as u32 {
+    for tick in 0..(secs * 120.0) as u32 {
         sim.advance_observed(&mut host, &pad, 0, dt, |mario, h| {
-            view.events(&std::mem::take(&mut h.0), mario);
+            let events = std::mem::take(&mut h.0);
+            for event in &events {
+                if let Event::BodyDrip { pos, velocity } = event {
+                    water.emit_body_drip(*pos, *velocity);
+                }
+            }
+            view.events(&events, mario);
         });
+        if tick % 4 == 3 {
+            water.step(&host, sim.mario.pos);
+            water_view.step(&water.events);
+            water.events.clear();
+        }
         view.set_camera(Vec3::X, Vec3::Y);
         view.update(&mut sim, dt);
         if !sim.mario.on_fire() && ended_at.is_none() { ended_at = Some(sim.mario.ticks); }
+    }
+    water_view.build(&water, 0.0, sim.mario.pos + Vec3::Z * 1000.0, Vec3::X, Vec3::Y, 0);
+    if wet_demo && secs > 0.1 && secs < 0.9 {
+        assert!(water_view.drop_quads > 0, "vanilla body runoff was not drawn");
+        assert!(water.particles.iter().all(|p| p.body_drip && p.kind == 1));
+        assert!(water.contacts.is_empty(), "runoff must not keep re-wetting its emitter");
     }
     if std::env::args().any(|a| a == "--only-fire") {
         view.fx.build_filtered(Vec3::X, Vec3::Y, |name| name == "ms_firedmg_a");
         if ended_at.is_some_and(|t| sim.mario.ticks > t + 44) {
             assert!(view.fx.vertices.is_empty(), "fire tail outlived the 0.35-second fade");
         }
-    }
-    // Audition only the source-identified damage-run clip, before host changes.
-    let pose_frame = std::env::args().find_map(|a| a.strip_prefix("--dgrun=").and_then(|s| s.parse::<f32>().ok()));
-    if let Some(frame) = pose_frame {
-        sim.mario.anim.set("dgrun", 1.0, &sim.mario.anims);
-        sim.mario.anim.frame = frame;
-        sim.mario.model_yaw = 0x4000;
-        if std::env::args().any(|a| a == "--panic-preview") {
-            let skeleton = libsms::Skeleton::from_bmd(&std::fs::read(dir.join("bmd/ma_mdl1.bmd")).unwrap()).unwrap();
-            let clips = libsms::ClipLibrary::from_dir(&dir.join("bck"));
-            let run = clips.get("run2").unwrap();
-            let flail = clips.get("dgrun").unwrap();
-            view.set_pose_override(Some(skeleton.pose_layered(
-                Some((run, frame / flail.frames * run.frames)),
-                Some((flail, frame, skeleton.find("jnt_chest").unwrap())),
-            )));
-        }
-        view.update(&mut sim, 0.0);
     }
     eprintln!("Emitter 6 ms_firedmg_a / {:?} / {} frame {}", sim.mario.status, sim.mario.anim.clip, sim.mario.anim.frame);
     let fx = &view.fx;
@@ -83,7 +87,9 @@ fn main() {
         sim.mario.pos
     );
     // Side view: x right, y up, centred a metre above Mario's feet; 4 units a pixel.
-    let centre = sim.mario.pos + Vec3::new(0.0, 100.0, 0.0);
+    let centre = if std::env::args().any(|a| a == "--fixed-camera") {
+        Vec3::new(0.0, 180.0, 0.0)
+    } else { sim.mario.pos + Vec3::new(0.0, 100.0, 0.0) };
     let scale: f32 = args.next().and_then(|s| s.parse().ok()).unwrap_or(0.9);
     let to_px = |p: Vec3| -> (f32, f32) {
         (
@@ -132,6 +138,19 @@ fn main() {
             }
         }
     }
+    for (i, quad) in water_view.vertices.chunks_exact(4).enumerate() {
+        let source = if i < water_view.drop_quads as usize { &water_view.drop } else { &water_view.splash };
+        let tex = libsms_present::particles::FxTexture {
+            width: source.width, height: source.height, rgba: source.rgba.clone(),
+            wrap: [libsms_assets::texture::Wrap::Clamp; 2], version: 0,
+        };
+        let q: [_; 4] = std::array::from_fn(|i| { let v = quad[i]; libsms_present::particles::FxVertex {
+            pos: v.pos, u: v.uv[0], v: v.uv[1], color: [water_view.tint[0], water_view.tint[1], water_view.tint[2], v.alpha * water_view.tint[3]],
+        }});
+        for tri in [[0, 1, 2], [0, 2, 3]] {
+            raster(&mut img, [q[tri[0]], q[tri[1]], q[tri[2]]], &tex, blend::ALPHA, &to_px, &mut depth, false);
+        }
+    }
     let rgba: Vec<u8> = img
         .iter()
         .flat_map(|c| {
@@ -142,8 +161,12 @@ fn main() {
         })
         .collect();
     std::fs::write(&out, png(W as u32, H as u32, &rgba)).unwrap();
+    if wet_demo {
+        std::fs::write(format!("{out}.txt"), format!("Vanilla wet runoff: model-water type 1 (WTP01_Wide), WetWaterEmit.prm; no JPA cue/model. {secs}s, {} droplets. Source: MarioInit.cpp::initValues WetWaterEmit allocation; MarioMove.cpp::thinkWaterSurface (120 ticks), checkWet (each 8 ticks, feet+5, velocity*0.3); ModelWaterManager.cpp::makeEmit. Disc: 3 droplets, life128, power5 +/-1, size15 +/-10, direction tremble0.5.\n", water_view.drop_quads)).unwrap();
+        return;
+    }
     std::fs::write(format!("{out}.txt"), format!(
-        "Particle emitter 6 / ms_firedmg_a.jpa / {secs} seconds / {:?}\nAnimation: {} frame {}. dgrun = ANIM_DGRUN 0xD5, file table 0x4A, mario.szs:bck/ma_dgrun.bck. Source: Player/MarioDraw.cpp gMarioAnimeData[0xD5], Player/MarioAnimeFiles.inc[0x4A]. The original fireDashing selects firejmp; dgrun is a host adaptation.\nSource: System/MarDirectorLoadResource.cpp load 6; Player/MarioReceiveMsg.cpp::receiveMessage; Player/MarioMove.cpp::checkGraffitoFire. Bound to mPosition, not the head. Textured Mario mesh and original particle batches rendered in Rust on the CPU.\n", sim.mario.status, sim.mario.anim.clip, sim.mario.anim.frame)).unwrap();
+        "Particle emitter 6 / ms_firedmg_a.jpa / {secs} seconds / {:?}\nAnimation: {} frame {}. firejmp = ANIM_FIREJMP 0x29, file table 0x0B; fjpend = ANIM_FJPEND 0x28, file table 0x0A. Source: MarioMove.cpp::setStatusToJumping (disc mFireDownForce=50); MarioJump.cpp::fireDowning (40% rebound, two bounces); MarioWait.cpp::fireJumpEnd. No panic run.\nSource: System/MarDirectorLoadResource.cpp load 6; Player/MarioReceiveMsg.cpp::receiveMessage; Player/MarioMove.cpp::checkGraffitoFire. Bound to mPosition, not the head. Textured Mario mesh and original particle batches rendered in Rust on the CPU.\n", sim.mario.status, sim.mario.anim.clip, sim.mario.anim.frame)).unwrap();
     eprintln!("wrote {out}");
 }
 

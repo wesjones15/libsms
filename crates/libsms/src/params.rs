@@ -5,6 +5,7 @@
 //! layers the disc values on top.
 
 use crate::prm::Prm;
+use glam::Vec3;
 
 /// One parameter value type readable from a `.prm`.
 trait Field: Sized + Copy {
@@ -30,6 +31,10 @@ impl Field for u8 {
     fn read(prm: &Prm, key: &str) -> Option<u8> {
         prm.u8(key)
     }
+}
+
+impl Field for Vec3 {
+    fn read(prm: &Prm, key: &str) -> Option<Vec3> { prm.vec3(key) }
 }
 
 /// Declares a parameter struct: `field: type = code_default, "mKeyInPrm"` (extra keys after
@@ -377,6 +382,24 @@ impl NozzleKind {
     }
 }
 
+params! {
+    /// `TWaterEmitInfo` (ModelWaterManager.cpp); loaded from `/Mario/WetWaterEmit.prm`.
+    WetWaterEmit {
+        count: i32 = 1, "mNum";
+        alive: i16 = 255, "mAlive";
+        attack: i16 = 1, "mAttack";
+        dir: Vec3 = Vec3::Y, "mDir";
+        dir_tremble: f32 = 0.0, "mDirTremble";
+        power: f32 = 0.0, "mPow";
+        pow_tremble: f32 = 0.0, "mPowTremble";
+        size: f32 = 17.0, "mSize";
+        size_tremble: f32 = 0.0, "mSizeTremble";
+        hit_radius: f32 = 50.0, "mHitRadius";
+        hit_height: f32 = 80.0, "mHitHeight";
+        particle_type: i16 = 0, "mType";
+    }
+}
+
 /// All the sim's tuning in one place.
 ///
 /// `Default` is the decomp's code defaults with one concession: plain ground does not make every
@@ -384,6 +407,7 @@ impl NozzleKind {
 /// `SlipParamNormal.prm` turns it off). Real play needs the disc's values, see [`Params::from_files`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct Params {
+    pub wet_emit: WetWaterEmit,
     pub run: Run,
     pub jump: Jump,
     pub mario: Mario,
@@ -416,6 +440,7 @@ impl Default for Params {
             ..Slip::default()
         };
         Params {
+            wet_emit: WetWaterEmit::default(),
             run: Run::default(),
             jump: Jump::default(),
             mario: Mario::default(),
@@ -530,6 +555,9 @@ impl Params {
         }
         if let Some(prm) = get(files::CONTROLLER) {
             p.controller.apply(&prm);
+        }
+        if let Some(prm) = get("wetwateremit.prm") {
+            p.wet_emit.apply(&prm);
         }
         if let Some(prm) = get(files::WATER_EFFECT) {
             p.water_effect.apply(&prm);

@@ -791,19 +791,19 @@ RoR2 in-game confirmation remains manual.
 `MarioReceiveMsg.cpp::receiveMessage` and `MarioMove.cpp::checkGraffitoFire`
 emit it once, bound to `mPosition`. The presenter now loads that previously
 missing effect and uses `FxAt::FeetFollow` to preserve its positional binding.
-The host panic extension alternates `MSD_SE_MV05_DAMAGE_FIRE_02` (0x784A) and
+The host fire reaction alternates `MSD_SE_MV05_DAMAGE_FIRE_02` (0x784A) and
 `MSD_SE_MV05_DAMAGE_FIRE_01` (0x7849), beginning with 02, once per reaction.
 It does not repeat a voice when the dash starts or during hops. The original
 fireDowning/fireJumping use 01; the alternating policy is a host extension.
 The flare and smoke fade out over ten 30 Hz frames after the fire state ends.
-Host ignition is blocked for 600 ticks (five seconds) after the reaction ends;
+The native host now keeps the vanilla burn hop and FIRE_JUMP_END recovery; it does not enter FIRE_DASH. See [wetness.md](wetness.md) for the launch, rebound and animation citations. Host ignition is blocked for 600 ticks (five seconds) after the reaction ends;
 the host still applies fire damage normally. Stage water and actual FLUDD
 droplet/body contact quench every fire phase immediately. The wet modifier lasts
-360 ticks (three seconds) after contact, renewed while touching water, and blocks
+120 ticks (one second), beginning on pool exit or renewed by body spray contact, and blocks
 host panic ignition. Quenching retains the 600-tick escape grace. Own water uses
 the native swept-contact query against the body capsule; another Mario's contact
 is recorded as a Soaked replay op, independently of wet-slide ground patches.
-Emitter 6 is a
+Wet runoff uses the disc's WetWaterEmit.prm and model-water type 1 (WTP01_Wide), emitted every eight ticks near the feet with 30% inherited velocity (MarioMove.cpp::checkWet). It is not a JPA emitter. Emitter 6 is a
 low body flare, not a head flame. No separate Mario head-flame asset is proven.
 `viewer --example fire_panic -- output.png seconds` makes labeled native captures.
 

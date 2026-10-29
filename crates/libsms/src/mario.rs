@@ -258,6 +258,8 @@ pub struct Options {
     /// lying down (`FIRE_JUMP_END`, the game's). The decomp has the panicked run but nothing
     /// enters it; this is the host's way in. false: the game's.
     pub fire_panic_run: bool,
+    /// Host fire audio, anti-chain grace and water extinguishing; keeps vanilla's burn hop.
+    pub host_fire_reaction: bool,
 }
 
 /// Ticks either side of a stomp in which A counts for [`Options::stomp_jump`].
@@ -287,6 +289,7 @@ impl Default for Options {
             unlimited_water: false,
             knockdown_cancel: false,
             fire_panic_run: false,
+            host_fire_reaction: false,
         }
     }
 }
@@ -352,7 +355,7 @@ pub struct Mario {
     /// Host fire panic: alternate one voice per reaction and allow five seconds to escape.
     pub(crate) fire_voice_alt: bool,
     pub(crate) fire_rearm_ticks: u16,
-    /// Recent body contact with water; host panic cannot ignite while wet (three seconds).
+    /// `mWetWaterParticleTimer`: 120 ticks after leaving water (`thinkWaterSurface`).
     pub(crate) wet_ticks: u16,
     /// A spin jump started out of a rocket nozzle's thrust: the still-held spray must not fling him
     /// back into the rocket until that spin is over (cleared by any real status change).
@@ -873,7 +876,6 @@ impl Mario {
     /// One 120 Hz step (`TMario::playerControl`).
     pub fn tick(&mut self, host: &mut dyn Host, pad: &Pad, camera_yaw: Angle) {
         self.fire_rearm_ticks = self.fire_rearm_ticks.saturating_sub(1);
-        self.wet_ticks = self.wet_ticks.saturating_sub(1);
         let was_on_fire = self.on_fire();
         self.think_water_surface(host);
         // The host's limits may hold R back (`limits.rs`); the game's never do.
@@ -896,6 +898,7 @@ impl Mario {
         self.think_water_surface(host);
         self.think_height(host);
         self.think_params();
+        self.check_wet(host);
         self.gun_exec(host, pad);
         self.yoshi_movement(host);
         self.eggs_tick(host);
@@ -909,7 +912,7 @@ impl Mario {
         }
         self.yoshi_calc_anim();
         self.sound_movement();
-        if was_on_fire && !self.on_fire() && self.options.fire_panic_run {
+        if was_on_fire && !self.on_fire() && self.guarded_fire() {
             self.fire_rearm_ticks = 600; // Five seconds at 120 Hz, after the reaction ends.
         }
         self.pad_prev = *pad;
@@ -954,6 +957,7 @@ impl Mario {
     /// `thinkWaterSurface` (MarioMove.cpp), the pool half: Mario is in shallow water while a
     /// pool's surface is above his feet. No swimming: deeper water is still wading.
     fn think_water_surface(&mut self, host: &mut dyn Host) {
+        let was_in_water = self.in_water;
         let level = host
             .water_level(self.pos)
             .filter(|&level| level > self.pos.y);
@@ -961,6 +965,23 @@ impl Mario {
         if let Some(level) = level {
             self.water_surface = level;
             self.wet();
+        } else if was_in_water {
+            self.wet_ticks = 120;
+        }
+    }
+
+    /// `MarioMove.cpp::checkWet`: drip near the feet every eight ticks after leaving water.
+    /// Uses WetWaterEmit.prm through the normal model-water manager, not a JPA effect.
+    fn check_wet(&mut self, host: &dyn Host) {
+        if self.on_yoshi() || self.wet_ticks == 0 { return; }
+        self.wet_ticks -= 1;
+        // Implemented statuses carrying MARIO_STATUS_FLAG_UNK200 in MarioStatus.hpp.
+        if self.in_water || matches!(self.status, Status::Hanging | Status::WinDemo
+            | Status::Take | Status::TakePose | Status::CatchLost | Status::Putting) { return; }
+        if host.ground(self.pos + Vec3::Y * 320.0)
+            .is_some_and(|g| g.flags.has(SurfaceFlags::WATER_SURFACE)) { return; }
+        if self.wet_ticks & 7 == 0 {
+            self.events.push(Event::BodyDrip { pos: self.pos + Vec3::Y * 5.0, velocity: self.vel * 0.3 });
         }
     }
 

@@ -71,6 +71,8 @@ pub enum State {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Particle {
+    /// Body runoff is not a fresh spray contact: it must not re-wet its emitter forever.
+    pub body_drip: bool,
     pub pos: Vec3,
     /// Where it left the nozzle: a host drawing it never shows any of it behind this.
     pub spawn: Vec3,
@@ -163,6 +165,7 @@ mod k {
 
 #[derive(Debug, Clone)]
 pub struct WaterManager {
+    wet_emit: crate::params::WetWaterEmit,
     /// Actual droplet sweeps from the most recent water frame, clipped by world contacts.
     /// Hosts may test these against hazards without changing the water simulation.
     pub contacts: Vec<(Vec3, Vec3, f32)>,
@@ -193,6 +196,7 @@ const BURST_SPACING: f32 = 0.8;
 impl WaterManager {
     pub fn new(params: &Params) -> WaterManager {
         WaterManager {
+            wet_emit: params.wet_emit.clone(),
             contacts: Vec::with_capacity(SLOTS),
             particles: Vec::with_capacity(SLOTS),
             wet_patches: Vec::with_capacity(SLOTS),
@@ -225,6 +229,27 @@ impl WaterManager {
     /// `emitRequest` / `makeEmit`: adds up to `w.count` particles; returns how many fit.
     pub fn emit(&mut self, w: &WaterEmit) -> u32 {
         self.emit_inner(w,Vec3::ZERO)
+    }
+
+    /// `TMario::checkWet` -> `emitRequest(*unk158)`: model-water type from the disc,
+    /// with its own lifetime and full 0.3 * Mario velocity, unaffected by Spray tuning.
+    pub fn emit_body_drip(&mut self, pos: Vec3, velocity: Vec3) -> u32 {
+        let p = &self.wet_emit;
+        let w = WaterEmit {
+            nozzle: crate::NozzleKind::Underwater, pos, dir: p.dir, power: p.power,
+            count: p.count.max(0) as u32, attack: p.attack,
+            hit_radius: p.hit_radius, hit_height: p.hit_height, inherit: velocity,
+            size: p.size, size_tremble: p.size_tremble, dir_tremble: p.dir_tremble,
+            pow_tremble: p.pow_tremble, particle_type: p.particle_type,
+            burst: false, spin: false,
+        };
+        let first = self.particles.len();
+        let count = self.emit_carried(&w);
+        for p in &mut self.particles[first..] {
+            p.life = self.wet_emit.alive.max(0) as f32;
+            p.body_drip = true;
+        }
+        count
     }
 
     /// Emit while retaining the emitter's full carried motion. The speed cap applies
@@ -260,6 +285,7 @@ impl WaterManager {
             let vel = dir.normalize() * speed + w.inherit;
             let size = self.rand11() * w.size_tremble + w.size;
             self.particles.push(Particle {
+                body_drip: false,
                 pos: w.pos,
                 spawn: w.pos,
                 vel,
@@ -622,7 +648,9 @@ impl WaterManager {
         }
         for ((from, size, alive), p) in starts.into_iter().zip(&self.particles) {
             if alive {
-                self.contacts.push((from, p.pos, size.max(0.0)));
+                if !p.body_drip {
+                    self.contacts.push((from, p.pos, size.max(0.0)));
+                }
             }
         }
         self.particles.retain(|p| p.life > 0.0);
@@ -658,6 +686,23 @@ fn segment_distance_squared(a: Vec3, b: Vec3, c: Vec3, d: Vec3) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn runoff_uses_disc_emit_parameters_and_ignores_spray_bonuses() {
+        let Some(dir) = crate::assets::find(None) else { eprintln!("SKIP: no disc cache"); return; };
+        let (params, _) = Params::from_dir(&dir.join("params_mario"));
+        let mut water = WaterManager::new(&params);
+        water.reach = 8.0;
+        water.spray_speed = 2.0;
+        assert_eq!(params.wet_emit.count, 3);
+        assert_eq!(params.wet_emit.alive, 128);
+        assert_eq!(params.wet_emit.particle_type, 1);
+        assert_eq!(water.emit_body_drip(Vec3::Y * 200.0, Vec3::X * 3.0), 3);
+        assert!(water.particles.iter().all(|p| p.body_drip && p.kind == 1 && p.life == 128.0
+            && p.reach == 1.0 && p.travel_speed == 1.0));
+        water.step(&crate::FlatHost::default(), Vec3::ZERO);
+        assert!(water.contacts.is_empty(), "runoff must not continually re-wet Mario");
+    }
 
     #[test]
     fn water_sweeps_touch_only_intersected_fire_segments() {

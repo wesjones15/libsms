@@ -72,6 +72,7 @@ struct World {
     blocks: Vec<Block>,
     ramps: Vec<Ramp>,
     emits: Vec<WaterEmit>,
+    body_drips: Vec<(V3, V3)>,
     /// Fruit to pick up and throw (indices are their take ids).
     fruits: Vec<props::Fruit>,
     /// Strollin' Stus for Yoshi to eat (indices are their enemy ids).
@@ -133,6 +134,7 @@ impl World {
             blocks,
             ramps,
             emits: Vec::new(),
+            body_drips: Vec::new(),
             fruits: vec![
                 props::Fruit::new(props::Kind::Papaya, V3::new(150.0, 0.0, 200.0)),
                 props::Fruit::new(props::Kind::Coconut, V3::new(-200.0, 0.0, 150.0)),
@@ -381,6 +383,7 @@ impl Host for World {
             Event::NozzleChanged(n) => self.note(format!("nozzle: {n:?}")),
             Event::Fell => {}
             Event::WaterEmit(w) => self.emits.push(w),
+            Event::BodyDrip { pos, velocity } => self.body_drips.push((pos, velocity)),
             Event::Put { id, pos, yaw } => {
                 if let Some(f) = self.fruits.get_mut(id as usize) {
                     f.put(pos, yaw);
@@ -1343,9 +1346,9 @@ async fn main() {
             m.damage(ahead, libsms::DamageKind::EnemyCommon);
         }
         // Fire proof in the full Rust renderer, using the same host ignition path as RoR2.
-        // SMS_FIRE=<frame>; SMS_SHOT_TIME chooses the fire-hit or panic-run capture time.
+        // SMS_FIRE=<frame>; SMS_SHOT_TIME chooses the burn hop or recovery capture time.
         if std::env::var("SMS_FIRE").ok().and_then(|v| v.parse::<u32>().ok()) == Some(frame_no) {
-            sim.mario.options.fire_panic_run = true;
+            sim.mario.options.host_fire_reaction = true;
             sim.mario.ignite();
         }
         // FLUDD's water (`TModelWaterManager`): emitted every tick, moved once a frame.
@@ -1354,6 +1357,7 @@ async fn main() {
                 if let Some(juice)=&mut juice_water {juice.emit_carried(&e);}
             } else {water.emit(&e);}
         }
+        for (pos, velocity) in std::mem::take(&mut world.body_drips) { water.emit_body_drip(pos, velocity); }
         water_ticks += ticks;
         while water_ticks >= 4 {
             water_ticks -= 4;

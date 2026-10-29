@@ -30,6 +30,8 @@ pub enum Event {
     /// FLUDD fired water. The host spawns/simulates the water particles and applies damage;
     /// the sim already applied the nozzle's recoil to Mario.
     WaterEmit(WaterEmit),
+    /// `checkWet`: real model-water droplets after leaving water, from WetWaterEmit.prm.
+    BodyDrip { pos: Vec3, velocity: Vec3 },
     /// FLUDD nozzle changed.
     NozzleChanged(NozzleKind),
     /// The hover/rocket trigger finished charging and fired (`TNozzleTrigger::movement`).

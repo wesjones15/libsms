@@ -70,6 +70,15 @@ impl Prm {
         let b = self.entries.get(key)?;
         (b.len() == 1).then(|| b[0])
     }
+
+    pub fn vec3(&self, key: &str) -> Option<glam::Vec3> {
+        let b = self.entries.get(key)?;
+        Some(glam::Vec3::new(
+            f32::from_be_bytes(b.get(0..4)?.try_into().ok()?),
+            f32::from_be_bytes(b.get(4..8)?.try_into().ok()?),
+            f32::from_be_bytes(b.get(8..12)?.try_into().ok()?),
+        ))
+    }
 }
 
 struct Reader<'a> {
