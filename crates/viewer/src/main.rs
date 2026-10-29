@@ -950,6 +950,29 @@ async fn main() {
         assert!(rig.as_ref().is_some_and(|r| r.clips.get(name).is_some()), "unknown SMS_POSE clip: {name}");
         (name.to_string(), frame)
     });
+    // `SMS_JOINTS=<file>`: a Melee animation ported onto this rig, one 4x4
+    // column-major matrix per Sunshine joint (the file the libssbm
+    // `mario_sms_pose` example writes). Used for the Mario A-attack captures.
+    let external_joints = std::env::var("SMS_JOINTS").ok().map(|p| {
+        let text = std::fs::read_to_string(&p).expect("SMS_JOINTS file");
+        let mut values = text
+            .lines()
+            .filter(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#'))
+            .flat_map(|l| l.split_whitespace())
+            .map(|v| v.parse::<f32>().expect("SMS_JOINTS number"));
+        let mut joints = Vec::new();
+        while let Some(m) = values.next() {
+            let mut c = [0.0f32; 16];
+            c[0] = m;
+            for slot in c.iter_mut().skip(1) {
+                *slot = values.next().expect("SMS_JOINTS needs 16 floats per joint");
+            }
+            joints.push(::glam::Mat4::from_cols_array(&c));
+        }
+        let want = rig.as_ref().map_or(0, |r| r.skeleton.len());
+        assert_eq!(joints.len(), want, "SMS_JOINTS joint count");
+        joints
+    });
     let mut yoshi_model = assets.as_ref().and_then(|a| {
         yoshi_model::YoshiModel::load(&a.dir)
             .map_err(|e| eprintln!("Yoshi's model: {e}"))
@@ -1425,6 +1448,9 @@ async fn main() {
                 // Deterministic multi-frame retarget captures; ordinary play uses the sim's pose.
                 if let Some((name, frame)) = &capture_pose {
                     joints = r.skeleton.pose(r.clips.get(name).expect("validated capture clip"), *frame);
+                }
+                if let Some(ported) = &external_joints {
+                    joints = ported.clone();
                 }
                 let pose_name = capture_pose.as_ref().map_or(m.anim.clip,|(n,_)|n.as_str());
                 let pose_frame = capture_pose.as_ref().map_or(m.anim.frame,|(_,f)|*f);
