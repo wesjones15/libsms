@@ -29,7 +29,7 @@ use libsms::{
 use view::SmsView;
 
 /// ABI version, bumped when the C interface changes.
-pub const SMS_ABI_VERSION: u32 = 33;
+pub const SMS_ABI_VERSION: u32 = 34;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sms_abi_version() -> u32 {

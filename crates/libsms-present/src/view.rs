@@ -387,6 +387,10 @@ pub struct View {
     /// the same Sunshine clips and wearing his own FLUDD). Set by the host from the skin it
     /// is drawing; the rest of the view (clips, FLUDD look, effects) is shared.
     pub skin: Skin,
+    /// A host-supplied body pose (one model-space matrix per Sunshine joint).
+    /// The Mario A-attack port uses it to draw Melee Mario's clip on this rig;
+    /// `None` poses from the sim as usual.
+    pub pose_override: Option<Vec<Mat4>>,
     skeleton: Skeleton,
     clips: ClipLibrary,
     fludd_clips: HashMap<String, Clip>,
@@ -877,6 +881,18 @@ fn body_lowest(model: &Model, joints: &[Mat4]) -> f32 {
 }
 
 impl View {
+    /// Replaces the body pose drawn this frame (one model-space matrix per
+    /// Sunshine joint), or clears it with `None`. False when the count is wrong;
+    /// the sim pose then stays in use. Used for the Melee Mario A-attack port.
+    pub fn set_pose_override(&mut self, joints: Option<Vec<Mat4>>) -> bool {
+        if let Some(j) = &joints
+            && j.len() != self.skeleton.len()
+        {
+            return false;
+        }
+        self.pose_override = joints;
+        true
+    }
     /// Air Pump still life, from WaterGun.cpp's nozzleBmdData. Same bind geometry,
     /// normalized size, triangle placement and orientation approved in the Rust viewer.
     pub fn nozzle_portrait(&mut self) {
@@ -1092,6 +1108,7 @@ impl View {
             host_muzzles: Vec::new(),
             hud: Hud::load(dir).ok(),
             skin: Skin::Mario,
+            pose_override: None,
             hud_shown: false,
             life: [
                 LifeMeter::load(dir, 8, true).ok(),
@@ -1180,6 +1197,7 @@ impl View {
             host_muzzles: Vec::new(),
             hud: None,
             skin: Skin::Mario,
+            pose_override: None,
             hud_shown: false,
             life: [None, None],
             coins: [None, None, None],
@@ -1271,6 +1289,7 @@ impl View {
             host_muzzles: Vec::new(),
             hud: None,
             skin: Skin::Mario,
+            pose_override: None,
             hud_shown: false,
             life: [None, None],
             coins: [None, None, None],
@@ -1588,6 +1607,10 @@ impl View {
             upper,
             |j| head_tilt.filter(|t| t.0 == j).map(|t| t.1),
         );
+        let joints = match &self.pose_override {
+            Some(p) if p.len() == joints.len() => p.clone(),
+            _ => joints,
+        };
 
         // Blink every few seconds (the game runs `ma_wink_tx` on idle; 30 frames a second).
         if self.time > self.blink_at + 2.0 {

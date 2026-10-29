@@ -232,6 +232,35 @@ pub unsafe extern "C" fn sms_view_skin(view: *mut SmsView, skin: u32) {
     }
 }
 
+/// Overrides the body pose this frame with one model-space 4x4 per Sunshine joint
+/// (column-major, `count * 16` floats), or clears it with `count` 0. 1 when the
+/// pose was accepted, 0 on a null/wrong-size buffer. Used by the Mario A-attack
+/// port to draw a Melee clip on Sunshine's rig.
+/// # Safety
+/// `view` must be a live Mario view; `mats` must hold `count * 16` floats.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_set_pose(
+    view: *mut SmsView,
+    mats: *const f32,
+    count: u32,
+) -> u8 {
+    if view.is_null() {
+        return 0;
+    }
+    if count == 0 {
+        return unsafe { with_view(view, 0, |v| v.view.set_pose_override(None) as u8) };
+    }
+    if mats.is_null() || count > 256 {
+        return 0;
+    }
+    let floats = unsafe { std::slice::from_raw_parts(mats, count as usize * 16) };
+    let joints: Vec<Mat4> = floats
+        .chunks_exact(16)
+        .map(|c| Mat4::from_cols_array(c.try_into().unwrap()))
+        .collect();
+    unsafe { with_view(view, 0, |v| v.view.set_pose_override(Some(joints)) as u8) }
+}
+
 /// Overrides whose voice the Mario cues play: 0 Mario's, 1 Piantissimo's jump voice with Mario's
 /// lines for the rest (what [`sms_view_skin`] picks for him), 2 Piantissimo exactly as the game
 /// has him (the jump voice and nothing else). Call after [`sms_view_skin`].
