@@ -4080,7 +4080,7 @@ fn the_blazing_slide_hits_as_a_corkscrew() {
     assert_eq!(enemy_hits(&s, libsms::EnemyHitKind::Punch), 0);
 }
 
-/// A full stick circle in a plain dive is a corkscrew at the dive's own speed, once per dive.
+/// A full stick circle in a plain dive is a corkscrew at the dive's own speed, once per dive, for as long as the stick circles.
 #[test]
 fn a_stick_circle_in_a_plain_dive_is_a_normal_speed_corkscrew() {
     let mut s = Scene::flat();
@@ -4094,7 +4094,8 @@ fn a_stick_circle_in_a_plain_dive_is_a_normal_speed_corkscrew() {
     assert_eq!(s.sim.mario.status, Status::JumpCatch, "no dive");
     let y0 = s.sim.mario.pos.y;
     let mut angle = 0.0f32;
-    for i in 0..120 {
+    // Past the Turbo corkscrew's 6 s cap (720 ticks).
+    for i in 0..1000 {
         angle += std::f32::consts::TAU / 12.0;
         s.pad.stick = Vec2::new(angle.cos(), angle.sin());
         s.step(1);
