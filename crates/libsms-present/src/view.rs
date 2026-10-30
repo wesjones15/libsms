@@ -612,7 +612,7 @@ struct FxTick {
     pitch: i16,
     roll: i16,
     pounding: u8,
-    /// `Mario::flames`: 1 a corkscrew that has spun for 4 seconds, 2 a rising spin out of the Rocket's climb.
+    /// `Mario::flames`: 1 a corkscrew that has spun for 1 second, 2 a rising spin out of the Rocket's climb.
     flames: u8,
     cues: Vec<ParticleCue>,
 }

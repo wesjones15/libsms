@@ -138,7 +138,7 @@ pub enum EnemyHitKind {
     Punch,
     /// Hit by the Turbo corkscrew dive (host extension): a dive at full tilt that hits harder.
     Corkscrew,
-    /// Hit by a corkscrew that has spun for 4 seconds, in flames (host extension): one huge blow that
+    /// Hit by a corkscrew that has spun for 1 second, in flames (host extension): one huge blow that
     /// bonks Mario over.
     SuperCorkscrew,
     /// Hit from below by Mario rising in a spin out of the Rocket's climb (host extension).

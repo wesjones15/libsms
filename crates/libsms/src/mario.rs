@@ -374,7 +374,7 @@ pub struct Mario {
     pub(crate) corkscrew_age: u16,
     /// This dive has had its corkscrew (so a circle after it ends doesn't start another); cleared by any status change.
     pub(crate) corkscrew_used: bool,
-    /// The corkscrew has spun for 4 seconds: it burns, and its next hit is the super blow. Kept through
+    /// The corkscrew has spun for 1 second: it burns, and its next hit is the super blow. Kept through
     /// the dive after it; any status change clears it.
     pub(crate) corkscrew_super: bool,
     /// Ticks left of the blazing slide a burning corkscrew lands in: it keeps its flight speed and its fire.
@@ -743,12 +743,12 @@ impl Mario {
         self.floor_y
     }
 
-    /// The corkscrew has spun for 4 seconds and is on fire (a view draws the flames; its next hit is the super blow).
+    /// The corkscrew has spun for 1 second and is on fire (a view draws the flames; its next hit is the super blow).
     pub fn corkscrew_flaming(&self) -> bool {
         self.corkscrew_super && self.status == Status::JumpCatch
     }
 
-    /// Which flames to draw on him: 0 none, 1 a corkscrew that has spun for 4 seconds (streaming back), 2 a spin out
+    /// Which flames to draw on him: 0 none, 1 a corkscrew that has spun for 1 second (streaming back), 2 a spin out
     /// of the Rocket's climb, rising (streaming down).
     pub fn flames(&self) -> u8 {
         if self.corkscrew_flaming() || (self.blaze > 0 && self.status == Status::Catch) {

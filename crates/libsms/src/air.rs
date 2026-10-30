@@ -17,8 +17,8 @@ pub(crate) const PAD_ACTION_GRACE: u32 = 12;
 const CORKSCREW_GRACE: u16 = 24;
 /// ...but no more than this many ticks in all (6 s), so it can't carry him across the map for ever.
 const CORKSCREW_MAX_TICKS: u16 = 720;
-/// A corkscrew that has gone on this long (4 s) is in flames and hits with the super blow.
-pub(crate) const CORKSCREW_SUPER_TICKS: u16 = 480;
+/// A corkscrew that has gone on this long (1 s) is in flames and hits with the super blow.
+pub(crate) const CORKSCREW_SUPER_TICKS: u16 = 120;
 /// A burning corkscrew's landing slide keeps its speed and its fire this many ticks (2 s).
 const BLAZE_TICKS: u16 = 240;
 /// The corkscrew's flight speed is the Turbo jump's, floored here, plus this: well past a plain dive's.

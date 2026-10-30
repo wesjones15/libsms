@@ -3906,10 +3906,10 @@ fn the_spray_in_a_corkscrew_turns_with_the_roll_as_spin_water() {
     assert!(sideways, "the water never went out to the side");
 }
 
-/// A corkscrew that has spun for four seconds burns, and its one hit is the super blow, which bonks
+/// A corkscrew that has spun for one second burns, and its one hit is the super blow, which bonks
 /// Mario back over.
 #[test]
-fn a_corkscrew_spun_for_four_seconds_burns_and_its_hit_bonks_him() {
+fn a_corkscrew_spun_for_one_second_burns_and_its_hit_bonks_him() {
     let mut s = corkscrew_scene(vec![]);
     assert_eq!(s.sim.mario.status, Status::JumpCatch);
     let start = s.sim.mario.pos;
@@ -3922,7 +3922,7 @@ fn a_corkscrew_spun_for_four_seconds_burns_and_its_hit_bonks_him() {
     let mut flaming_at = None;
     for i in 0..700 {
         spin(&mut s);
-        if i < 400 {
+        if i < 100 {
             assert!(!s.sim.mario.corkscrew_flaming(), "burning after only {i} ticks");
         }
         if s.sim.mario.corkscrew_flaming() {
@@ -3931,7 +3931,7 @@ fn a_corkscrew_spun_for_four_seconds_burns_and_its_hit_bonks_him() {
         }
     }
     let (ticks, at) = flaming_at.expect("it never caught fire");
-    assert!((470..=490).contains(&ticks), "it caught fire after {ticks} ticks (4 s is 480)");
+    assert!((110..=130).contains(&ticks), "it caught fire after {ticks} ticks (1 s is 120)");
     let ahead = Vec3::new(at.x - start.x, 0.0, at.z - start.z).normalize();
     // The same flight again, with an enemy in its path a little past where it catches fire.
     let enemy = at + ahead * 1500.0;
