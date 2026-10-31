@@ -170,6 +170,13 @@ pub enum Look {
     /// The Shine Sprite (`TShine`): its model, animations and glow effects, and the Shine Get
     /// demo's camera path, for a host to place and drive with [`View::update_shine`].
     Shine,
+    /// Sambo flowers (hanasambo.cpp), each a posed prop like [`Look::Shine`] without the glow:
+    /// `samboflower/flower.bmd` (the plain flower), `sambo/sambo.bmd` (the tower) and
+    /// `sambohead/sambohead.bmd` (the hopping head), all under `enemy/`. A host places one
+    /// instance per view and poses it with [`View::update_prop`].
+    Flower,
+    Sambo,
+    SamboHead,
 }
 
 /// [`Look::Shadow`]'s ramp: dark where Mario's colours are dark, light where they're light.
@@ -419,6 +426,8 @@ pub struct View {
     /// The game's particle effects on Mario: dust, stars, smears, spray and pound flames.
     pub fx: Particles,
     shine: Option<Shine>,
+    /// A prop view's clips by lower-case name ([`Look::Flower`] and its kin).
+    props: Option<Vec<(String, Clip)>>,
     return_parts: Option<[u32; 2]>,
     /// Movement effects and super-pound flames have independent host switches.
     pub movement_effects: bool,
@@ -967,6 +976,12 @@ impl View {
         if look == Look::Shine {
             return Self::load_shine(dir);
         }
+        match look {
+            Look::Flower => return Self::load_prop(dir, "samboflower", "flower.bmd"),
+            Look::Sambo => return Self::load_prop(dir, "sambo", "sambo.bmd"),
+            Look::SamboHead => return Self::load_prop(dir, "sambohead", "sambohead.bmd"),
+            _ => {}
+        }
         let assets = libsms::Assets::load(dir);
         let skeleton = assets.skeleton.clone().ok_or("no rig (bmd/ma_mdl1.bmd)")?;
         let mut textures = Textures {
@@ -1115,6 +1130,7 @@ impl View {
         }
         Ok(View {
             shine: None,
+            props: None,
             return_parts: None,
             hand_joints: [b.joint("jnt_hand_R"), b.joint("jnt_hand_L")],
             head: b.joint("M_head"),
@@ -1175,7 +1191,79 @@ impl View {
     /// TCoin's original model and materials, through the same model ABI as Mario. Hosts
     /// instance this bind pose; they do not call Mario's animation update on this view.
     fn load_coin(dir: &Path, file: &str) -> Result<View, String> {
-        let data = std::fs::read(dir.join("scene/mapobj").join(file)).map_err(|e| e.to_string())?;
+        Self::load_static(dir, &dir.join("scene/mapobj").join(file))
+    }
+
+    /// A sambo model (`enemy/<folder>/<file>`) with every `.bck` in its folder, posed by
+    /// [`Self::update_prop`].
+    fn load_prop(dir: &Path, folder: &str, file: &str) -> Result<View, String> {
+        let root = dir.join("enemy").join(folder);
+        let mut view = Self::load_static(dir, &root.join(file))?;
+        let mut clips = Vec::new();
+        for e in std::fs::read_dir(&root).map_err(|e| e.to_string())?.flatten() {
+            let path = e.path();
+            if path.extension().and_then(|x| x.to_str()) != Some("bck") {
+                continue;
+            }
+            let name = path.file_stem().and_then(|x| x.to_str()).unwrap_or("").to_lowercase();
+            if let Some(c) = std::fs::read(&path).ok().and_then(|d| Clip::parse(&d)) {
+                clips.push((name, c));
+            }
+        }
+        view.props = Some(clips);
+        Ok(view)
+    }
+
+    /// A prop view's clip by name: its index and length in frames.
+    pub fn prop_clip(&self, name: &str) -> Option<(usize, f32)> {
+        let name = name.to_lowercase();
+        self.props
+            .as_ref()?
+            .iter()
+            .enumerate()
+            .find(|(_, (n, _))| *n == name)
+            .map(|(i, (_, c))| (i, c.frames))
+    }
+
+    /// Poses a prop view: clip `clip` (an index from [`Self::prop_clip`]; negative is the bind
+    /// pose) at `frame`, turned `yaw` (the host places and scales its own instance); `mirror` is the host's
+    /// X flip, for env-mapped coordinates.
+    pub fn update_prop(&mut self, yaw: i16, clip: i32, frame: f32, mirror: bool) {
+        let Some(props) = self.props.as_ref() else { return };
+        let model = &self.models[0];
+        let joints = match usize::try_from(clip).ok().and_then(|i| props.get(i)) {
+            Some((_, c)) => model.bmd.pose(|j| c.sample(j, frame), |_| None),
+            None => model.bind.clone(),
+        };
+        self.positions.clear();
+        self.normals.clear();
+        self.uvs.clear();
+        let pose = Pose::new(&model.bmd, Mat4::IDENTITY, &joints);
+        let turn = Quat::from_rotation_y(yaw as f32 * std::f32::consts::PI / 32768.0);
+        let world = |n: Vec3| turn * if mirror { Vec3::new(-n.x, n.y, n.z) } else { n };
+        for (bi, b) in model.batches.iter().enumerate() {
+            let hide = model.bmd.materials[b.material].cull == Cull::All;
+            let env = model.batch_env[bi];
+            for v in &b.vertices {
+                let (p, n) = pose.skin(v);
+                let n = n.normalize_or_zero();
+                self.positions.push(if hide { Vec3::ZERO } else { p });
+                self.normals.push(n);
+                self.uvs.push(match env {
+                    Some(mtx) => {
+                        let w = world(n);
+                        env_uv(w.dot(self.right), w.dot(self.up), mtx)
+                    }
+                    None => [v.uv[0].x, v.uv[0].y],
+                });
+            }
+        }
+        self.colors = model.batch_color.clone();
+        self.texture_ids = model.batch_texture.clone();
+    }
+
+    fn load_static(dir: &Path, path: &Path) -> Result<View, String> {
+        let data = std::fs::read(path).map_err(|e| e.to_string())?;
         let skeleton = Skeleton::from_bmd(&data).ok_or("coin has no rig")?;
         let mut textures = Textures::default();
         let model = build(
@@ -1198,6 +1286,7 @@ impl View {
         let texture_ids = model.batch_texture.clone();
         Ok(View {
             shine: None,
+            props: None,
             return_parts: None,
             models: vec![model],
             textures,
@@ -1288,6 +1377,7 @@ impl View {
         }
         let mut view = View {
             return_parts: None,
+            props: None,
             shine: Some(Shine {
                 clips,
                 camera: DemoCamera::load(dir),
@@ -3359,6 +3449,29 @@ mod tests {
                 // Without it, a runner leaves the water behind: the streaks reach well back.
                 assert!(label != "running, nozzle unknown" || worst < -50.0, "{label}: {worst}");
             }
+        }
+    }
+
+    #[test]
+    fn sambo_props_load_and_pose() {
+        let Some(dir) = libsms::assets::find(None) else { eprintln!("SKIP: Sunshine assets absent"); return };
+        if !dir.join("enemy/sambo/sambo.bmd").is_file() { eprintln!("SKIP: sambo models not extracted"); return }
+        for (look, clip) in [
+            (Look::Flower, "flower_hit"),
+            (Look::Flower, "flower_fwait"),
+            (Look::Sambo, "sambo_fset"),
+            (Look::Sambo, "sambo_fattack"),
+            (Look::SamboHead, "sambohead_jump_start"),
+        ] {
+            let mut v = View::load_look(&dir, look).unwrap();
+            let (i, frames) = v.prop_clip(clip).unwrap_or_else(|| panic!("{look:?} lacks {clip}"));
+            assert!(frames > 1.0);
+            v.update_prop(0, -1, 0.0, false);
+            let bind = v.positions.clone();
+            v.update_prop(0, i as i32, frames * 0.5, false);
+            assert!(!bind.is_empty() && bind.len() == v.positions.len());
+            assert!(v.positions.iter().all(|p| p.is_finite()));
+            assert!(v.positions != bind, "{clip} moved nothing");
         }
     }
 }
