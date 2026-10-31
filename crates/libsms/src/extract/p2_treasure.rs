@@ -25,7 +25,7 @@ use super::p2::disc_err;
 use super::{ExtractError, rarc, safe_join, yaz0};
 
 /// Bump when the set of files changes, so an older cache is redone.
-pub const VERSION: u32 = 3;
+pub const VERSION: u32 = 4;
 const MARKER: &str = "p2treasure.ok";
 /// Folder under the cache root everything here goes to.
 pub const DIR: &str = "treasure";
@@ -39,7 +39,9 @@ pub const MESSAGE: &str = "message/pikmin2.bmg";
 pub const STREAMS: [&str; 3] = ["ff_treasureget", "ff_treasureglad", "ff_treasurecomp"];
 
 /// The area-name screens (`new_screen/eng/res_course_name0N.szs`) the lettering comes from.
-const TITLE_ARCHIVES: [&str; 4] = [
+const TITLE_ARCHIVES: [&str; 5] = [
+    // The floor-name screen has the whole alphabet, both cases (the same textures as the course names).
+    "new_screen/eng/res_floor_name_eng_pal.szs",
     "new_screen/eng/res_course_name00.szs",
     "new_screen/eng/res_course_name01.szs",
     "new_screen/eng/res_course_name02.szs",
@@ -63,6 +65,7 @@ pub fn is_complete(dir: &Path) -> bool {
         && CONFIGS.iter().all(|f| root.join("config").join(f).is_file())
         && root.join(MESSAGE).is_file()
         && root.join(TITLE_DIR).join("valley_of_repose.bti").is_file()
+        && root.join(TITLE_DIR).join("al_l_q.bti").is_file()
         && STREAMS.iter().all(|s| root.join(format!("streams/{s}.ast")).is_file())
 }
 
