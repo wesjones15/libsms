@@ -80,8 +80,8 @@ async fn main() {
     let colors = [
         Color::from_rgba(33, 199, 219, 245),
         Color::from_rgba(150, 80, 25, 225),
-        Color::from_rgba(150, 120, 20, 225),
         Color::from_rgba(88, 90, 101, 225),
+        Color::from_rgba(150, 120, 20, 225),
     ];
     for frame in 0..if opening { 4 } else { 3 } {
         clear_background(Color::from_rgba(15, 27, 38, 255));
@@ -138,10 +138,12 @@ async fn main() {
                 draw_triangle(a, b, c, colors[i]);
                 draw_triangle(a, c, d, colors[i]);
             }
-            let at = center + vec2(a.cos(), -a.sin()) * (outer * 0.74);
+            // The side pictures sit slightly farther out, as the RoR2 radial places them.
+            let reach = if i == 1 || i == 3 { outer * 0.79 } else { outer * 0.74 };
+            let at = center + vec2(a.cos(), -a.sin()) * reach;
             let size = (h * 0.08f32).clamp(40., 104.) * scale * if i == 0 { 1.35 } else { 1. };
-            icon(&icons[[1, 2, 3, 0][i]], at, size);
-            if i == 3 {
+            icon(&icons[[1, 2, 0, 3][i]], at, size);
+            if i == 2 {
                 draw_line(
                     at.x - size * 0.35,
                     at.y - size * 0.35,
