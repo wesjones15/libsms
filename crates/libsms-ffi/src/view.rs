@@ -380,6 +380,7 @@ pub unsafe extern "C" fn sms_view_new_look(
             5 => libsms_present::Look::Flower,
             6 => libsms_present::Look::Sambo,
             7 => libsms_present::Look::SamboHead,
+            8 => libsms_present::Look::Effects,
             _ => libsms_present::Look::Mario,
         };
         let view = View::load_look(&dir, look).ok()?;
@@ -2170,6 +2171,53 @@ pub unsafe extern "C" fn sms_view_prop_update(
     unsafe {
         with_view(view, (), |v| {
             v.view.update_prop(yaw, clip, if frame.is_finite() { frame.max(0.0) } else { 0.0 }, mirror != 0)
+        })
+    }
+}
+
+/// Starts one of the flower effects (`ms_smb_kafun_ow`, `ms_smb_ap_rock`...) at `pos` (sim units) on
+/// an effects view (`sms_view_new_look` look 8), `scale` big. Unknown names do nothing.
+///
+/// # Safety
+/// `view` an effects view; `name` nul-terminated; `pos` readable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_effect(
+    view: *mut SmsView,
+    name: *const c_char,
+    pos: *const SmsVec3,
+    scale: f32,
+) {
+    // SAFETY: as documented.
+    let (Some(p), false) = (unsafe { pos.as_ref() }, name.is_null()) else { return };
+    let at = Vec3::from(*p);
+    if !at.is_finite() {
+        return;
+    }
+    // SAFETY: as documented.
+    let name = unsafe { std::ffi::CStr::from_ptr(name) }.to_string_lossy().into_owned();
+    // SAFETY: as documented.
+    unsafe { with_view(view, (), |v| v.view.emit_effect(&name, at, if scale.is_finite() { scale.clamp(0.1, 8.0) } else { 1.0 })) }
+}
+
+/// Runs an effects view `dt` seconds and builds its quads for the `sms_view_fx_*` readers, with the
+/// camera's right and up for the billboards.
+///
+/// # Safety
+/// `view` an effects view; `right` and `up` readable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_effects_step(
+    view: *mut SmsView,
+    dt: f32,
+    right: *const SmsVec3,
+    up: *const SmsVec3,
+) {
+    // SAFETY: as documented.
+    let (Some(r), Some(u)) = (unsafe { right.as_ref() }, unsafe { up.as_ref() }) else { return };
+    // SAFETY: as documented.
+    unsafe {
+        with_view(view, (), |v| {
+            v.view.set_camera(Vec3::from(*r), Vec3::from(*u));
+            v.view.step_effects(if dt.is_finite() { dt.clamp(0.0, 0.25) } else { 0.0 });
         })
     }
 }

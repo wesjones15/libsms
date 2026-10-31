@@ -26,10 +26,15 @@
 //! PAL disc. What is a stand-in is marked: the tower's biting head is a cylinder at the
 //! base (not the posed head joint), and a head's hop distance is `mSLMoveDist` over the air time.
 
-use glam::Vec3;
+use std::collections::HashMap;
+use std::path::Path;
+use std::sync::Arc;
+
+use glam::{Quat, Vec3};
 
 use crate::host::{Enemy, Host};
 use crate::prm::Prm;
+use crate::skeleton::{Clip, Skeleton};
 
 /// Ids this module hands out through [`Host::enemies`]-style queries start here, well above any
 /// host's own (so one callback can tell them apart).
@@ -298,6 +303,82 @@ pub enum FlowerEvent {
     HeadBit { head: usize, from: Vec3, target: usize },
 }
 
+/// Joint 3 of `sambo.bmd` is the head (`THanaSambo::mHeadJntIndex`): the game's hit actor for
+/// the bite follows it every frame (`moveObject`, `checkHit`).
+pub const HEAD_JOINT: usize = 3;
+
+/// The tower's rig and clips, to find where its head is (`getAnmMtx(mHeadJntIndex)`).
+#[derive(Debug, Clone)]
+pub struct TowerRig {
+    skeleton: Skeleton,
+    clips: HashMap<String, Clip>,
+}
+
+impl TowerRig {
+    /// Reads `enemy/sambo/sambo.bmd` and its `.bck`s from an assets folder.
+    pub fn load(assets: &Path) -> Option<TowerRig> {
+        let dir = assets.join("enemy/sambo");
+        let skeleton = Skeleton::from_bmd(&std::fs::read(dir.join("sambo.bmd")).ok()?)?;
+        if skeleton.len() <= HEAD_JOINT {
+            return None;
+        }
+        let mut clips = HashMap::new();
+        for e in std::fs::read_dir(&dir).ok()?.flatten() {
+            let path = e.path();
+            if path.extension().and_then(|x| x.to_str()) != Some("bck") {
+                continue;
+            }
+            let name = path.file_stem()?.to_str()?.to_lowercase();
+            if let Some(c) = std::fs::read(&path).ok().and_then(|d| Clip::parse(&d)) {
+                clips.insert(name, c);
+            }
+        }
+        Some(TowerRig { skeleton, clips })
+    }
+
+    /// The head in the model's own space at `frame` of `clip` (a host mirrors models across X to
+    /// draw them, so the sim space's X is the model's turned over).
+    pub fn head(&self, clip: &str, looped: bool, ticks: u32) -> Option<Vec3> {
+        let c = self.clips.get(clip)?;
+        let mut frame = ticks as f32 * 0.5;
+        if c.frames > 1.0 {
+            frame = if looped { frame % c.frames } else { frame.min(c.frames - 1.0) };
+        }
+        let m = self.skeleton.pose(c, frame).get(HEAD_JOINT).copied()?;
+        let j = m.w_axis.truncate();
+        Some(Vec3::new(-j.x, j.y, j.z))
+    }
+}
+
+/// The clip a tower plays in a state, and whether it loops (what a host draws and where the head
+/// is follow it).
+pub fn tower_clip(state: TowerState) -> Option<(&'static str, bool)> {
+    Some(match state {
+        TowerState::Appearing => ("sambo_fset", false),
+        TowerState::Waiting => ("sambo_fwait", true),
+        TowerState::AttackStart => ("sambo_fattack_start", false),
+        TowerState::AttackLoop => ("sambo_fattack", true),
+        TowerState::AttackEnd => ("sambo_fattack_end", false),
+        TowerState::Hiding => ("sambo_fhide", false),
+        TowerState::Frozen => ("sambo_hit", false),
+        TowerState::Dying => ("sambo_down", false),
+        TowerState::Hidden | TowerState::Dead => return None,
+    })
+}
+
+/// Where a tower's head is: the rig's joint turned to its facing. Without the rig a stand-in at
+/// `head_height`, reaching `reach` out along the facing while it bites.
+fn tower_head(rig: &Option<Arc<TowerRig>>, p: &TowerParams, t: &Tower) -> Vec3 {
+    let turn = Quat::from_rotation_y(t.yaw.to_radians());
+    if let (Some(rig), Some((clip, looped))) = (rig, tower_clip(t.state)) {
+        if let Some(local) = rig.head(clip, looped, t.age) {
+            return t.pos + turn * local;
+        }
+    }
+    let reach = if t.state == TowerState::AttackLoop { p.attack_dist * 0.8 } else { 0.0 };
+    t.pos + Vec3::Y * p.head_height + turn * Vec3::new(0.0, 0.0, reach)
+}
+
 /// A tower's nerve (`TNerveHanaSambo*`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TowerState {
@@ -356,6 +437,8 @@ pub struct FlowerWorld {
     pub tower_params: TowerParams,
     pub head_params: HeadParams,
     pub clips: Clips,
+    /// The tower's rig, for where its head is ([`FlowerWorld::with_rig`]).
+    pub rig: Option<Arc<TowerRig>>,
     pub units: Vec<FlowerUnit>,
     pub towers: Vec<Tower>,
     pub heads: Vec<Head>,
@@ -436,6 +519,12 @@ impl FlowerWorld {
         self
     }
 
+    /// Finds the tower's head by its rig and clips under `assets` (without them a stand-in).
+    pub fn with_rig(mut self, assets: &Path) -> FlowerWorld {
+        self.rig = TowerRig::load(assets).map(Arc::new);
+        self
+    }
+
     pub fn add_unit(&mut self, unit: FlowerUnit) -> usize {
         self.units.push(unit);
         self.units.len() - 1
@@ -496,7 +585,7 @@ impl FlowerWorld {
             }
             out.push(Target {
                 id: ID_BASE + 0x10000 + i as u64,
-                pos: t.pos + Vec3::Y * self.tower_params.head_height,
+                pos: tower_head(&self.rig, &self.tower_params, t),
                 radius: self.tower_params.head_damage_radius,
                 height: self.tower_params.head_damage_height,
             });
@@ -657,6 +746,7 @@ impl FlowerWorld {
 
     fn step_towers(&mut self, host: &dyn Host, marios: &[Vec3], out: &mut Vec<FlowerEvent>) {
         let (p, c) = (self.tower_params, self.clips);
+        let rig = self.rig.clone();
         for (i, t) in self.towers.iter_mut().enumerate() {
             t.age += 1;
             // Nobody to wake for: a tower with no Mario about stays as it is.
@@ -703,11 +793,6 @@ impl FlowerWorld {
                     }
                 }
                 TowerState::AttackLoop => {
-                    // The stand-in head: a cylinder `head_attack_radius` wide around the line
-                    // from the base towards Mario, out to the attack distance.
-                    if in_reach && flat < p.attack_dist + p.head_attack_radius && t.age % 30 == 1 {
-                        out.push(FlowerEvent::TowerBite { tower: i, from: t.pos, target });
-                    }
                     if t.age > p.attacking_time {
                         t.state = TowerState::AttackEnd;
                         t.age = 0;
@@ -741,6 +826,28 @@ impl FlowerWorld {
                     }
                 }
                 TowerState::Dead => {}
+            }
+            // `THanaSamboHead::checkHit`: the head's attack cylinder, at the head joint, hurts a
+            // Mario it overlaps (Mario's own cylinder is 50 wide, 160 tall). A frozen tower does not bite,
+            // and a bite is at most once a half second.
+            t.since_attack = t.since_attack.saturating_add(1);
+            if target != usize::MAX
+                && !matches!(
+                    t.state,
+                    TowerState::Hidden | TowerState::Dead | TowerState::Dying | TowerState::Frozen
+                )
+                && t.since_attack > 60
+            {
+                let head = tower_head(&rig, &p, t);
+                let (dx, dz) = (mario.x - head.x, mario.z - head.z);
+                let r = p.head_attack_radius + 50.0;
+                if dx * dx + dz * dz < r * r
+                    && mario.y < head.y + p.head_attack_height
+                    && mario.y + 160.0 > head.y
+                {
+                    t.since_attack = 0;
+                    out.push(FlowerEvent::TowerBite { tower: i, from: head, target });
+                }
             }
             // `TSamboFlower` / enemy actors stay on the floor.
             if t.state != TowerState::Dead {
@@ -1159,6 +1266,28 @@ mod tests {
         copy.targets(&mut a);
         w.targets(&mut b);
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn the_head_follows_the_rig() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+        let Some(rig) = TowerRig::load(&dir) else {
+            eprintln!("SKIP: no extracted sambo rig");
+            return;
+        };
+        let wait = rig.head("sambo_fwait", true, 0).unwrap();
+        let rise = rig.head("sambo_fset", false, 0).unwrap();
+        let up = rig.head("sambo_fset", false, 1000).unwrap();
+        assert!(wait.is_finite() && rise.is_finite() && up.is_finite());
+        assert!(wait.y > 100.0, "an upright tower's head is high: {wait:?}");
+        assert!(rise.y < up.y, "it rises: {rise:?} -> {up:?}");
+        let mut w = FlowerWorld::new().with_rig(&dir);
+        w.add_tower(Vec3::ZERO, 90.0);
+        let h = tower_head(&w.rig, &w.tower_params, &Tower {
+            pos: Vec3::ZERO, yaw: 90.0, state: TowerState::Waiting, age: 0, since_attack: 0,
+        });
+        // Turned 90 degrees about Y, a head that was off along Z is now off along X.
+        assert!((h.x - wait.z).abs() < 1.0 && (h.z + wait.x).abs() < 1.0, "{h:?} vs {wait:?}");
     }
 
     #[test]

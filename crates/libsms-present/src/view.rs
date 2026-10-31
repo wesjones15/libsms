@@ -177,6 +177,10 @@ pub enum Look {
     Flower,
     Sambo,
     SamboHead,
+    /// No body to draw: the sambo flowers' particle effects (pollen, rock and smoke bursts,
+    /// vanishing puffs), emitted by name with [`View::emit_effect`] and stepped by
+    /// [`View::step_effects`]; the quads come from the usual `fx` readers.
+    Effects,
 }
 
 /// [`Look::Shadow`]'s ramp: dark where Mario's colours are dark, light where they're light.
@@ -315,6 +319,20 @@ mod texture_motion_tests {
         assert_eq!(start, model.bmd.materials.iter().map(|m| m.tex_mtx.clone()).collect::<Vec<_>>(), "BTK does not wrap");
     }
 }
+
+/// The sambo flowers' effects (`THanaSambo`, `TSamboFlower`, `TNerveHanaSamboDie`): pollen when a
+/// flower opens (`ms_smb_kafun_ow`) or a tower bites (`_oa`), the rock and smoke of a tower
+/// rising (`ms_smb_ap_*`) and sinking (`ms_smb_hd_*`), the puffs of one dying (`ms_enm_disap_*`).
+pub const FLOWER_EFFECTS: [&str; 8] = [
+    "ms_smb_kafun_ow",
+    "ms_smb_kafun_oa",
+    "ms_smb_ap_rock",
+    "ms_smb_ap_smoke",
+    "ms_smb_hd_rock",
+    "ms_smb_hd_smoke",
+    "ms_enm_disap_a",
+    "ms_enm_disap_b",
+];
 
 /// The Shine Sprite's clips, glow effects and demo camera ([`Look::Shine`]).
 struct Shine {
@@ -980,6 +998,7 @@ impl View {
             Look::Flower => return Self::load_prop(dir, "samboflower", "flower.bmd"),
             Look::Sambo => return Self::load_prop(dir, "sambo", "sambo.bmd"),
             Look::SamboHead => return Self::load_prop(dir, "sambohead", "sambohead.bmd"),
+            Look::Effects => return Self::load_effects(dir),
             _ => {}
         }
         let assets = libsms::Assets::load(dir);
@@ -1212,6 +1231,30 @@ impl View {
         }
         view.props = Some(clips);
         Ok(view)
+    }
+
+    /// The flower effects' view: a flower's model (never drawn) carrying the particle runs.
+    fn load_effects(dir: &Path) -> Result<View, String> {
+        let mut view = Self::load_prop(dir, "samboflower", "flower.bmd")?;
+        view.fx = Particles::load(dir, &FLOWER_EFFECTS);
+        for name in FLOWER_EFFECTS {
+            view.fx.set_world_space(name, true);
+        }
+        Ok(view)
+    }
+
+    /// Starts one of [`FLOWER_EFFECTS`] at `pos` (`TMarioParticleManager::emit`), `scale` big.
+    pub fn emit_effect(&mut self, name: &str, pos: Vec3, scale: f32) {
+        self.fx.emit(name, Mat4::from_translation(pos), scale);
+    }
+
+    /// Runs the effects `dt` seconds on and builds their quads.
+    pub fn step_effects(&mut self, dt: f32) {
+        self.time += dt.max(0.0);
+        let ticks = self.time as f64 * 120.0;
+        self.fx.advance(ticks as u64);
+        let fraction = self.fx.render_fraction(ticks);
+        self.fx.build_interpolated(self.right, self.up, fraction, |_| true);
     }
 
     /// A prop view's clip by name: its index and length in frames.
@@ -3473,5 +3516,23 @@ mod tests {
             assert!(v.positions.iter().all(|p| p.is_finite()));
             assert!(v.positions != bind, "{clip} moved nothing");
         }
+    }
+
+    #[test]
+    fn flower_effects_emit_and_run() {
+        let Some(dir) = libsms::assets::find(None) else { eprintln!("SKIP: Sunshine assets absent"); return };
+        if !dir.join("enemy/samboflower/flower.bmd").is_file() { eprintln!("SKIP: sambo models not extracted"); return }
+        let mut v = View::load_look(&dir, Look::Effects).unwrap();
+        let at = Vec3::new(100.0, 0.0, 50.0);
+        for name in FLOWER_EFFECTS {
+            v.emit_effect(name, at, 1.0);
+        }
+        let mut saw = false;
+        for _ in 0..30 {
+            v.step_effects(1.0 / 30.0);
+            saw |= !v.fx.vertices.is_empty();
+        }
+        assert!(saw, "pollen, rocks and smoke should draw quads");
+        assert!(v.fx.vertices.iter().all(|p| p.pos.is_finite()));
     }
 }

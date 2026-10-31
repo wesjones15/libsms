@@ -210,6 +210,11 @@ pub unsafe extern "C" fn sms_fw_setup(
         load("hanasambo.prm").as_ref(),
         load("sambohead.prm").as_ref(),
     );
+    if !assets_dir.is_null() {
+        // SAFETY: as documented.
+        let dir = unsafe { CStr::from_ptr(assets_dir) }.to_string_lossy().into_owned();
+        w = w.with_rig(Path::new(&dir));
+    }
     // SAFETY: as documented.
     if let Some(c) = unsafe { clips.as_ref() } {
         let d = Clips::default();
