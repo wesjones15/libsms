@@ -15,22 +15,26 @@ use libsms_assets::Pose;
 use crate::j3d::{Lights, Look, Pass, Renderer};
 use crate::mario_model::Part;
 
-/// Extra placement in the head joint's frame, decomp units: offset, then uniform scale.
+/// Extra placement in the head joint's frame: a turn about the side axis (degrees, Mario's
+/// head frame has +x along the neck, +z to his side), then an offset in decomp units, then a
+/// uniform scale. Mario's frame has up at -y and forward at -z.
 #[derive(Clone, Copy, Debug)]
 pub struct Fit {
     pub offset: Vec3,
     pub scale: f32,
+    pub tilt: f32,
 }
 
 impl Fit {
-    pub const MARIO: Fit = Fit { offset: Vec3::ZERO, scale: 1.0 };
+    pub const MARIO: Fit = Fit { offset: Vec3::ZERO, scale: 1.0, tilt: 0.0 };
 
-    /// `SMS_HELMET_ADJ=x,y,z,scale` overrides every skin's fit (for tuning captures).
+    /// `SMS_HELMET_ADJ=x,y,z,scale[,tilt]` overrides every skin's fit (for tuning captures).
     pub fn from_env(default: Fit) -> Fit {
         let Ok(v) = std::env::var("SMS_HELMET_ADJ") else { return default };
         let n: Vec<f32> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect();
         match n[..] {
-            [x, y, z, s] => Fit { offset: Vec3::new(x, y, z), scale: s },
+            [x, y, z, s] => Fit { offset: Vec3::new(x, y, z), scale: s, tilt: 0.0 },
+            [x, y, z, s, t] => Fit { offset: Vec3::new(x, y, z), scale: s, tilt: t },
             _ => default,
         }
     }
@@ -63,7 +67,8 @@ impl Helmet {
     /// `head` is the head joint's matrix in model space (decomp units), `root` places model
     /// space in the scene. Drawn after the body so the glass blends over it.
     pub fn draw(&mut self, head: Mat4, fit: Fit, root: Mat4, view: Mat4, proj: Mat4) {
-        let at = head * Mat4::from_translation(fit.offset) * Mat4::from_scale(Vec3::splat(fit.scale));
+        let at = head * Mat4::from_rotation_z(fit.tilt.to_radians()) * Mat4::from_translation(fit.offset)
+            * Mat4::from_scale(Vec3::splat(fit.scale));
         let lights = Lights::daylight(view);
         let pose = Pose::new(&self.part.model.bmd, root * at, &self.part.bind);
         for pass in [Pass::Opaque, Pass::Translucent] {

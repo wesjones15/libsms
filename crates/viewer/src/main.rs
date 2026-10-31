@@ -47,10 +47,13 @@ use macroquad::prelude::*;
 
 /// Decomp units (about cm) to scene metres.
 const S: f32 = 0.01;
-// The helmet's per-skin fit on the head joint (helmet.rs); Mario's is the identity.
-const LUIGI_FIT: helmet::Fit = helmet::Fit::MARIO;
-const PIANTA_FIT: helmet::Fit = helmet::Fit::MARIO;
-const YOSHI_FIT: helmet::Fit = helmet::Fit::MARIO;
+// The helmet's per-skin fit on the head joint (helmet.rs); Mario's is the identity. Tuned by eye
+// against the contact sheet (`SMS_HELMET_ADJ`): up is -y and forward is -z in the head frame.
+use ::glam::Vec3 as V3g;
+const LUIGI_FIT: helmet::Fit = helmet::Fit { offset: V3g::new(8.0, -22.0, 0.0), scale: 0.95, tilt: 0.0 };
+const PIANTA_FIT: helmet::Fit = helmet::Fit { offset: V3g::new(0.0, -12.0, -12.0), scale: 1.15, tilt: 0.0 };
+// Yoshi's neck leans forward, so the bowl is turned back upright about the side axis.
+const YOSHI_FIT: helmet::Fit = helmet::Fit { offset: V3g::new(0.0, -12.0, -4.0), scale: 1.5, tilt: -45.0 };
 
 fn mq(v: V3) -> Vec3 {
     vec3(v.x * S, v.y * S, v.z * S)
