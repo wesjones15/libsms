@@ -342,6 +342,7 @@ struct Emitter {
     global_pos: Vec3,
     /// `setGlobalScale`: dynamics (local positions) and particle sizes together.
     global_scale: f32,
+    global_alpha: f32,
     /// `JPADraw::mScaleOut`, driven by the emitter's KFA1 draw-scale curve.
     draw_scale: f32,
     /// The emitter's other KFA1 curves this frame, by key kind 0..=9: rate, volume size, sweep,
@@ -499,11 +500,11 @@ fn tev_coefficients(base: &BaseShape, prm: Vec3, env: Vec3) -> ([Vec3; 3], usize
 
 /// The texture's coverage alone (its alpha; the TEV alpha's texture half), for the black
 /// draw under an `over` effect.
-fn coverage_image(tex: &Texture) -> FxTexture {
+fn coverage_image(tex: &Texture, alpha_mode:u8) -> FxTexture {
     let img = &tex.image;
     let mut rgba = Vec::with_capacity(img.rgba.len());
     for p in img.rgba.chunks_exact(4) {
-        rgba.extend_from_slice(&[255, 255, 255, p[3]]);
+        rgba.extend_from_slice(&[255, 255, 255, if alpha_mode==1 {255}else{p[3]}]);
     }
     FxTexture {
         width: img.width,
@@ -517,14 +518,14 @@ fn coverage_image(tex: &Texture) -> FxTexture {
 /// The basis images of `tex`: each texel's `t` turned into the basis polynomial, times the
 /// texture's alpha (the TEV alpha's texture half). Alpha is 1: the vertex colours carry the
 /// rest.
-fn basis_images(tex: &Texture, count: u32) -> Vec<FxTexture> {
+fn basis_images(tex: &Texture, count: u32, alpha_mode:u8) -> Vec<FxTexture> {
     let img = &tex.image;
     let wrap = [tex.wrap_s, tex.wrap_t];
     (0..count)
         .map(|k| {
             let mut rgba = Vec::with_capacity(img.rgba.len());
             for p in img.rgba.chunks_exact(4) {
-                let ta = p[3] as f32 / 255.0;
+                let ta = if alpha_mode==1 {1.0}else{p[3] as f32 / 255.0};
                 for &c in &p[..3] {
                     let t = c as f32 / 255.0;
                     let b = match (count, k) {
@@ -631,8 +632,7 @@ fn bake_paint(textures: &mut Vec<FxTexture>, jpa: &Jpa) -> Paint {
     let base = &jpa.base;
     let stripe = base.kind == 5 || base.kind == 6;
     let second = jpa.ex_tex.as_ref().is_some_and(|e| e.second_on());
-    let projected = stripe
-        && base.projection
+    let projected = base.projection
         && jpa
             .ex_tex
             .as_ref()
@@ -681,7 +681,7 @@ fn bake_paint(textures: &mut Vec<FxTexture>, jpa: &Jpa) -> Paint {
                         rgba[dst + k] =
                             (env[k] as f32 * (1. - t) + prm[k] as f32 * t).round() as u8;
                     }
-                    rgba[dst + 3] = (source.rgba[src + 3] as u32 * prm[3] as u32 / 255) as u8;
+                    rgba[dst + 3] = ((if base.alpha_mode==1 {255}else{source.rgba[src + 3]}) as u32 * prm[3] as u32 / 255) as u8;
                 }
             }
         }
@@ -744,14 +744,14 @@ fn bake_paint(textures: &mut Vec<FxTexture>, jpa: &Jpa) -> Paint {
                 textures.push(FxTexture {
                     width: tex.image.width,
                     height: tex.image.height,
-                    rgba: tex.image.rgba.clone(),
+                    rgba: {let mut rgba=tex.image.rgba.clone();for p in rgba.chunks_exact_mut(4) {if base.alpha_mode==1 {p[3]=255;}if base.color_mode==5 {p[..3].fill(255);}}rgba},
                     wrap: [tex.wrap_s, tex.wrap_t],
                     version: 1,
                 });
             } else {
-                textures.extend(basis_images(tex, count));
+                textures.extend(basis_images(tex, count, base.alpha_mode));
                 if over {
-                    textures.push(coverage_image(tex));
+                    textures.push(coverage_image(tex, base.alpha_mode));
                 }
             }
         }
@@ -989,6 +989,11 @@ impl Particles {
         self.request_scaled(slot, name, mtx, 1.0);
     }
 
+    /// JPABaseEmitter::setGlobalAlpha, independent of the authored particle alpha curve.
+    pub fn set_global_alpha(&mut self, slot:u32, alpha:f32) {
+        for e in &mut self.emitters {if e.bound_slot==Some(slot) {e.global_alpha=alpha.clamp(0.0,1.0);}}
+    }
+
     pub fn request_scaled(&mut self, slot: u32, name: &str, mtx: Mat4, scale: f32) {
         if let Some(&e) = self.by_name.get(name) {
             if let Some(w) = self.wanted.iter_mut().find(|w| w.0 == slot) {
@@ -1180,6 +1185,7 @@ impl Particles {
             global_rot: Mat3::IDENTITY,
             global_pos: Vec3::ZERO,
             global_scale: 1.0,
+            global_alpha: 1.0,
             draw_scale: 1.0,
             keyed: [None; 10],
             world_space: self.effects[effect].world_space,
@@ -1400,6 +1406,22 @@ impl Particles {
                     });
                     continue;
                 }
+                // JPAC2-10 also projects indirect maps on billboard particles (e.g.
+                // Fiery Bulblax heat haze), using the same host scene-refraction pass.
+                if let Paint::Refraction {texture}=paint {
+                    let first=self.vertices.len() as u32;
+                    for particle in particles {
+                        let p=sample_particle(particle,fraction);
+                        if let Some(corners)=particle_quad(e,&p,p.global,jpa,right,up,0) {
+                            let (prm,_)=registers(e,Some(&p),jpa);
+                            for (pos,uv) in corners {
+                                self.vertices.push(FxVertex {pos,u:uv[0],v:uv[1],color:[1.,1.,1.,prm[3]]});
+                            }
+                        }
+                    }
+                    self.batches.push(FxBatch {texture:*texture,first_vertex:first,vertex_count:self.vertices.len() as u32-first,blend:blend::REFRACTION});
+                    continue;
+                }
                 let Paint::Basis { first, count, over } = paint else {
                     continue;
                 };
@@ -1487,6 +1509,7 @@ impl Particles {
                     });
                 }
             }
+            for vertex in &mut self.vertices[fade_first..] {vertex.color[3] *= e.global_alpha;}
             if let Some((left, total)) = e.fade {
                 let alpha = (left / total).clamp(0.0, 1.0);
                 for vertex in &mut self.vertices[fade_first..] { vertex.color[3] *= alpha; }
@@ -1539,7 +1562,8 @@ fn registers(e: &Emitter, p: Option<&Particle>, jpa: &Jpa) -> ([f32; 4], [f32; 3
 /// see-through effects (`count` 1) prm itself.
 fn paint_colors(base: &BaseShape, prm: [f32; 4], env: [f32; 3], count: u32) -> [[f32; 4]; 3] {
     if count == 1 {
-        return [prm, [0.0; 4], [0.0; 4]];
+        let c=if base.color_mode==0 {[1.0,1.0,1.0,prm[3]]}else{prm};
+        return [c, [0.0; 4], [0.0; 4]];
     }
     let (k, _) = tev_coefficients(base, Vec3::new(prm[0], prm[1], prm[2]), Vec3::from(env));
     k.map(|c| {
@@ -1611,7 +1635,7 @@ fn bake_stripe(e: &Emitter, jpa: &Jpa, w: u32, h: u32) -> Vec<u8> {
             let tc = Vec3::new(t[0], t[1], t[2]);
             let (a, b, c, d) = (a0 + a1 * tc, b0 + b1 * tc, c0 + c1 * tc, d0 + d1 * tc);
             let mut color = (d + a * (Vec3::ONE - c) + b * c).clamp(Vec3::ZERO, Vec3::ONE);
-            let mut alpha = t[3] * prm[3];
+            let mut alpha = (if base.alpha_mode==1 {1.0}else{t[3]}) * prm[3];
             if let Some(s) = second {
                 let s = sample(s, uv[0], uv[1]);
                 color *= Vec3::new(s[0], s[1], s[2]);
@@ -3859,4 +3883,13 @@ mod tests {
             "the spark's red key is green too"
         );
     }
+    #[test]
+    fn alpha_tev_prm_only_ignores_transparent_texels_and_keeps_axes() {
+        let tex=Texture {name:"alpha-test".into(),image:libsms_assets::Image {width:1,height:1,rgba:vec![120,80,40,0]},wrap_s:Wrap::Mirror,wrap_t:Wrap::Repeat,format:6,min_filter:1,mag_filter:1};
+        let normal=basis_images(&tex,2,0);let direct=basis_images(&tex,2,1);
+        assert_eq!(&normal[1].rgba[..3],&[0,0,0]);assert_eq!(&direct[1].rgba[..3],&[120,80,40]);
+        assert_eq!(direct[1].wrap_modes(),[2,0]);
+        assert_eq!(coverage_image(&tex,0).rgba[3],0);assert_eq!(coverage_image(&tex,1).rgba[3],255);
+    }
+
 }

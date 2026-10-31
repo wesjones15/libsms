@@ -133,6 +133,8 @@ pub struct BaseShape {
     /// TEV colour inputs (`data[0x30]`): 0 tex, 1 prm*tex, 2 prm+tex*(1-prm)... see
     /// [`BaseShape::tev`].
     pub color_mode: u8,
+    /// 0 texture-alpha times prm-alpha; 1 prm-alpha only (JPA2 st_aa).
+    pub alpha_mode: u8,
     /// `GXBlendMode` index (0 none, 1 blend, 2 logic, 3 subtract), source and destination
     /// factors (`stBlendFactor`).
     pub blend_mode: u8,
@@ -482,7 +484,7 @@ fn read_field(b: Be) -> Result<Field, Error> {
 }
 
 /// `makeColorTable`: `max + 1` entries, stepped linearly between the keys.
-fn color_table(b: Be, at: usize, keys: usize, max: i16) -> Result<Vec<[u8; 4]>, Error> {
+pub(crate) fn color_table(b: Be, at: usize, keys: usize, max: i16) -> Result<Vec<[u8; 4]>, Error> {
     let keys: Vec<ColorKey> = (0..keys)
         .map(|i| {
             let o = at + i * 6;
@@ -547,6 +549,7 @@ fn read_base(b: Be) -> Result<BaseShape, Error> {
         global_col_anm: r5 & 2 != 0 || stripe,
         global_tex_anm: r6 & 2 != 0 || stripe,
         color_mode: b.u8(0x30)?,
+        alpha_mode: 0,
         blend_mode: b.u8(0x35)?,
         blend_src: b.u8(0x36)?,
         blend_dst: b.u8(0x37)?,

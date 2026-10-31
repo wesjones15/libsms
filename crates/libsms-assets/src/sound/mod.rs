@@ -19,6 +19,7 @@ pub mod bank;
 pub mod barc;
 pub mod bas;
 pub mod names;
+pub mod p2music;
 pub mod stream;
 
 use std::collections::HashMap;

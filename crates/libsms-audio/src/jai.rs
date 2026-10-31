@@ -366,6 +366,10 @@ impl SyncHandler for Jai {
                 e.mgrs[t].bus[0] = 0xFFFF;
                 0
             }
+            // Pikmin 2 PSGame::PikSceneMgr::seqCpuSync / JumpBgmSeq::outputJumpRequest.
+            // No jump request is 0xFFFF. Zero would restart the BMS every tick.
+            0x4001 => 0xFFFF,
+            0x2E00 => 30,
             110 => 0xFF,
             120 => {
                 self.ukulele = !self.ukulele;
@@ -641,6 +645,28 @@ impl SoundSystem {
 
     pub fn bgm_playing(&self) -> Option<u32> {
         self.seqs.iter().find(|q| !q.stopping).map(|q| q.id)
+    }
+
+    /// Pikmin 2 DirectedBgm chooses a BMS filename, rather than Sunshine's sound-table id.
+    pub fn play_bgm_named(&mut self, name: &str) -> bool {
+        let Some(index)=self.data.seqs.entries.iter().position(|e|e.as_ref().is_some_and(|e|e.name==name)) else {return false};
+        self.stop_bgm(0);
+        let Some(mut q)=self.start_seq_sound(0x8000_0000|index as u32) else {return false};
+        q.volume[1]=MovePara::new(1.0);
+        self.engine.outer[q.root].set(update::PITCH,1.0);
+        self.push_seq_volume(&mut q);
+        self.seqs.push(q);true
+    }
+
+    /// DirectedBgm's child-track outer volume. Sequence time keeps running while layers fade.
+    pub fn directed_bgm_layers(&mut self, levels:&[f32;16]) {
+        let Some(root)=self.seqs.iter().find(|q|!q.stopping).map(|q|q.root) else {return};
+        for (i,&volume) in levels.iter().enumerate() {
+            if let Some(child)=self.engine.tracks[root].children[i] {
+                self.engine.outer[child].on(update::VOLUME);
+                self.engine.outer[child].set(update::VOLUME,volume.clamp(0.0,1.0));
+            }
+        }
     }
 
     // ------------------------------------------------------------ streams

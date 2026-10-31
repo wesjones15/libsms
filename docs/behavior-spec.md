@@ -818,3 +818,5 @@ synthetic wet-slide stamps do not count. `sms_sim_water_touches_segment` exposes
 the query without changing existing C layouts; teleport clears contacts. RoR2
 uses it to extinguish individual fire-trail segments. Fire vulnerability and the
 5x water damage multiplier are host policy, not Sunshine damage behavior.
+
+JPAC2-10 resources now decode into the shared JParticle runtime (dynamics, animation keys, child particles, fields, TEV selectors and texture samplers). Billboard indirect heat shares the scene-refraction path. Named Pikmin 2 BMS playback uses source director maps and the JumpBgm no-jump sentinel; four overworld scores and nine added enemy cues have PCM coverage in p2_music.rs.

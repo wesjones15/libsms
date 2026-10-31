@@ -618,6 +618,12 @@ pub struct Pikmin2Audio {
 const FRAME: f32 = 1.0 / 30.0;
 
 impl Pikmin2Audio {
+    /// Independent BGM output, also usable by hosts without a Louie skin.
+    pub fn play_music(&self,name:&str)->bool {
+        self.sys.lock().ok().is_some_and(|mut s|s.play_bgm_named(name))
+    }
+    pub fn stop_music(&self) {if let Ok(mut s)=self.sys.lock(){s.stop_bgm(0);}}
+    pub fn music_layers(&self,levels:&[f32;16]) {if let Ok(mut s)=self.sys.lock(){s.directed_bgm_layers(levels);}}
     /// `dir` holds `AudioRes/` from the Pikmin 2 disc (`libsms::extract::p2`). Failure leaves a silent host.
     pub fn start(dir: &Path) -> Option<Self> {
         match Self::open(dir) {

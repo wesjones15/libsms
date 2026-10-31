@@ -1,8 +1,7 @@
 //! Pikmin 2's particle containers (`game.jpc`, magic `JPAC2-10`): `JPAResourceLoader::load_jpc`
-//! (JPAResourceLoader.cpp). Only what a stand-in needs is read: each resource's id, its base shape
-//! (`BSP1`: colours, size, texture index, blend) and its texture list (`TDB1`), and the containers'
-//! textures (`TEX1`: a name, then a `ResTIMG` at 0x20). The emitters, fields, keys and the particle
-//! simulation are not read; Sunshine's `.jpa` files (`jpa.rs`) are an older layout.
+//! (JPAResourceLoader.cpp). Resource blocks are retained and decoded by `Jpc::particle`
+//! into the common JParticle data, including dynamics, fields, child particles, animation
+//! keys, TEV selectors and independent texture samplers. Sunshine's `.jpa` layout differs.
 //!
 //! ```text
 //! 0x00 "JPAC2-10"   0x08 u16 resources   0x0A u16 textures   0x0C u32 offset of the textures
@@ -37,6 +36,8 @@ pub struct Resource {
     pub shape: Option<BaseShape>,
     /// `TDB1`: indices into the container's textures.
     pub textures: Vec<u16>,
+    /// Source blocks retained for decoding into the shared JParticle runtime.
+    pub blocks: Vec<Vec<u8>>,
 }
 
 pub struct Jpc {
@@ -62,6 +63,8 @@ impl Jpc {
             for _ in 0..blocks {
                 let tag = r.bytes(o, 4)?;
                 let size = r.u32(o + 4)? as usize;
+                if size < 8 { return Err(Error::Bad("empty JPA2 block".into())); }
+                res.blocks.push(r.bytes(o, size)?.to_vec());
                 match tag {
                     b"BSP1" => {
                         res.shape = Some(BaseShape {
@@ -103,6 +106,12 @@ impl Jpc {
         let shape = res.shape.as_ref()?;
         let slot = *res.textures.get(shape.texture_index as usize)? as usize;
         Some((shape, self.textures.get(slot)?))
+    }
+
+    /// Decode JPAC2-10 dynamics into the same engine-neutral data used by Sunshine.
+    pub fn particle(&self, id: u16) -> Result<crate::jpa::Jpa, Error> {
+        let res = self.resources.get(&id).ok_or_else(|| Error::Bad(format!("no JPA2 emitter {id:#x}")))?;
+        crate::jpa2_runtime::decode(res, &self.textures)
     }
 }
 

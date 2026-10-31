@@ -98,7 +98,7 @@ pub fn extract_navi(iso: &Path, out: &Path, log: &mut dyn FnMut(&str)) -> Result
 }
 
 /// Bump when the set of sound files changes.
-pub const AUDIO_VERSION: u32 = 1;
+pub const AUDIO_VERSION: u32 = 2;
 const AUDIO_MARKER: &str = "p2audio.ok";
 
 /// The sound files Louie's voice and effects need: the init data (instrument and wave banks, the sound table), the sound
@@ -109,6 +109,7 @@ pub const AUDIO_FILES: [&str; 3] = ["AudioRes/PSound.aaf", "AudioRes/PSound.asn"
 pub fn audio_is_complete(dir: &Path) -> bool {
     std::fs::read_to_string(dir.join(AUDIO_MARKER)).is_ok_and(|s| s.trim() == AUDIO_VERSION.to_string())
         && AUDIO_FILES.iter().all(|f| dir.join(f).is_file())
+        && ["trackMap_Seq_W.txt","trackMap_Seq_T.txt"].iter().all(|f|dir.join("music").join(f).is_file())
 }
 
 /// Copies the sound files out of the Pikmin 2 disc at `iso` into `out` (same layout as the disc's `AudioRes/`).
@@ -138,6 +139,14 @@ pub fn extract_audio(iso: &Path, out: &Path, log: &mut dyn FnMut(&str)) -> Resul
         }
         std::fs::write(target, data)?;
         wrote += 1;
+    }
+    // PSM::DirectorMgr_Scene::initTrackMap selects these source layer maps.
+    for (source,name) in [("user/Wakai/trackMap_Seq_W.txt","trackMap_Seq_W.txt"),("user/Totaka/trackMap_Seq_T.txt","trackMap_Seq_T.txt")] {
+        let file=disc.find(source).ok_or_else(||ExtractError::Missing(source.into()))?;
+        let data=disc.read(file).map_err(disc_err)?;
+        std::fs::create_dir_all(out.join("music"))?;
+        std::fs::write(out.join("music").join(name),data)?;
+        wrote+=1;
     }
     log(&format!("{wrote} sound files"));
     std::fs::write(out.join(AUDIO_MARKER), AUDIO_VERSION.to_string())?;
