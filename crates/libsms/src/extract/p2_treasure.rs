@@ -10,8 +10,12 @@
 //! `item_texts.szs` under `<name>/` (`PelletConfig::TParms`, pelletConfig.cpp). The names and
 //! descriptions are in `message/mesRes_eng.szs:pikmin2.bmg` (`zukan2D.cpp` `TOffsetMsgSet`).
 //!
+//! The area-name lettering is here too (`titlefont/`): Pikmin 2 builds "Awakening Wood", "Perplexing Pool" and
+//! "Wistful Wild" from one texture per letter (`al_s_*` small, `al_l_*` large, in the `new_screen/eng/res_course_name01..03`
+//! archives; `Screen::Obj::...` area-name screens), and ships "Valley of Repose" and "Challenge Cave" as whole strings.
+//!
 //! Layout under `<out>/treasure/`: `config/*.txt`, `models/<archive>/<file>`, `texts/<kind>/<name>/<file>`,
-//! `message/pikmin2.bmg`, `effects/*.jpc`, `streams/*.ast`.
+//! `message/pikmin2.bmg`, `effects/*.jpc`, `streams/*.ast`, `titlefont/*.bti`.
 
 use std::path::Path;
 
@@ -21,7 +25,7 @@ use super::p2::disc_err;
 use super::{ExtractError, rarc, safe_join, yaz0};
 
 /// Bump when the set of files changes, so an older cache is redone.
-pub const VERSION: u32 = 2;
+pub const VERSION: u32 = 3;
 const MARKER: &str = "p2treasure.ok";
 /// Folder under the cache root everything here goes to.
 pub const DIR: &str = "treasure";
@@ -34,6 +38,19 @@ pub const MESSAGE: &str = "message/pikmin2.bmg";
 /// The treasure jingles (`PSSTR_TREASURE_GET` / `_GLAD` / `_COMP`, SoundID.h): streams under `streams/`.
 pub const STREAMS: [&str; 3] = ["ff_treasureget", "ff_treasureglad", "ff_treasurecomp"];
 
+/// The area-name screens (`new_screen/eng/res_course_name0N.szs`) the lettering comes from.
+const TITLE_ARCHIVES: [&str; 4] = [
+    "new_screen/eng/res_course_name00.szs",
+    "new_screen/eng/res_course_name01.szs",
+    "new_screen/eng/res_course_name02.szs",
+    "new_screen/eng/res_course_name03.szs",
+];
+/// Whole-string area names, as (file inside an archive, name under `titlefont/`).
+pub const TITLE_STRINGS: [(&str, &str); 2] =
+    [("course_name_00.bti", "valley_of_repose.bti"), ("e_course_name_01.bti", "challenge_cave.bti")];
+/// Folder under [`DIR`] holding the lettering.
+pub const TITLE_DIR: &str = "titlefont";
+
 /// Disc files whose bytes are copied verbatim: (disc path, path under `DIR/`).
 const EFFECTS: &[(&str, &str)] = &[
     ("user/Ebisawa/effect/game.jpc", "effects/ebisawa_game.jpc"),
@@ -45,6 +62,7 @@ pub fn is_complete(dir: &Path) -> bool {
     std::fs::read_to_string(dir.join(MARKER)).is_ok_and(|s| s.trim() == VERSION.to_string())
         && CONFIGS.iter().all(|f| root.join("config").join(f).is_file())
         && root.join(MESSAGE).is_file()
+        && root.join(TITLE_DIR).join("valley_of_repose.bti").is_file()
         && STREAMS.iter().all(|s| root.join(format!("streams/{s}.ast")).is_file())
 }
 
@@ -154,6 +172,29 @@ pub fn extract(iso: &Path, out: &Path, log: &mut dyn FnMut(&str)) -> Result<usiz
         let file = disc.find(&path).ok_or_else(|| ExtractError::Missing(path.clone()))?;
         write_to(&root, &format!("streams/{stem}.ast"), &disc.read(file).map_err(disc_err)?)?;
         wrote += 1;
+    }
+    // Area-name lettering: every per-letter texture (the same letter repeats across screens; the first copy
+    // is kept) and the two whole-string names.
+    for arc_name in TITLE_ARCHIVES {
+        let arc = read_archive(&disc, arc_name)?;
+        let paths: Vec<String> = arc.paths().map(str::to_owned).collect();
+        for rel in paths {
+            let Some(data) = arc.file(&rel) else { continue };
+            let leaf = rel.rsplit('/').next().unwrap_or(&rel);
+            let dest = if let Some((_, name)) = TITLE_STRINGS.iter().find(|(f, _)| *f == leaf) {
+                (*name).to_owned()
+            } else if leaf.starts_with("al_") && leaf.ends_with("_0.bti") {
+                leaf.replace("_0.bti", ".bti")
+            } else {
+                continue;
+            };
+            let target = root.join(TITLE_DIR).join(&dest);
+            if target.is_file() {
+                continue;
+            }
+            write_to(&root, &format!("{TITLE_DIR}/{dest}"), data)?;
+            wrote += 1;
+        }
     }
     log(&format!("{wrote} treasure files"));
     std::fs::write(out.join(MARKER), VERSION.to_string())?;
