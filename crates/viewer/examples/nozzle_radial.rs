@@ -138,8 +138,9 @@ async fn main() {
                 draw_triangle(a, b, c, colors[i]);
                 draw_triangle(a, c, d, colors[i]);
             }
-            // The side pictures sit slightly farther out, as the RoR2 radial places them.
-            let reach = if i == 1 || i == 3 { outer * 0.79 } else { outer * 0.74 };
+            // The left, right and bottom pictures sit slightly farther out, as the RoR2 radial
+            // places them; the enlarged Hover picture already reads centred.
+            let reach = if i == 0 { outer * 0.74 } else { outer * 0.79 };
             let at = center + vec2(a.cos(), -a.sin()) * reach;
             let size = (h * 0.08f32).clamp(40., 104.) * scale * if i == 0 { 1.35 } else { 1. };
             icon(&icons[[1, 2, 0, 3][i]], at, size);
