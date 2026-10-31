@@ -1,5 +1,9 @@
 # Mario locomotion and FLUDD: behavior spec
 
+Enemy water-hit feedback: JPA emitter 0xE7 (`ms_enm_wathit`) and sound 0x6802
+(`MSD_SE_EN_COMMON_W_HIT_OK`) now share the native contact path and remote replay.
+Source, viewer proof, checks and approximations: [Enemy water hit](enemy-water-hit.md).
+
 Heat-haze presentation: the source `TShimmer` model, indirect map and BTK
 scroll are exposed through ABI 32 for Mario's camera in every skin.
 Source evidence, host adaptations and checks: [Heat haze](heat-haze.md).

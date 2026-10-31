@@ -22,6 +22,7 @@ pub mod tev;
 pub mod treasure;
 pub mod view;
 pub mod water;
+pub mod water_hit;
 
 pub use audio::Audio;
 pub use view::{Look, View};

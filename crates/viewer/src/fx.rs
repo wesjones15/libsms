@@ -143,6 +143,10 @@ void main() {
         self.view.events(events, mario);
     }
 
+    pub fn water_events(&mut self, events: &[libsms::water::WaterEvent]) {
+        self.view.water_events(events);
+    }
+
     /// FLUDD's muzzles as this viewer drew them (an alt-skin's own pack), so the nozzle mist
     /// and the water leave the drawn nozzle.
     pub fn set_muzzles(&mut self, muzzles: &[::glam::Mat4]) {

@@ -132,6 +132,7 @@ struct SceneAudio {
     tracks: Vec<(String, u32)>,
     track: Option<usize>,
     ticks: u32,
+    water_hit: crate::water_hit::HitSound,
 }
 
 impl SceneAudio {
@@ -199,6 +200,7 @@ impl SceneAudio {
             tracks,
             track: None,
             ticks: 0,
+            water_hit: Default::default(),
         }
     }
 
@@ -213,6 +215,7 @@ impl SceneAudio {
             sys.stop(h, 0);
         }
         self.clip = None;
+        self.water_hit = Default::default();
     }
 
     /// MarioDraw loads this BAS beside the warp-out BCK. Its nine Y_ROLL cues
@@ -541,7 +544,14 @@ impl Audio {
     /// (`splashSound`, `MSD_SE_WT_GND`), drops into water, and stuck water drying up.
     pub fn water(&mut self, events: &[libsms::water::WaterEvent]) {
         let mut sys = self.sys.lock().unwrap();
+        self.scene.water_hit.step(&mut sys, events);
         water_sounds(&mut sys, events);
+    }
+
+    /// A remote Mario's recorded enemy contact; the water step owns the sound clock.
+    pub fn water_hit(&mut self, pos: Vec3) {
+        let mut sys = self.sys.lock().unwrap();
+        self.scene.water_hit.hit(&mut sys, pos);
     }
 
     pub fn listener(&self, eye: Vec3, target: Vec3) {

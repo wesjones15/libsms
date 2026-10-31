@@ -30,7 +30,7 @@ use libsms::{
 use view::SmsView;
 
 /// ABI version, bumped when the C interface changes.
-pub const SMS_ABI_VERSION: u32 = 38;
+pub const SMS_ABI_VERSION: u32 = 39;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sms_abi_version() -> u32 {
@@ -166,6 +166,9 @@ pub enum SmsEventKind {
     Throw = 24,
     /// With the [`SmsEventKind::Throw`] before it: `arg` is the facing (a 16-bit angle), `pos` his velocity.
     ThrowAim = 25,
+    /// Presentation-only water contact, including native flower targets. Never apply damage
+    /// from this event; WaterHit/BurstHit/SpinHit remain the host's damage messages.
+    WaterImpact = 26,
 }
 
 /// An enemy the host reports ([`libsms::Enemy`]): a standing cylinder.
@@ -774,6 +777,12 @@ fn water_hits(host: &SmsHost, events: &[WaterEvent]) {
             spin,
         } = *ev
         {
+            let impact = SmsEvent {
+                kind: SmsEventKind::WaterImpact as u32, arg: 0, value: 0.,
+                pos: pos.into(), name: std::ptr::null(),
+            };
+            // The owner records this for remote puppets, which do not query enemies.
+            unsafe { f(host.user, &impact) };
             if libsms::flower::FlowerWorld::owns(id) {
                 continue;
             }
@@ -996,6 +1005,7 @@ pub unsafe extern "C" fn sms_sim_step(
             // SAFETY: as above.
             unsafe {
                 view::with_view(view, (), |v| {
+                    v.view.water_events(&s.water.events);
                     v.water.step(&s.water.events);
                     if let Some(a) = v.audio.as_mut() {
                         a.water(&s.water.events);
@@ -1802,6 +1812,70 @@ mod tests {
             if (*e).arg == 10 && (*e).kind == SmsEventKind::WaterHit as u32 {
                 c[1] += 1;
             }
+        }
+    }
+
+    #[test]
+    fn water_hit_flash_reaches_the_c_abi_at_the_enemy_then_expires() {
+        let Some(dir) = libsms::assets::find(None) else {
+            eprintln!("SKIP: Sunshine cache absent"); return;
+        };
+        if !dir.join("particle/ms_enm_wathit.jpa").is_file() {
+            eprintln!("SKIP: exact water-hit emitter absent"); return;
+        }
+        let dir = CString::new(dir.to_string_lossy().as_bytes()).unwrap();
+        let mut counters = [0u32, 0, 1];
+        let host = SmsHost {
+            user: &mut counters as *mut [u32; 3] as *mut c_void,
+            ground: Some(flat), roof: None, walls: None, event: Some(count_hits),
+            enemies: Some(one_enemy), water: None, takeables: None, take: None,
+        };
+        let pad = SmsPad { r: 1, r_analog: 255, ..SmsPad::default() };
+        let frame = view::SmsViewFrame {
+            dt: 1. / 60., forward: SmsVec3 { x: 0., y: 0., z: 1. },
+            up: SmsVec3 { x: 0., y: 1., z: 0. }, ..Default::default()
+        };
+        unsafe {
+            let sim = sms_sim_new(dir.as_ptr(), &SmsVec3::default(), 0);
+            let visual = view::sms_view_new(dir.as_ptr(), 0);
+            assert!(!sim.is_null() && !visual.is_null());
+            let at_enemy = |visual| {
+                let mut count = 0;
+                let vertices = view::sms_view_fx_vertices(visual, &mut count);
+                if vertices.is_null() { return false; }
+                std::slice::from_raw_parts(vertices, count as usize).iter().any(|v| v.pos.z > 250.)
+            };
+            let mut shown = false;
+            for _ in 0..120 {
+                sms_sim_step(sim, &host, &pad, 0, frame.dt, visual);
+                view::sms_view_update(visual, sim, &frame);
+                if at_enemy(visual) { shown = true; break; }
+            }
+            assert!(shown && counters[1] > 0, "accepted hit must draw at the enemy through the public readers");
+            view::sms_view_set_fx(visual, 0, 0);
+            view::sms_view_update(visual, sim, &frame);
+            assert!(!at_enemy(visual), "Effects off must hide the water-hit flash");
+            view::sms_view_set_fx(visual, 1, 1);
+            // Clear droplets without moving the view: only the existing hit emitter remains.
+            sms_sim_teleport(sim, &SmsVec3::default());
+            for _ in 0..90 {
+                sms_sim_step(sim, &host, &SmsPad::default(), 0, frame.dt, visual);
+                view::sms_view_update(visual, sim, &frame);
+            }
+            assert!(!at_enemy(visual), "hit marks must expire after spraying stops");
+            let before = counters[1];
+            view::sms_view_water_hit(visual, std::ptr::null());
+            view::sms_view_water_hit(visual, &SmsVec3 { x: f32::NAN, y: 0., z: 0. });
+            view::sms_view_water_hit(visual, &SmsVec3 { x: 0., y: 160., z: 600. });
+            // Particle emission runs at 30 Hz, independently of this 60 Hz host.
+            for _ in 0..2 {
+                sms_sim_step(sim, &host, &SmsPad::default(), 0, frame.dt, visual);
+                view::sms_view_update(visual, sim, &frame);
+            }
+            assert!(at_enemy(visual), "remote contact must render without enemy collision");
+            assert_eq!(counters[1], before, "remote contact must not apply damage again");
+            view::sms_view_free(visual);
+            sms_sim_free(sim);
         }
     }
 

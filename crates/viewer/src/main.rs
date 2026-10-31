@@ -1388,6 +1388,7 @@ async fn main() {
         while water_ticks >= 4 {
             water_ticks -= 4;
             water.step(&world, sim.mario.pos);
+            if let Some(fx) = &mut fx_layer { fx.water_events(&water.events); }
             if let Some(juice)=&mut juice_water {
                 juice.step(&world,sim.mario.pos);
                 if let Some(v)=&mut juice_view {v.step(&juice.events);}

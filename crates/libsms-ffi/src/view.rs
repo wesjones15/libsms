@@ -2199,6 +2199,21 @@ pub unsafe extern "C" fn sms_view_effect(
     unsafe { with_view(view, (), |v| v.view.emit_effect(&name, at, if scale.is_finite() { scale.clamp(0.1, 8.0) } else { 1.0 })) }
 }
 
+/// Replays an accepted enemy-water contact on a remote Mario's view. Presentation only:
+/// no collision query or damage message, and no second advance of the water/audio clock.
+/// # Safety
+/// `view` is live; `pos` is readable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_water_hit(view: *mut SmsView, pos: *const SmsVec3) {
+    let Some(pos) = (unsafe { pos.as_ref() }) else { return };
+    let pos = Vec3::from(*pos);
+    if !pos.is_finite() { return; }
+    unsafe { with_view(view, (), |v| {
+        v.view.emit_effect(libsms_present::water_hit::EFFECT, pos, 1.);
+        if let Some(audio) = &mut v.audio { audio.water_hit(pos); }
+    }) }
+}
+
 /// Runs an effects view `dt` seconds and builds its quads for the `sms_view_fx_*` readers, with the
 /// camera's right and up for the billboards.
 ///

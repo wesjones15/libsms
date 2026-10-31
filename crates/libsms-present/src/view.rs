@@ -573,6 +573,8 @@ pub const MARIO_EFFECTS: &[&str] = &[
     // The Turbo's dash (`TMarioEffect::perform`): bound to the muzzle while it lasts.
     "ms_watboost_a",
     "ms_watboost_b",
+    // Enemy water-hit marker, TSmallEnemy/TChuuHana::receiveMessage, cue 0xE7.
+    crate::water_hit::EFFECT,
 ];
 
 /// Luigi's alt-skin: Mario's effects are his, but the red parts turn green. From
@@ -1137,6 +1139,7 @@ impl View {
             })
             .collect();
         let mut fx = Particles::load(dir, MARIO_EFFECTS);
+        fx.set_world_space(crate::water_hit::EFFECT, true);
         for &name in SMOKE_EFFECTS
             .iter()
             .chain(SUPER_POUND_IMPACTS)
@@ -1246,6 +1249,11 @@ impl View {
     /// Starts one of [`FLOWER_EFFECTS`] at `pos` (`TMarioParticleManager::emit`), `scale` big.
     pub fn emit_effect(&mut self, name: &str, pos: Vec3, scale: f32) {
         self.fx.emit(name, Mat4::from_translation(pos), scale);
+    }
+
+    /// Accepted enemy hits from the water simulation, including native flower enemies.
+    pub fn water_events(&mut self, events: &[libsms::water::WaterEvent]) {
+        crate::water_hit::effects(&mut self.fx, events);
     }
 
     /// Runs the effects `dt` seconds on and builds their quads.

@@ -269,7 +269,8 @@ pub const DISC_FOLDERS: [&str; 1] = ["AudioRes/"];
 
 /// Files that must exist for the library and viewer to work. Adding one here makes an older
 /// `assets/` incomplete, so hosts re-extract it on the next run.
-pub const REQUIRED: [&str; 38] = [
+pub const REQUIRED: [&str; 39] = [
+    "particle/ms_enm_wathit.jpa",
     "params_mario/run.prm",
     "params_mario/jump.prm",
     "params_mario/mario.prm",
