@@ -352,6 +352,8 @@ pub unsafe extern "C" fn sms_view_new(assets_dir: *const c_char, sound: u8) -> *
 /// call sms_view_update (Mario's animation update) on them. `look` 3 is the Shine Sprite: the
 /// same readers, with the model posed by [`sms_view_shine_update`] (never `sms_view_update`),
 /// its glow in the `sms_view_fx_*` readers and the Shine Get camera in [`sms_view_camera_shot`].
+/// `look` 5, 6 and 7 are the sambo flower, tower and head: one instance posed by
+/// [`sms_view_prop_update`] from a clip found with [`sms_view_prop_clip`].
 ///
 /// # Safety
 /// `assets_dir` a nul-terminated UTF-8 path.
@@ -375,6 +377,9 @@ pub unsafe extern "C" fn sms_view_new_look(
             2 => libsms_present::Look::Coin,
             3 => libsms_present::Look::Shine,
             4 => libsms_present::Look::BlueCoin,
+            5 => libsms_present::Look::Flower,
+            6 => libsms_present::Look::Sambo,
+            7 => libsms_present::Look::SamboHead,
             _ => libsms_present::Look::Mario,
         };
         let view = View::load_look(&dir, look).ok()?;
@@ -2113,6 +2118,58 @@ pub unsafe extern "C" fn sms_view_hud_pixels(view: *mut SmsView, rgba: *mut u8, 
             }
             std::ptr::copy_nonoverlapping(px.as_ptr(), rgba, px.len());
             1
+        })
+    }
+}
+
+/// A prop view's clip (`sms_view_new_look` looks 5-7) by name, as the file's stem
+/// (`flower_hit`, `sambo_fset`...): its index, or -1; `frames` gets its length (60 a second).
+///
+/// # Safety
+/// `view` from [`sms_view_new_look`]; `name` nul-terminated; `frames` writable or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_prop_clip(
+    view: *mut SmsView,
+    name: *const c_char,
+    frames: *mut f32,
+) -> i32 {
+    if name.is_null() {
+        return -1;
+    }
+    // SAFETY: as documented.
+    let name = unsafe { std::ffi::CStr::from_ptr(name) }.to_string_lossy().into_owned();
+    // SAFETY: as documented.
+    unsafe {
+        with_view(view, -1, |v| match v.view.prop_clip(&name) {
+            Some((i, f)) => {
+                if let Some(out) = frames.as_mut() {
+                    *out = f;
+                }
+                i as i32
+            }
+            None => -1,
+        })
+    }
+}
+
+/// Poses a prop view: clip `clip` (an index from [`sms_view_prop_clip`], negative for the bind
+/// pose) at `frame`, turned `yaw` (a 16-bit angle); the host places its own instance. `mirror`
+/// non-zero when the host draws it mirrored across X.
+///
+/// # Safety
+/// `view` a prop view.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_prop_update(
+    view: *mut SmsView,
+    yaw: i16,
+    clip: i32,
+    frame: f32,
+    mirror: u8,
+) {
+    // SAFETY: as documented.
+    unsafe {
+        with_view(view, (), |v| {
+            v.view.update_prop(yaw, clip, if frame.is_finite() { frame.max(0.0) } else { 0.0 }, mirror != 0)
         })
     }
 }

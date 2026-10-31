@@ -13,6 +13,7 @@
 //! of these structs.
 
 pub mod assets;
+pub mod flowers;
 pub mod heat_haze;
 pub mod view;
 
@@ -29,7 +30,7 @@ use libsms::{
 use view::SmsView;
 
 /// ABI version, bumped when the C interface changes.
-pub const SMS_ABI_VERSION: u32 = 34;
+pub const SMS_ABI_VERSION: u32 = 35;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sms_abi_version() -> u32 {
@@ -469,6 +470,10 @@ pub struct SmsSim {
     /// Another Mario's wet ground is under this one (the host says so before each step), so a
     /// belly slide glides over what a friend's FLUDD wetted as it does over his own.
     pub(crate) foreign_wet: bool,
+    /// The sambo flowers, towers and heads ([`flowers`]).
+    pub(crate) flowers: libsms::flower::FlowerWorld,
+    pub(crate) flower_events: Vec<flowers::SmsFlowerEvent>,
+    pub(crate) flower_table: libsms::flower::SpawnTable,
     status: CString,
     clip: CString,
     pub(crate) poisoned: bool,
@@ -495,7 +500,7 @@ pub struct SmsSpray {
 }
 
 /// The host's callbacks, plus this tick's events for the view's sounds.
-struct FfiHost<'a>(&'a SmsHost, Vec<Event>);
+struct FfiHost<'a>(&'a SmsHost, Vec<Event>, Vec<libsms::flower::Target>);
 
 impl Host for FfiHost<'_> {
     fn ground(&self, pos: Vec3) -> Option<GroundHit> {
@@ -552,6 +557,11 @@ impl Host for FfiHost<'_> {
     }
 
     fn enemies(&self, pos: Vec3, radius: f32, out: &mut Vec<Enemy>) {
+        for t in &self.2 {
+            if (t.pos - pos).length() <= radius + t.radius + t.height {
+                out.push(Enemy { id: t.id, pos: t.pos, radius: t.radius, height: t.height });
+            }
+        }
         let Some(f) = self.0.enemies else {
             return;
         };
@@ -622,6 +632,12 @@ impl Host for FfiHost<'_> {
 
     fn event(&mut self, event: Event) {
         self.1.push(event);
+        // The sambo flowers' own stomps never reach the host's enemy table.
+        if let Event::EnemyHit { id, .. } = event {
+            if libsms::flower::FlowerWorld::owns(id) {
+                return;
+            }
+        }
         let Some(f) = self.0.event else {
             return;
         };
@@ -759,6 +775,9 @@ fn water_hits(host: &SmsHost, events: &[WaterEvent]) {
             spin,
         } = *ev
         {
+            if libsms::flower::FlowerWorld::owns(id) {
+                continue;
+            }
             let kind = if burst {
                 SmsEventKind::BurstHit
             } else if spin {
@@ -844,6 +863,9 @@ pub unsafe extern "C" fn sms_sim_new(
             slide_splashes: false,
             foreign_wet: false,
             sim,
+            flowers: libsms::flower::FlowerWorld::new(),
+            flower_events: Vec::new(),
+            flower_table: libsms::flower::SpawnTable::default(),
             status: CString::default(),
             clip: CString::default(),
             poisoned: false,
@@ -893,16 +915,31 @@ pub unsafe extern "C" fn sms_sim_step(
     }
     let pad = pad.to_pad(camera_yaw);
     let ran = catch_unwind(AssertUnwindSafe(|| {
-        let mut h = FfiHost(host, Vec::new());
+        let mut targets = Vec::new();
+        s.flowers.targets(&mut targets);
+        let mut h = FfiHost(host, Vec::new(), targets);
         // Water on the ground under Mario makes a belly slide glide.
         s.sim.mario.water_underfoot = s.foreign_wet || s.water.on_ground_near(s.sim.mario.pos);
         wet_from_own_spray(s);
+        let mut flower_out: Vec<libsms::flower::FlowerEvent> = Vec::new();
+        let flowers = &mut s.flowers;
         let mut emits: Vec<WaterEmit> = Vec::new();
         let mut drips = Vec::new();
         let n = s
             .sim
             .advance_observed(&mut h, &pad, camera_yaw, dt, |mario, h| {
                 let events = std::mem::take(&mut h.1);
+                let mut fe = Vec::new();
+                for e in &events {
+                    if let Event::EnemyHit { id, .. } = e {
+                        flowers.stomped(*id, &mut fe);
+                    }
+                }
+                flowers.step(&*h, mario.pos, &mut fe);
+                // The targets move a little: refresh them for the water's next query.
+                h.2.clear();
+                flowers.targets(&mut h.2);
+                flower_out.extend(fe);
                 emits.extend(events.iter().filter_map(|e| match e {
                     Event::WaterEmit(w) => Some(*w),
                     _ => None,
@@ -948,6 +985,13 @@ pub unsafe extern "C" fn sms_sim_step(
             if s.slide_splashes && s.sim.mario.wet_sliding() {
                 s.water.slide_splashes(s.sim.mario.pos);
             }
+            for ev in &s.water.events {
+                if let WaterEvent::Hit { id, .. } = ev {
+                    if libsms::flower::FlowerWorld::owns(*id) {
+                        s.flowers.water_hit(*id, &mut flower_out);
+                    }
+                }
+            }
             water_hits(host, &s.water.events);
             // SAFETY: as above.
             unsafe {
@@ -959,6 +1003,9 @@ pub unsafe extern "C" fn sms_sim_step(
                 });
             }
             s.water.events.clear();
+        }
+        for e in &flower_out {
+            s.push_flower_event(e);
         }
         n
     }));
@@ -1542,7 +1589,7 @@ mod tests {
             takeables: None,
             take: None,
         };
-        let mut adapter = FfiHost(&host, Vec::new());
+        let mut adapter = FfiHost(&host, Vec::new(), Vec::new());
         for flags in 0..8 {
             adapter.event(Event::FallImpact {
                 drop: 16000.0,
