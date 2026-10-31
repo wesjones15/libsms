@@ -1453,6 +1453,27 @@ fn mario_picks_up_fruit_carries_puts_and_throws_it() {
     assert!(s.event_count(|e| matches!(e, Event::Throw { id: 7, .. })) == 1);
 }
 
+#[test]
+fn what_he_carries_can_be_taken_away_and_his_hands_come_down() {
+    let mut s = Scene::new(FruitHost {
+        fruit: Vec3::new(0.0, 0.0, 60.0),
+        held: false,
+    });
+    s.step(2);
+    s.pad.b = true;
+    s.step(1);
+    s.pad.b = false;
+    assert!(s.until(300, |m| m.held == Some(7) && m.status == Status::Wait));
+    assert_eq!(s.mario().upper, libsms::UpperState::HoldingObject);
+    // A teammate he held broke free: the host lets him go, and nothing is thrown.
+    s.sim.mario.let_go();
+    assert!(s.mario().held.is_none());
+    assert_ne!(s.mario().upper, libsms::UpperState::HoldingObject);
+    s.step(10);
+    assert_eq!(s.event_count(|e| matches!(e, Event::Throw { .. })), 0);
+    assert_eq!(s.event_count(|e| matches!(e, Event::Put { .. })), 0);
+}
+
 // ---- Yoshi ---------------------------------------------------------------------------------
 
 /// A flat floor with fruit lying about, and enemies (position, edible, caught); taken things

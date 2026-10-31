@@ -154,6 +154,18 @@ impl Mario {
         false
     }
 
+    /// The host took what he carries away (a teammate he was holding broke free): he lets go of it, with
+    /// no throw, and his hands come down.
+    pub fn let_go(&mut self) {
+        self.take_target = None;
+        if self.held.take().is_some() {
+            self.held_fruit = None;
+            if self.upper == UpperState::HoldingObject {
+                self.upper = UpperState::Idle;
+            }
+        }
+    }
+
     /// `dropObject`: let go with a throw.
     pub(crate) fn drop_object(&mut self) {
         if let Some(id) = self.held.take() {

@@ -30,7 +30,7 @@ use libsms::{
 use view::SmsView;
 
 /// ABI version, bumped when the C interface changes.
-pub const SMS_ABI_VERSION: u32 = 36;
+pub const SMS_ABI_VERSION: u32 = 37;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sms_abi_version() -> u32 {
@@ -1241,6 +1241,18 @@ pub unsafe extern "C" fn sms_sim_launch(sim: *mut SmsSim, vel: *const SmsVec3) {
 pub unsafe extern "C" fn sms_sim_launch_pad(sim: *mut SmsSim, vel: *const SmsVec3, gravity: f32) {
     if let (Some(s), Some(v)) = (unsafe { sim.as_mut() }, unsafe { vel.as_ref() }) {
         s.sim.mario.launch_pad((*v).into(), gravity);
+    }
+}
+
+/// The host took what Mario carries away (a teammate he held broke free): he lets go, no throw.
+///
+/// # Safety
+/// `sim` from [`sms_sim_new`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_sim_let_go(sim: *mut SmsSim) {
+    // SAFETY: as documented.
+    if let Some(s) = unsafe { sim.as_mut() } {
+        s.sim.mario.let_go();
     }
 }
 
