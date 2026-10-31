@@ -8,31 +8,35 @@ Melee effect model. `sms-main/src/Player/WaterGun.cpp::TNozzleDeform::emit` uses
 There is no efSync/cue or EfCoData model ID for this system.
 
 The viewer's original screen pass already merges coverage. For hosts using
-ordinary transparent materials, `WaterLook` now rasterizes the same airborne
-type-0 quads and disc mask into a bounded camera-plane grid and emits each
+ordinary transparent materials, `WaterLook` can rasterize the same airborne
+type-0 quads and disc mask into a bounded camera-plane grid and emit each
 occupied cell once. Close coverage merges; separated drops remain separated.
 The surface carries contour alpha and continuous sphere-map UVs from the
 combined coverage gradient. Depth comes from the original drops; water farther
 apart than a drop's thickness does not accumulate across depth. This is a CPU
-host approximation, not Sunshine's full GPU refraction pass. Ground/wall water,
-other water types, Yoshi juice, splashes and simulation stay on their existing paths.
+host approximation, not Sunshine's full GPU refraction pass. It is **opt-in and
+off by default**, including in RoR2: head-on it collapsed the stream into one
+flat card, and while moving its grid contour read as a torn sheet, so gameplay
+keeps the exact droplets. Ground/wall water, other water types, Yoshi juice,
+splashes and simulation stay on their existing paths.
 
-Viewer proof (same airborne particles, side view, water frames 8/18/30):
+Viewer proof (same airborne particles, side/head-on/moving):
 
 ```powershell
-cargo run --release -p viewer --example water_stream -- assets output/water-stream.png
+cargo run --release -p viewer --example water_stream_views -- assets output/water-views.png
 ```
 
-The labelled PNG compares separate overlays with unified coverage, using tint
-alone so segment seams are visible. It does not verify RoR2's shader output.
-Do not commit the capture or extracted textures. Source-only unit tests cover
-nearby merging, separated drops and crossing streams at different depths.
+The labelled PNGs compare the exact droplets with the merged surface from all
+three gameplay views, using tint alone. They do not verify RoR2's shader output.
+Do not commit the captures or extracted textures. Source-only unit tests cover
+nearby merging, separated drops, crossing streams at different depths, the
+smooth contour, and the head-on fallback.
 
-The last `sms_view_water_stream_quads` of `drop_quads` use a white tint texture
-and their vertex alpha; UVs address the existing distortion sphere map. Other
-drop quads use the original mask. `MarioWater` partitions these surfaces and
-uses 32-bit mesh indices. The stream receives the configured water tint once,
-without the legacy per-drop opacity reduction.
+When the opt-in merge is on, the last `sms_view_water_stream_quads` of
+`drop_quads` use a white tint texture and their vertex alpha; UVs address the
+existing distortion sphere map. `MarioWater` partitions these surfaces and
+uses 32-bit mesh indices. Type-0 droplets move into that surface only when a
+host opts in; the shipped RoR2 path keeps every droplet.
 
 Both ordinary and Turbo corkscrews share camera steering in `jump_catch`.
 This is a host extension to `MarioJump.cpp::jumpCatch`, not Sunshine behavior.

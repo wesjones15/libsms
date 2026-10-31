@@ -113,7 +113,10 @@ pub(super) fn merge(
     for y in 1..ny - 2 {
         for x in 1..nx - 2 {
             let ids = [(x, y), (x + 1, y), (x + 1, y + 1), (x, y + 1)];
-            if ids.iter().all(|&(x, y)| coverage(x, y) <= 0.30) {
+            // Keep the whole covered footprint, not just its dense core: the per-corner alpha
+            // then fades to zero on the actual coverage contour instead of ending on a
+            // stair-stepped grid threshold.
+            if ids.iter().all(|&(x, y)| coverage(x, y) <= 0.002) {
                 continue;
             }
             let fallback = ids
@@ -123,7 +126,7 @@ pub(super) fn merge(
                 .unwrap();
             for (x, y) in ids {
                 let s = field[y * nx + x];
-                let t = ((s.coverage - 0.30) / 0.18).clamp(0.0, 1.0);
+                let t = (s.coverage / 0.48).clamp(0.0, 1.0);
                 let opacity = t * t * (3.0 - 2.0 * t);
                 let gradient = Vec2::new(
                     coverage(x + 1, y) - coverage(x - 1, y),

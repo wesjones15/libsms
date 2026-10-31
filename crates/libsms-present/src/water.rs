@@ -48,7 +48,9 @@ struct Splash {
 #[derive(Debug, Clone, Default)]
 pub struct WaterLook {
     /// Merge type-0 airborne water coverage for hosts without a screen-space water pass.
-    /// Uses the original mask and motion; changes presentation only.
+    /// Opt-in: in gameplay the CPU surface read as a flat card head-on and tore while moving, so
+    /// [`WaterLook::load`] leaves it off and hosts keep the exact droplets. Uses the original
+    /// mask and motion; changes presentation only.
     pub cohesive: bool,
     /// The drop's coverage: white, with `timg/watermask.bti`'s soft round falloff as alpha.
     pub drop: WaterTexture,
@@ -81,7 +83,7 @@ impl WaterLook {
     /// The textures from the extracted disc; missing ones stay empty (hosts draw untextured).
     pub fn load(dir: &Path) -> WaterLook {
         let mut look = WaterLook {
-            cohesive: true,
+            cohesive: false,
             tint: [0.60, 0.76, 0.94, 0.35],
             ..WaterLook::default()
         };
@@ -178,6 +180,7 @@ impl WaterLook {
         };
 
         let mut stream = Vec::new();
+        let mut flow = Vec3::ZERO;
         for p in water.particles.iter().take(SLOTS) {
             let half = 1.414 * 0.5 * p.size;
             let corners = match p.state {
@@ -245,14 +248,29 @@ impl WaterLook {
                 }
             };
             if self.cohesive && juice == 0 && p.state == State::Flying && p.kind == 0 {
+                flow += p.velocity().normalize_or_zero();
                 push(corners, 1.0, &mut stream);
             } else {
                 push(corners, 1.0, &mut self.vertices);
             }
         }
-        let merged = surface::merge(&stream, &self.drop, eye, right, up);
-        self.stream_quads = if self.drop.rgba.is_empty() { 0 } else { (merged.len() / 4) as u32 };
-        self.vertices.extend(merged);
+        // Seeing the stream down its own axis collapses its depth into one silhouette: the
+        // merged sheet then sits flat in front of the camera and tears at the frame edges.
+        // Keep the exact droplets there; cohesion only helps across the stream.
+        let head_on = !stream.is_empty() && {
+            let axis = flow.normalize_or_zero();
+            // `normal` faces the eye (the view direction's reverse).
+            let normal = -right.cross(up).normalize_or_zero();
+            axis.dot(normal).abs() > 0.8
+        };
+        if head_on {
+            self.vertices.extend_from_slice(&stream);
+            self.stream_quads = 0;
+        } else {
+            let merged = surface::merge(&stream, &self.drop, eye, right, up);
+            self.stream_quads = if self.drop.rgba.is_empty() { 0 } else { (merged.len() / 4) as u32 };
+            self.vertices.extend(merged);
+        }
         self.drop_quads = (self.vertices.len() / 4) as u32;
 
         for s in &self.splashes {
@@ -371,6 +389,47 @@ mod tests {
             end = end.max(hi);
         }
         assert!(spans[0].0 >= muzzle.z - 0.01, "stream tail extends behind muzzle");
+    }
+
+    #[test]
+    fn a_stream_seen_down_its_axis_keeps_the_exact_droplets() {
+        let mut water = WaterManager::new(&Params::default());
+        let emit = WaterEmit {
+            nozzle: NozzleKind::Spray,
+            pos: Vec3::new(0., 150., 0.),
+            dir: Vec3::Z,
+            power: 40.0,
+            count: 3,
+            attack: 1,
+            hit_radius: 50.0,
+            hit_height: 80.0,
+            inherit: Vec3::ZERO,
+            size: 50.0,
+            size_tremble: 0.0,
+            dir_tremble: 0.0,
+            pow_tremble: 0.0,
+            particle_type: 0,
+            burst: false,
+            spin: false,
+        };
+        for _ in 0..10 {
+            water.emit(&emit);
+            water.step(&FlatHost::default(), Vec3::ZERO);
+        }
+        let mut look = WaterLook::default();
+        look.cohesive = true;
+        look.drop = WaterTexture {
+            width: 1,
+            height: 1,
+            rgba: vec![255, 255, 255, 255],
+        };
+        // Across the stream the merge is built.
+        look.build(&water, 0.0, Vec3::new(500., 150., 200.), Vec3::Z, Vec3::Y, 0);
+        assert!(look.stream_quads > 0, "side view lost the merged surface");
+        // Down its axis the merged sheet would collapse to one card; the drops stay.
+        look.build(&water, 0.0, Vec3::new(0., 150., 1000.), -Vec3::X, Vec3::Y, 0);
+        assert_eq!(look.stream_quads, 0, "head-on view still merged");
+        assert!(look.drop_quads > 0, "head-on view lost the droplets");
     }
 
     #[test]
