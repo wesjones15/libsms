@@ -572,12 +572,14 @@ impl FlowerWorld {
     /// One 120 Hz tick. `mario` is his feet.
     pub fn step(&mut self, host: &dyn Host, mario: Vec3, out: &mut Vec<FlowerEvent>) {
         self.ticks = self.ticks.wrapping_add(1);
-        self.step_units(out);
+        self.step_units(host, out);
         self.step_towers(host, mario, out);
         self.step_heads(host, mario, out);
     }
 
-    fn step_units(&mut self, out: &mut Vec<FlowerEvent>) {
+    fn step_units(&mut self, host: &dyn Host, out: &mut Vec<FlowerEvent>) {
+        // `TSamboFlower::moveObject` puts the flower on the floor; once a second here is plenty.
+        let snap = self.ticks % 120 == 1;
         let (open_ticks, bloom_timer) = (self.clips.flower_open, self.flower.bloom_timer);
         let (r, vxz, vy) = (
             self.flower.coin_circle_r,
@@ -585,6 +587,16 @@ impl FlowerWorld {
             self.flower.coin_vel_y,
         );
         for (ui, u) in self.units.iter_mut().enumerate() {
+            if snap {
+                let mut drop = None;
+                for f in u.flowers.iter_mut() {
+                    if let Some(g) = host.ground(f.pos + Vec3::Y * 100.0) {
+                        drop.get_or_insert(g.height - f.pos.y);
+                        f.pos.y = g.height;
+                    }
+                }
+                u.center.y += drop.unwrap_or(0.0);
+            }
             for (fi, f) in u.flowers.iter_mut().enumerate() {
                 f.age += 1;
                 match f.phase {
