@@ -11,6 +11,7 @@ pub mod clock;
 mod collide;
 pub mod damage;
 pub mod egg;
+pub mod flower;
 pub mod event;
 pub mod extract;
 pub mod fludd;
