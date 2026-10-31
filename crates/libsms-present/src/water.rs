@@ -15,6 +15,8 @@ use glam::Vec3;
 use libsms::water::{SLOTS, State, WaterEvent, WaterManager};
 use libsms_assets::texture::read_bti;
 
+mod surface;
+
 /// `unk5D18`: how far the stretched quad reaches along the velocity.
 const STRETCH: f32 = 4.0;
 
@@ -45,6 +47,9 @@ struct Splash {
 
 #[derive(Debug, Clone, Default)]
 pub struct WaterLook {
+    /// Merge type-0 airborne water coverage for hosts without a screen-space water pass.
+    /// Uses the original mask and motion; changes presentation only.
+    pub cohesive: bool,
     /// The drop's coverage: white, with `timg/watermask.bti`'s soft round falloff as alpha.
     pub drop: WaterTexture,
     /// `timg/splash.bti` coloured as the game does.
@@ -53,6 +58,9 @@ pub struct WaterLook {
     /// This frame's quads: drops, splashes, then ground wetness (texture 0, dark alpha blend).
     pub vertices: Vec<WaterVertex>,
     pub drop_quads: u32,
+    /// Last `stream_quads` of `drop_quads`: one cohesive surface. Use white tint texture,
+    /// vertex alpha for coverage, and UVs for the distortion sphere map.
+    pub stream_quads: u32,
     pub splash_quads: u32,
     pub wet_quads: u32,
     /// Colour and opacity to draw the drops in (`gModelWaterManagerWaterColor`; juice when
@@ -73,6 +81,7 @@ impl WaterLook {
     /// The textures from the extracted disc; missing ones stay empty (hosts draw untextured).
     pub fn load(dir: &Path) -> WaterLook {
         let mut look = WaterLook {
+            cohesive: true,
             tint: [0.60, 0.76, 0.94, 0.35],
             ..WaterLook::default()
         };
@@ -168,6 +177,7 @@ impl WaterLook {
             }
         };
 
+        let mut stream = Vec::new();
         for p in water.particles.iter().take(SLOTS) {
             let half = 1.414 * 0.5 * p.size;
             let corners = match p.state {
@@ -234,8 +244,15 @@ impl WaterLook {
                     ]
                 }
             };
-            push(corners, 1.0, &mut self.vertices);
+            if self.cohesive && juice == 0 && p.state == State::Flying && p.kind == 0 {
+                push(corners, 1.0, &mut stream);
+            } else {
+                push(corners, 1.0, &mut self.vertices);
+            }
         }
+        let merged = surface::merge(&stream, &self.drop, eye, right, up);
+        self.stream_quads = if self.drop.rgba.is_empty() { 0 } else { (merged.len() / 4) as u32 };
+        self.vertices.extend(merged);
         self.drop_quads = (self.vertices.len() / 4) as u32;
 
         for s in &self.splashes {

@@ -314,6 +314,10 @@ pub struct Mario {
     /// The game's L-button camera (`CPolarSubCamera::isLButtonCamera`), as the host's camera
     /// sees it: set while it's on, None otherwise. Sent by the host before each step.
     pub aim: Option<crate::fludd::Aim>,
+    /// Host camera direction for corkscrew steering, independent of FLUDD targeting.
+    pub flight_camera: Option<crate::fludd::Aim>,
+    pub(crate) corkscrew_camera_start: Option<i16>,
+    pub(crate) corkscrew_pitch: f32,
 
     pub pos: Vec3,
     pub prev_pos: Vec3,
@@ -493,6 +497,9 @@ impl Mario {
             limits: crate::limits::Limits::default(),
             lim: crate::limits::LimitState::default(),
             aim: None,
+            flight_camera: None,
+            corkscrew_camera_start: None,
+            corkscrew_pitch: 0.0,
             pos,
             prev_pos: pos,
             vel: Vec3::ZERO,
@@ -636,6 +643,7 @@ impl Mario {
             4 => NozzleKind::Turbo,
             _ => return false,
         };
+        let changed = self.fludd.as_ref().is_none_or(|f| f.nozzle != kind);
         if self.fludd.is_none() {
             self.give_fludd();
         }
@@ -644,6 +652,14 @@ impl Mario {
             // The radial menu fits the nozzle at once: no backpack swing, and no second nozzle
             // change on top of the selection.
             f.fit_nozzle(kind, &p);
+            if changed && kind != NozzleKind::Spray {
+                // Item.cpp TItemNozzle::touchPlayer: 0x484E. getNozzle calls
+                // emitGetEffect: emitter 0x0E at root joint 1 plus sound 0x1989.
+                self.fx("ms_itemget1_a", crate::event::FxAt::JointFollow(1));
+                for name in ["MSD_SE_SY_GET_NOZZLE", "MSD_SE_MA_SHINING_EFF_CALM2"] {
+                    self.events.push(Event::Sound(crate::event::SoundCue { name, pos: self.pos, info: None }));
+                }
+            }
             return true;
         }
         false
@@ -1277,6 +1293,8 @@ impl Mario {
         }
         self.rocket_spin = false;
         self.corkscrew = 0;
+        self.corkscrew_camera_start = None;
+        self.corkscrew_pitch = 0.0;
         self.corkscrew_super = false;
         self.corkscrew_used = false;
         self.rocket_super = false;

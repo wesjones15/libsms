@@ -588,6 +588,8 @@ pub const MARIO_EFFECTS: &[&str] = &[
     "ms_fumi_c",
     "ms_coinget_a",
     "ms_coinget_b",
+    // MarioReceiveMsg.cpp getNozzle -> MarioParticle.cpp emitGetEffect, JPA 0x0E.
+    "ms_itemget1_a",
     // The nozzles: the Rocket's launch (`rocketEffectStart`) and every muzzle's smoke.
     "ms_m_rocket_a",
     "ms_m_rocket_b",
@@ -687,6 +689,8 @@ fn fx_matrix(at: FxAt, root: Mat4, joints: &[Mat4], center: Option<usize>, muzzl
         )),
         FxAt::Center => center.and_then(|j| joints.get(j)).map(|j| root * *j),
         FxAt::Joint(j) => joints.get(j as usize).map(|j| root * *j),
+        FxAt::JointFollow(j) => joints.get(j as usize)
+            .map(|j| Mat4::from_translation((root * *j).w_axis.truncate())),
         // emitAndBindToPosPtr follows position only, not Mario's rotation.
         FxAt::Feet | FxAt::FeetFollow => Some(Mat4::from_translation(root.w_axis.truncate())),
         // FLUDD's muzzle as drawn this frame (the nozzle's `null_G_muzzle` joints).
@@ -2160,7 +2164,7 @@ impl View {
                 };
                 if matches!(cue.at, FxAt::Once { .. }) {
                     self.fx.emit(cue.name, mtx, cue.scale);
-                } else if matches!(cue.at, FxAt::MuzzleFollow(_) | FxAt::FeetFollow) {
+                } else if matches!(cue.at, FxAt::MuzzleFollow(_) | FxAt::FeetFollow | FxAt::JointFollow(_)) {
                     // Its own slot (past the held effects'), kept bound to the muzzle as it moves.
                     if let Some(i) = MARIO_EFFECTS.iter().position(|&n| n == cue.name) {
                         let slot = FOLLOW_SLOTS + i as u32;
@@ -3288,6 +3292,24 @@ mod tests {
         }
         assert!(!v.fx.vertices.is_empty(), "the fire flare is invisible");
         assert!(v.fx_binds.iter().any(|(_, at)| *at == FxAt::FeetFollow), "the flare was left behind at the hit position");
+    }
+
+    #[test]
+    fn nozzle_pickup_sparkles_follow_root_joint_for_the_authored_lifetime() {
+        let Some(mut v)=view() else {eprintln!("SKIP: Sunshine cache absent");return;};
+        let a=libsms::Assets::discover(None).unwrap();
+        let mut sim=Sim::new(a.params,a.anim_table,Vec3::ZERO,0);
+        sim.mario.give_fludd();sim.mario.select_nozzle(2);
+        let mut host=Collect(Vec::new());let mut saw=false;
+        for i in 0..720 {
+            if i==120 {sim.mario.pos.x+=600.0;sim.mario.prev_pos=sim.mario.pos;}
+            sim.advance_observed(&mut host,&libsms::Pad::default(),0,1.0/120.0,|m,h|v.events(&std::mem::take(&mut h.0),m));
+            v.update(&mut sim,1.0/120.0);
+            saw|=!v.fx.vertices.is_empty();
+        }
+        assert!(saw,"no pickup sparkle was drawn");
+        assert!(v.fx_binds.iter().any(|(_,at)| *at==FxAt::JointFollow(1)),"pickup did not follow root joint 1");
+        assert!(!v.fx.active(),"one pickup's authored emitter never expired");
     }
 
     #[test]

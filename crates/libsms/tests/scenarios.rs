@@ -4166,6 +4166,67 @@ fn a_stick_circle_in_a_plain_dive_is_a_normal_speed_corkscrew() {
     }
 }
 
+#[test]
+fn both_corkscrews_follow_camera_yaw_and_only_relative_pitch() {
+    fn steer<H:Host>(s:&mut Scene<H>) {
+        // A tilted starting camera must still launch level. Raise well above terrain
+        // to measure the downward steering without ending the roll on the floor.
+        s.sim.mario.pos.y=2000.0;
+        let initial_yaw=s.sim.mario.face_yaw;
+        s.sim.mario.flight_camera=Some(libsms::Aim {yaw:initial_yaw,pitch:6000});
+        let mut angle=0.0f32;
+        let mut run=|s:&mut Scene<H>,ticks| {
+            for _ in 0..ticks {
+                angle+=std::f32::consts::TAU/12.0;
+                s.pad.stick=Vec2::new(angle.cos(),angle.sin());s.step(1);
+                assert_eq!(s.sim.mario.status,Status::JumpCatch);
+            }
+        };
+        run(s,32);
+        assert!(s.sim.mario.vel.y.abs()<0.001,"initial camera tilt changed level flight");
+        let speed=s.sim.mario.vel.length();
+        let right=initial_yaw.wrapping_add(6000);
+        s.sim.mario.flight_camera=Some(libsms::Aim {yaw:right,pitch:12000});
+        run(s,60);
+        assert_eq!(s.sim.mario.face_yaw,right,"camera right did not steer");
+        assert!(s.sim.mario.vel.y>0.0,"looking up did not climb");
+        let max_vertical=speed*15.0_f32.to_radians().sin();
+        assert!(s.sim.mario.vel.y<=max_vertical+0.01,"pitch was not bounded");
+        assert!((s.sim.mario.vel.length()-speed).abs()<0.1,"steering changed flight speed");
+        let left=initial_yaw.wrapping_sub(6000);
+        s.sim.mario.flight_camera=Some(libsms::Aim {yaw:left,pitch:-12000});
+        run(s,80);
+        assert_eq!(s.sim.mario.face_yaw,left,"camera left did not steer");
+        assert!(s.sim.mario.vel.y<0.0 && s.sim.mario.vel.y>=-max_vertical-0.01,"downward pitch was not bounded");
+        s.sim.mario.flight_camera=Some(libsms::Aim {yaw:left,pitch:6000});
+        run(s,100);
+        assert!(s.sim.mario.vel.y.abs()<0.01,"returning to starting angle did not level flight");
+        s.pad.stick=Vec2::ZERO;s.step(80);
+        assert_eq!(s.sim.mario.model_pitch,0,"roll failed to end after releasing the stick");
+        assert!(s.sim.mario.vel.y<0.0,"gravity did not resume");
+    }
+    steer(&mut corkscrew_scene(vec![]));
+    let mut plain=Scene::flat();
+    plain.pad.stick=Vec2::Y;plain.pad.a=true;plain.step(30);
+    plain.pad.a=false;plain.pad.b=true;plain.step(2);plain.pad.b=false;
+    steer(&mut plain);
+}
+
+#[test]
+fn equipping_an_alternate_uses_the_nozzle_pickup_sparkle_and_sounds_once() {
+    let mut s=Scene::flat();s.sim.mario.give_fludd();
+    assert!(s.sim.mario.select_nozzle(2));s.step(1);
+    assert_eq!(s.sim.mario.fludd.as_ref().unwrap().nozzle,NozzleKind::Hover);
+    assert_eq!(s.event_count(|e| matches!(e,Event::Particle(c) if c.name=="ms_itemget1_a" && c.at==libsms::FxAt::JointFollow(1))),1);
+    for name in ["MSD_SE_SY_GET_NOZZLE","MSD_SE_MA_SHINING_EFF_CALM2"] {
+        assert_eq!(s.event_count(|e| matches!(e,Event::Sound(c) if c.name==name)),1);
+    }
+    s.host.events.clear();assert!(s.sim.mario.select_nozzle(2));s.step(1);
+    assert_eq!(s.event_count(|e| matches!(e,Event::Particle(c) if c.name=="ms_itemget1_a")),0,"unchanged nozzle retriggered pickup");
+    assert!(s.sim.mario.select_nozzle(1));s.step(1);
+    assert_eq!(s.event_count(|e| matches!(e,Event::Particle(c) if c.name=="ms_itemget1_a")),0,"Spray toggle triggered pickup");
+}
+
 fn particle_count<H: Host>(s: &Scene<H>, name: &str) -> usize {
     s.event_count(|e| matches!(e, Event::Particle(c) if c.name == name))
 }

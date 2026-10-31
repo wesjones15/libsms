@@ -208,6 +208,14 @@ impl Hud {
         Some(image)
     }
 
+    /// Current nozzle picture inside the combined gauge canvas, top-down pixels.
+    /// GCConsole2.cpp::loadAfter binds nz01..04; use its actual pane, not a guessed
+    /// fraction of the tank, when animating host UI from the nozzle head.
+    pub fn nozzle_rect(&self) -> [i32; 4] {
+        let p = &self.nozzles[self.nozzle];
+        [p.at[0] - self.origin[0], p.at[1] - self.origin[1], p.image.width as i32, p.image.height as i32]
+    }
+
     /// Redraws the gauge for `g`, `frames` 30 Hz frames after the last call (the charge flash
     /// steps once a frame). Bumps `version` when the picture changed.
     pub fn update(&mut self, g: &Gauge, frames: u32) {

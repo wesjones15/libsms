@@ -820,3 +820,11 @@ uses it to extinguish individual fire-trail segments. Fire vulnerability and the
 5x water damage multiplier are host policy, not Sunshine damage behavior.
 
 JPAC2-10 resources now decode into the shared JParticle runtime (dynamics, animation keys, child particles, fields, TEV selectors and texture samplers). Billboard indirect heat shares the scene-refraction path. Named Pikmin 2 BMS playback uses source director maps and the JumpBgm no-jump sentinel; four overworld scores and nine added enemy cues have PCM coverage in p2_music.rs.
+
+## Cohesive FLUDD stream and camera-steered corkscrews (2026-10-31)
+
+See [fludd-stream-flight.md](fludd-stream-flight.md) for the exact type-0 model-water
+identity, viewer proof command, unified coverage mesh/host contract and ABI 40.
+Both ordinary and Turbo corkscrews follow host camera yaw and a smoothed 35% change
+from their starting camera pitch, capped at +/-15 degrees. This is host behavior;
+without camera input the previous stick steering and level flight remain.

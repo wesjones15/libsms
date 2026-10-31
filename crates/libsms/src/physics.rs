@@ -313,11 +313,10 @@ impl Mario {
             return;
         }
         let j = &self.params.jump;
-        if self.is_fall_cancel() {
+        if self.status == Status::JumpCatch && self.corkscrew > 0 {
+            // jump_catch sets the camera-steered vertical speed; no gravity during the roll.
+        } else if self.is_fall_cancel() {
             self.vel.y *= 0.75;
-        } else if self.status == Status::JumpCatch && self.corkscrew > 0 {
-            // The corkscrew holds its height.
-            self.vel.y = 0.0;
         } else if matches!(
             self.status,
             Status::LeftRotateJump | Status::RightRotateJump

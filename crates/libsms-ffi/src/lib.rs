@@ -30,7 +30,7 @@ use libsms::{
 use view::SmsView;
 
 /// ABI version, bumped when the C interface changes.
-pub const SMS_ABI_VERSION: u32 = 39;
+pub const SMS_ABI_VERSION: u32 = 40;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sms_abi_version() -> u32 {
@@ -1185,6 +1185,20 @@ pub unsafe extern "C" fn sms_sim_set_aim(sim: *mut SmsSim, on: u8, yaw: i16, pit
     // SAFETY: the caller promised a valid pointer.
     if let Some(s) = unsafe { sim.as_mut() } {
         s.sim.mario.aim = (on != 0 && pitch.is_finite()).then(|| libsms::Aim {
+            yaw,
+            pitch: (pitch.clamp(-1.5, 1.5) * (32768.0 / std::f32::consts::PI)) as i16,
+        });
+    }
+}
+
+/// Host camera steering for either corkscrew. Pitch radians are up positive;
+/// the roll captures its initial pitch and follows only 35% of subsequent change (max 15 degrees).
+/// # Safety
+/// `sim` from [`sms_sim_new`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_sim_set_flight_camera(sim: *mut SmsSim, on: u8, yaw: i16, pitch: f32) {
+    if let Some(s) = unsafe { sim.as_mut() } {
+        s.sim.mario.flight_camera = (on != 0 && pitch.is_finite()).then(|| libsms::Aim {
             yaw,
             pitch: (pitch.clamp(-1.5, 1.5) * (32768.0 / std::f32::consts::PI)) as i16,
         });

@@ -741,6 +741,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn nozzle_pickup_and_sparkle_sounds_resolve_and_render_audible_pcm() {
+        let Some(dir)=libsms::assets::find(None) else {eprintln!("SKIP: Sunshine cache absent");return;};
+        if !dir.join(libsms_assets::sound::INIT_DATA).is_file() {eprintln!("SKIP: Sunshine audio absent");return;}
+        let data=Arc::new(SoundData::load(&dir).unwrap());
+        for (name,id) in [("MSD_SE_SY_GET_NOZZLE",0x484E),("MSD_SE_MA_SHINING_EFF_CALM2",0x1989),("MSD_SE_IT_EGG_APPEAR",0x3801)] {
+            let mut sys=SoundSystem::new(data.clone());assert_eq!(sys.id(name),Some(id));
+            assert!(sys.play(name,Some(Vec3::ZERO),0).is_some());
+            let mut pcm=[0.0f32;1600];let mut peak=0.0f32;
+            for _ in 0..60 {sys.frame();sys.render(&mut pcm,24000.0);assert!(pcm.iter().all(|v|v.is_finite()));peak=pcm.iter().fold(peak,|p,v|p.max(v.abs()));}
+            assert!(peak>0.001,"silent nozzle cue {name}: {peak}");
+        }
+    }
+
+    #[test]
     fn arrival_and_death_stings_are_audible_stereo_pcm16() {
         let Some(dir) = libsms::assets::find(None) else {
             return;

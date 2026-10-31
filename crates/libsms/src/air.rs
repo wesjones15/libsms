@@ -364,6 +364,7 @@ impl Mario {
         self.fludd_emitting = false;
         self.change_status(Status::JumpCatch, 0, false);
         self.corkscrew = CORKSCREW_GRACE;
+        self.corkscrew_camera_start = self.flight_camera.map(|a| a.pitch);
         self.corkscrew_age = 0;
         self.corkscrew_used = true;
         // One call-out of the spin jump's, not the dive's grunt; the animation's own cues are muted.
@@ -547,6 +548,7 @@ impl Mario {
         // Host extension: a full stick circle in a plain dive is the corkscrew too, at the dive's own speed.
         if self.corkscrew == 0 && !self.corkscrew_used && !self.on_yoshi() && self.check_stick_rotate().is_some() {
             self.corkscrew = CORKSCREW_GRACE;
+            self.corkscrew_camera_start = self.flight_camera.map(|a| a.pitch);
             self.corkscrew_age = 0;
             self.corkscrew_used = true;
             self.corkscrew_speed = self.forward_vel;
@@ -575,13 +577,24 @@ impl Mario {
             self.model_yaw = self.face_yaw;
             self.model_pitch = 0x4000;
             self.model_roll = self.model_roll.wrapping_add(0x1000);
-            // Flies at its launch speed, steered a little by the stick, not braked like a plain dive.
-            if self.input.stick {
+            // Host extension (both Turbo and ordinary dive): camera yaw steers the flight;
+            // pitch is a small change relative to the camera at the start of this roll.
+            // Keep the stick circle for sustaining the roll, rather than steering in circles.
+            let target_pitch = if let Some(camera) = self.flight_camera {
+                let start = *self.corkscrew_camera_start.get_or_insert(camera.pitch);
+                let delta = camera.pitch.wrapping_sub(start) as f32 * std::f32::consts::PI / 32768.0;
+                self.face_yaw = crate::math::turn_toward(self.face_yaw, camera.yaw, self.params.hover.rot_sp as i32);
+                (delta * 0.35).clamp(-15.0_f32.to_radians(), 15.0_f32.to_radians())
+            } else { 0.0 };
+            self.corkscrew_pitch += (target_pitch - self.corkscrew_pitch) * 0.08;
+            if self.flight_camera.is_none() && self.input.stick {
                 let rot = (self.params.hover.rot_sp as i32) / 2;
                 self.face_yaw = crate::math::turn_toward(self.face_yaw, self.intended_yaw, rot);
-                self.model_yaw = self.face_yaw;
             }
-            self.set_player_velocity(self.corkscrew_speed);
+            self.model_yaw = self.face_yaw;
+            self.model_pitch = 0x4000 - (self.corkscrew_pitch * 32768.0 / std::f32::consts::PI) as i16;
+            self.set_player_velocity(self.corkscrew_speed * self.corkscrew_pitch.cos());
+            self.vel.y = self.corkscrew_speed * self.corkscrew_pitch.sin();
         } else {
             self.model_pitch = 0;
             self.model_roll = 0;

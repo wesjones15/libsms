@@ -1378,6 +1378,24 @@ pub unsafe extern "C" fn sms_view_water_vertices(
     }
 }
 
+/// Last N drop quads are the unified type-0 surface: white tint texture, vertex-alpha
+/// coverage, sphere-map UVs for refraction. Other drop quads keep the disc mask.
+/// # Safety
+/// `view` from [`sms_view_new`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_water_stream_quads(view: *mut SmsView) -> u32 {
+    unsafe { with_view(view, 0, |v| v.water.stream_quads) }
+}
+
+/// Enable cohesive type-0 coverage. Disable for tightly cropped still-life portraits
+/// whose approved framing includes the original mask's faint outer edge.
+/// # Safety
+/// `view` from [`sms_view_new`]. Takes effect on the next view update.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_set_water_cohesive(view: *mut SmsView, on: u8) {
+    unsafe { with_view(view, (), |v| v.water.cohesive = on != 0) }
+}
+
 /// This frame's water counts and drop tint.
 ///
 /// # Safety
@@ -1638,11 +1656,25 @@ pub unsafe extern "C" fn sms_view_hud_info(view: *mut SmsView, out: *mut SmsHudI
     }
 }
 
-/// One of FLUDD's nozzle icons from the HUD (`nz01..04`: 0 Spray, 1 Hover, 2 Rocket, 3 Turbo),
-/// as [`SmsHudInfo`] (width/height; `shown` is 1, x and y are 0). Returns 0 without the HUD's
-/// files. The pixels are [`sms_view_nozzle_icon_pixels`], RGBA with straight alpha and the top
-/// row first.
+/// Current nz01..04 nozzle pane within the combined HUD image, as [`SmsHudInfo`].
+/// x/y are local top-down pixels; screen_w/h are the combined canvas dimensions.
+/// Hosts map this through their tank's actual screen rectangle to anchor other UI.
 ///
+/// # Safety
+/// `view` from [`sms_view_new`]; `out` writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_hud_nozzle_info(view: *mut SmsView, out: *mut SmsHudInfo) -> u8 {
+    unsafe { with_view(view, 0, |v| {
+        let (Some(hud), Some(out)) = (v.view.hud.as_ref(), out.as_mut()) else { return 0; };
+        let [x,y,w,h] = hud.nozzle_rect();
+        *out = SmsHudInfo { x,y,width:w as u32,height:h as u32,
+            screen_w:hud.image.width, screen_h:hud.image.height, shown:1, ..Default::default() };
+        1
+    }) }
+}
+
+/// One HUD nozzle icon (`nz01..04`: 0 Spray, 1 Hover, 2 Rocket, 3 Turbo), as
+/// [`SmsHudInfo`] (width/height, shown 1, x/y 0). Pixels: [`sms_view_nozzle_icon_pixels`].
 /// # Safety
 /// `view` from [`sms_view_new`]; `out` writable.
 #[unsafe(no_mangle)]

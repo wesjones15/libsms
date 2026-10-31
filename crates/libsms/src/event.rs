@@ -115,6 +115,9 @@ pub enum FxAt {
     Center,
     /// The same on the body's joint `n` (`getAnmMtx(n)`).
     Joint(u16),
+    /// One-shot position-only binding to a body joint, for its authored lifetime.
+    /// MarioParticle.cpp::emitGetEffect binds to setPositions' root joint 1.
+    JointFollow(u16),
     /// `emitAndBindToPosPtr(id, &mPosition, 1, this)`: held, at Mario's feet.
     Feet,
     /// One-shot `emitAndBindToPosPtr(.., &mPosition, 0, ..)`, following Mario.
