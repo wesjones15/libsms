@@ -35,6 +35,8 @@ pub struct YoshiSkin {
     chest_align: Mat4,
     mouth: usize,
     head: usize,
+    /// Mario's `jnt_head` frame in `chn_head`'s frame (the helmet's bone axes).
+    head_align: Mat4,
     jaw: usize,
     eat: libsms::Clip,
     /// Yoshi's own clips by file stem (`yoshi_wait`, `yoshi_run`, `yoshi_hold_jump`, ...).
@@ -87,6 +89,9 @@ impl YoshiSkin {
             *rotation(source.bind_world()[mario_chest]));
         let mouth=rig.find("null_tongue").ok_or("Yoshi mouth emitter missing")?;
         let head=rig.find("chn_head").ok_or("Yoshi head pivot missing")?;
+        let mario_head=source.find("jnt_head").ok_or("Mario head missing")?;
+        let head_align=Mat4::from_quat(rotation(rig.bind_world()[head]).inverse()
+            *rotation(source.bind_world()[mario_head]));
         let jaw=rig.find("jnt_mouth").ok_or("Yoshi jaw missing")?;
         let eat=libsms::Clip::parse(&std::fs::read(dir.join("yoshi/yoshi_eat.bck")).map_err(|e|e.to_string())?)
             .ok_or("Yoshi eat/jaw animation missing")?;
@@ -99,7 +104,7 @@ impl YoshiSkin {
             clips.insert(name,clip);
         }
         eprintln!("Yoshi skin: yoshi.szs:yoshi_model.bmd, 38 joints; TYoshi::init (Player/Yoshi.cpp); Mario's 29-joint clips for the air");
-        Ok(Self{rig,retarget,chest,chest_align,mouth,head,jaw,eat,clips,mouth_frame})
+        Ok(Self{rig,retarget,chest,chest_align,mouth,head,head_align,jaw,eat,clips,mouth_frame})
     }
 
     pub fn pose(&self,source:&[Mat4])->Vec<Mat4> { self.retarget.pose(&self.rig,source) }
@@ -132,6 +137,9 @@ impl YoshiSkin {
     }
 
     /// The mouth opening and head aim on an already-posed body (Yoshi's own clip or Mario's).
+    /// The head pivot (`chn_head`, which the retarget maps from Mario's `jnt_head`).
+    pub fn head_world(&self,world:&[Mat4])->Mat4 {world[self.head]*self.head_align}
+
     pub fn spray_world(&self,mut world:Vec<Mat4>,route:SprayRoute,active:bool)->Vec<Mat4> {
         if route.mouth && active {
             // TYoshi::thinkUpper uses yoshi_eat over the mouth region. Keep the body while

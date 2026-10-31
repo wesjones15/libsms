@@ -15,6 +15,8 @@ pub struct Pianta {
     /// `None`: the rig is Mario's (Piantissimo), so his joint matrices apply as they are.
     retarget: Option<Retarget>,
     chest: usize,
+    head: usize,
+    head_align: Mat4,
     chest_align: Mat4,
     pub label: &'static str,
 }
@@ -106,7 +108,12 @@ impl Pianta {
             let chest_align = if direct { Mat4::IDENTITY } else {
                 Mat4::from_quat(rot(rig.bind_world()[chest]).inverse() * rot(source.bind_world()[mario_chest]))
             };
-            all.push(Pianta { renderer, body, rig, retarget, chest, chest_align, label });
+            let head = rig.find(if direct { "jnt_head" } else { "kubi" }).ok_or("Pianta head joint missing")?;
+let head_align = if direct { Mat4::IDENTITY } else {
+                let mario_head = source.find("jnt_head").ok_or("Mario head missing")?;
+                Mat4::from_quat(rot(rig.bind_world()[head]).inverse() * rot(source.bind_world()[mario_head]))
+            };
+            all.push(Pianta { renderer, body, rig, retarget, chest, head, head_align, chest_align, label });
         }
         Ok(all)
     }
@@ -125,6 +132,9 @@ impl Pianta {
     }
 
     pub fn chest(&self, world: &[Mat4]) -> Mat4 { world[self.chest] * self.chest_align }
+
+    /// The `jnt_head` matrix (the helmet's parent on Mario's own rig).
+    pub fn head(&self, world: &[Mat4]) -> Mat4 { world[self.head] * self.head_align }
 
     pub fn draw(&mut self, world: &[Mat4], root: Mat4, view: Mat4, proj: Mat4) {
         let lights = Lights::daylight(view);

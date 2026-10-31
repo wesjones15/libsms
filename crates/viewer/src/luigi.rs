@@ -69,6 +69,8 @@ pub struct Luigi {
     retarget: sms::Retarget,
     /// Mario's `jnt_chest` frame in Luigi's `WaistN` frame: FLUDD's chest transform.
     chest_align: Mat4,
+    /// Mario's `jnt_head` (26) frame in `HeadN`'s (22): the helmet's bone axes.
+    head_align: Mat4,
     bck_dir: PathBuf,
     clips: HashMap<String, sms::Clip>,
 }
@@ -85,12 +87,16 @@ impl Luigi {
         let chest_align = Mat4::from_mat3(
             retarget.target_bind()[5].transpose() * retarget.source_bind()[14],
         );
+let head_align = Mat4::from_mat3(
+            retarget.target_bind()[22].transpose() * retarget.source_bind()[26],
+        );
         let renderer = HsdRenderer::new(model)?;
         Ok(Luigi {
             renderer,
             rig,
             retarget,
             chest_align,
+            head_align,
             bck_dir: sms_dir.join("bck"),
             clips: HashMap::new(),
         })
@@ -133,6 +139,13 @@ impl Luigi {
             return Mat4::IDENTITY;
         };
         let (_, r, t) = (chest * self.chest_align).to_scale_rotation_translation();
+        Mat4::from_rotation_translation(r, t * 10.0)
+    }
+
+    /// `HeadN` (22, mapped from Mario's `jnt_head`) in Sunshine units, like [`chest`].
+    pub fn head(&self, world: &[Mat4]) -> Mat4 {
+        let Some(head) = world.get(22).copied() else { return Mat4::IDENTITY };
+        let (_, r, t) = (head * self.head_align).to_scale_rotation_translation();
         Mat4::from_rotation_translation(r, t * 10.0)
     }
 

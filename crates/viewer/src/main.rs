@@ -22,6 +22,7 @@
 mod coin;
 mod fludd;
 mod fx;
+mod helmet;
 mod j3d;
 mod luigi;
 mod mario_model;
@@ -46,6 +47,10 @@ use macroquad::prelude::*;
 
 /// Decomp units (about cm) to scene metres.
 const S: f32 = 0.01;
+// The helmet's per-skin fit on the head joint (helmet.rs); Mario's is the identity.
+const LUIGI_FIT: helmet::Fit = helmet::Fit::MARIO;
+const PIANTA_FIT: helmet::Fit = helmet::Fit::MARIO;
+const YOSHI_FIT: helmet::Fit = helmet::Fit::MARIO;
 
 fn mq(v: V3) -> Vec3 {
     vec3(v.x * S, v.y * S, v.z * S)
@@ -908,6 +913,11 @@ async fn main() {
             .map_err(|e| eprintln!("Mario's model: {e}"))
             .ok()
     });
+    // `--helmet` / `SMS_HELMET=1`: the diving helmet on whichever skin is drawn (helmet.rs).
+    let mut helmet = (args.iter().any(|s| s == "--helmet") || std::env::var_os("SMS_HELMET").is_some())
+        .then(|| assets.as_ref().and_then(|a| helmet::Helmet::load(&a.dir)
+            .map_err(|e| eprintln!("Diving helmet: {e}")).ok()))
+        .flatten();
     // Luigi owns a FLUDD of his own; it follows his chest, not Mario's.
     let mut luigi_fludd = if use_luigi || use_peach || use_melee_peach || use_pianta || use_yoshi_skin {
         assets.as_ref().and_then(|a| {
@@ -1497,7 +1507,11 @@ async fn main() {
                     } else {
                         root
                     };
-                    model.draw(&sim, &joints, mario_root, view, proj, get_time() as f32)
+                    let muzzles = model.draw(&sim, &joints, mario_root, view, proj, get_time() as f32);
+                    if let (Some(h), Some(j)) = (helmet.as_mut(), r.skeleton.find("jnt_head").and_then(|j| joints.get(j))) {
+                        h.draw(*j, helmet::Fit::from_env(helmet::Fit::MARIO), mario_root, view, proj);
+                    }
+                    muzzles
                 };
                 if let (Some(skin),Some(ym))=(&yoshi_skin,&mut yoshi_model) {
                     let route=yoshi_skin::SprayRoute::for_mario(m);
@@ -1512,6 +1526,9 @@ async fn main() {
                     for joint in &mut world { joint.w_axis.y+=offset; }
                     let mouth=skin.remember_mouth(&world);
                     ym.draw_mario_pose(&world,root,view,proj,get_time() as f32);
+                    if let Some(h)=helmet.as_mut() {
+                        h.draw(skin.head_world(&world),helmet::Fit::from_env(YOSHI_FIT),root,view,proj);
+                    }
                     if m.fludd.is_some() {
                         if let Some(f)=&mut luigi_fludd {
                             f.belt_scale=1.5;
@@ -1545,6 +1562,9 @@ async fn main() {
                 if let Some(pianta) = pianta_models.get_mut(pianta_index) {
                     let world = pianta.pose(&joints, model.lowest(&joints));
                     pianta.draw(&world, root, view, proj);
+                    if let Some(h) = helmet.as_mut() {
+                        h.draw(pianta.head(&world), helmet::Fit::from_env(PIANTA_FIT), root, view, proj);
+                    }
                     if let Some(f) = &mut luigi_fludd {
                         let deployed = m.fludd.as_ref().is_some_and(|f| f.housed < 0.5);
                         muzzle_mtx = f.draw(m.fludd_look(), deployed, true, dt,
@@ -1572,6 +1592,9 @@ async fn main() {
                             }
                         }
                         l.draw(&world, root, view, proj);
+                        if let Some(h) = helmet.as_mut() {
+                            h.draw(l.head(&world), helmet::Fit::from_env(LUIGI_FIT), root, view, proj);
+                        }
                         // Luigi's own FLUDD, on his chest: the sim's character wears it, so its
                         // muzzles are the ones the water and the mist leave.
                         if let Some(f) = &mut luigi_fludd {
