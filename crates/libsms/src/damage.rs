@@ -108,7 +108,7 @@ impl Mario {
     /// `isInvincible`: still flashing from the last hit.
     pub fn is_invincible(&self) -> bool {
         // The Shine Get pose isn't interrupted (the game stops the world for it).
-        self.invincible > 0 || self.status == Status::WinDemo
+        self.invincible > 0 || matches!(self.status, Status::WinDemo | Status::Carried)
     }
 
     /// Down for good (`MARIO_FLAG_GAME_OVER`).
@@ -148,7 +148,7 @@ impl Mario {
         if self.guarded_fire() && (self.fire_rearm_ticks > 0 || self.is_wet()) {
             return false;
         }
-        if self.is_down() || self.health <= 0 || self.status == Status::WinDemo {
+        if self.is_down() || self.health <= 0 || matches!(self.status, Status::WinDemo | Status::Carried) {
             return false;
         }
         if self.on_yoshi() {

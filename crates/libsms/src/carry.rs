@@ -154,6 +154,40 @@ impl Mario {
         false
     }
 
+    /// Another Mario picked him up (host extension): he is held by the seat of his pants, flailing in
+    /// the fire hop's clip (`firejmp`, looped) with no voice, flames or damage. The host puts him where
+    /// the hands are; he lets go of what he held and stays put until [`Self::set_carried`]`(false)`.
+    pub fn set_carried(&mut self, on: bool) {
+        if on {
+            if self.status == Status::Carried || self.is_down() {
+                return;
+            }
+            self.let_go();
+            self.vel = Vec3::ZERO;
+            self.set_player_velocity(0.0);
+            self.change_status(Status::Carried, 0, true);
+        } else if self.status == Status::Carried {
+            // Set down or thrown: he falls (the host's launch, if any, comes after) and lands.
+            self.vel = Vec3::ZERO;
+            self.change_status(Status::ForceJump, 0, true);
+            self.set_anim(crate::anim::clip::JUMP, 1.0);
+        }
+    }
+
+    /// Whether another Mario is holding him ([`Self::set_carried`]).
+    pub fn is_carried(&self) -> bool {
+        self.status == Status::Carried
+    }
+
+    /// The carried pose each tick: the fire hop's clip on a loop, going nowhere.
+    pub(crate) fn carried_pose(&mut self) -> bool {
+        self.status_timer += 1;
+        self.vel = Vec3::ZERO;
+        self.set_player_velocity(0.0);
+        self.set_anim("firejmp", 1.0);
+        false
+    }
+
     /// The host took what he carries away (a teammate he was holding broke free): he lets go of it, with
     /// no throw, and his hands come down.
     pub fn let_go(&mut self) {

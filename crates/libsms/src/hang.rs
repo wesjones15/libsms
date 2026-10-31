@@ -118,6 +118,7 @@ impl Mario {
             Status::HangJumping => self.hang_clip(host, clip::JUMP_UP, Status::Wait),
             Status::DownLoser => self.loser_down(),
             Status::WinDemo => self.win_demo(host),
+            Status::Carried => self.carried_pose(),
             _ => false,
         }
     }

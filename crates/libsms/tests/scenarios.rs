@@ -1474,6 +1474,33 @@ fn what_he_carries_can_be_taken_away_and_his_hands_come_down() {
     assert_eq!(s.event_count(|e| matches!(e, Event::Put { .. })), 0);
 }
 
+#[test]
+fn a_mario_held_by_another_flails_in_the_fire_hop_without_fire_or_voice() {
+    let mut s = Scene::flat();
+    s.step(30);
+    let at = s.mario().pos;
+    s.sim.mario.set_carried(true);
+    assert!(s.mario().is_carried());
+    s.step(240);
+    assert!(s.mario().is_carried());
+    assert_eq!(s.mario().anim.clip, "firejmp");
+    assert!((s.mario().pos - at).length() < 0.01, "pinned where the host put him");
+    assert!(!s.mario().on_fire());
+    // No yell, no flames; and hits do nothing while he is held.
+    let loud = |e: &Event| match e {
+        Event::Sound(c) => c.name.contains("DAMAGE_FIRE"),
+        Event::Particle(_) => false,
+        _ => false,
+    };
+    assert_eq!(s.event_count(loud), 0);
+    assert!(!s.sim.mario.damage(at, libsms::DamageKind::EnemyCommon));
+    assert!(s.mario().is_carried());
+    // Set down: he falls and lands on his feet.
+    s.sim.mario.set_carried(false);
+    assert!(!s.mario().is_carried());
+    assert!(s.until(600, |m| m.status == Status::Wait || m.status == Status::Landing || m.status == Status::JumpEnd));
+}
+
 // ---- Yoshi ---------------------------------------------------------------------------------
 
 /// A flat floor with fruit lying about, and enemies (position, edible, caught); taken things

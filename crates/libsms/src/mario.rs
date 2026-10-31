@@ -129,6 +129,9 @@ pub enum Status {
     /// Got a Shine Sprite (`MARIO_STATUS_WIN_DEMO`, `winDemo`, MarioAutodemo.cpp): lands, then
     /// holds the Shine over his head until the host ends the demo ([`Mario::end_win_demo`]).
     WinDemo,
+    /// Held by another Mario by the seat of his pants (host extension, [`Mario::set_carried`]): the
+    /// fire hop's flailing clip, looped, with no voice, flames or damage; the host moves him.
+    Carried,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -153,7 +156,7 @@ impl Status {
             | UltraJumpSlip | BroadJumpSlip | BackDown | ForeDown | ShortBackDown
             | ShortForeDown | SafeBackDown | SafeForeDown | CatchDown | FireDash => Kind::Running,
             CatchLost | Take | TakePose | Putting | Pitching => Kind::Action,
-            Hanging | Ascend | Descend | HangJumping | DownLoser | WinDemo => Kind::Special,
+            Hanging | Ascend | Descend | HangJumping | DownLoser | WinDemo | Carried => Kind::Special,
             _ => Kind::Jumping,
         }
     }

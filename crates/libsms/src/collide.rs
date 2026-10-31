@@ -19,7 +19,7 @@ impl Mario {
     /// The enemy part of `checkCollision`: each enemy Mario's attack cylinder reaches gets
     /// `hitNormal`; with [`crate::Options::enemy_push`] he is then kept out of its body.
     pub(crate) fn check_enemy_collision(&mut self, host: &mut dyn Host) {
-        if matches!(self.status, Status::DownLoser | Status::WinDemo) {
+        if matches!(self.status, Status::DownLoser | Status::WinDemo | Status::Carried) {
             return;
         }
         let radius = self.params.mario.trample_radius;

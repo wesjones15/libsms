@@ -30,7 +30,7 @@ use libsms::{
 use view::SmsView;
 
 /// ABI version, bumped when the C interface changes.
-pub const SMS_ABI_VERSION: u32 = 37;
+pub const SMS_ABI_VERSION: u32 = 38;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sms_abi_version() -> u32 {
@@ -1253,6 +1253,19 @@ pub unsafe extern "C" fn sms_sim_let_go(sim: *mut SmsSim) {
     // SAFETY: as documented.
     if let Some(s) = unsafe { sim.as_mut() } {
         s.sim.mario.let_go();
+    }
+}
+
+/// Another Mario holds him (non-zero) or has let go (0): see `Mario::set_carried`. The pose is the fire
+/// hop's flailing, with no voice or flames.
+///
+/// # Safety
+/// `sim` from [`sms_sim_new`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_sim_set_carried(sim: *mut SmsSim, on: u8) {
+    // SAFETY: as documented.
+    if let Some(s) = unsafe { sim.as_mut() } {
+        s.sim.mario.set_carried(on != 0);
     }
 }
 
