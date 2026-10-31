@@ -194,14 +194,18 @@ impl Pianta {
     }
 
     /// Apply the game's waist callback before envelope skinning. `root` places
-    /// the body in Sunshine units, so movement and turns excite the spring.
+    /// the body in Sunshine units, so movement and turns excite the spring. The spring is
+    /// driven by `koshi_null`, but only the joints below it (`mino_null`, the skirt proper)
+    /// take the correction: `koshi_null` itself carries the waistband and the top ring of
+    /// the skirt (envelope 17 is 90% on it), which must stay on the body while the
+    /// envelope weights fade the lag in toward the hem.
     pub fn apply_waist_lag(&self, world: &mut [Mat4], root: Mat4, time: f32, state: &mut crate::mtx_effect::TimeLag) {
         let Some((joint, params)) = self.waist else { return };
         let target = root * world[joint];
         let lagged = state.update(target, time, params);
         let correction = root.inverse() * lagged * world[joint].inverse();
         for (j, matrix) in world.iter_mut().enumerate() {
-            if self.rig.under(j, joint) { *matrix = correction * *matrix; }
+            if j != joint && self.rig.under(j, joint) { *matrix = correction * *matrix; }
         }
     }
 
