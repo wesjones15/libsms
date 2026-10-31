@@ -50,9 +50,10 @@ Tightly cropped generated skill portraits explicitly disable cohesive coverage
 using `sms_view_set_water_cohesive`; they keep their approved mask-edge framing.
 The generated portrait images are unchanged. Gameplay water uses the unified mesh.
 
-ABI **41** adds `sms_sim_equip_nozzle` (the radial menu's one-shot nozzle-box pickup
-feedback) beside the silent quick-swap `sms_sim_select_nozzle`, with no struct layout
-change; network protocol **11** adds the equip-operation replay.
+ABI **40** added the stream/flight exports and network protocol **10** the flight-camera
+replay. ABI **41** adds `sms_sim_equip_nozzle` (the radial menu's one-shot nozzle-box
+pickup feedback) beside the silent quick-swap `sms_sim_select_nozzle`, with no struct
+layout change; network protocol **11** adds the equip-operation replay.
 Install matching `sms.dll` and `MarioTest.dll`. Headless scenarios exercise both
 corkscrews turning both ways, relative pitch, its cap, speed and gravity recovery.
 The managed/native portrait check verifies the stream partition and quad counts.
