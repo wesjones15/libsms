@@ -390,6 +390,8 @@ impl Skin {
 
 /// Texture-cache keys for same-rig bodies sit above any model index.
 pub(crate) const RIG_KEY_BASE: u32 = 0x1000;
+/// Model key of the diving helmet (not a rig body: its konst 0 alpha is the glass's, not dirt).
+const HELMET_KEY: u32 = 0x2000;
 
 pub struct View {
     pub models: Vec<Model>,
@@ -467,6 +469,10 @@ pub struct View {
     pub yoshi: Option<Yoshi>,
     /// Same-rig skin bodies loaded into [`Self::models`] ([`Self::load_skin`]): skin, model.
     rig_bodies: Vec<(Skin, u32)>,
+    /// `diver_helm.bmd`'s index in `models`, once [`View::set_helmet`] has loaded it.
+    helmet: Option<u32>,
+    /// Draw the diving helmet on the head (`TMarioCap` model 2, flag `E_CAP_MODEL_HELMET`).
+    pub helmet_on: bool,
     /// The Sunshine assets folder, kept for loading Luigi's rig and clips later.
     assets_dir: PathBuf,
 }
@@ -823,7 +829,7 @@ fn build_batches(bmd: Bmd, batches: Vec<Batch>, replace: &dyn Fn(usize, &str) ->
 /// (konst 0's alpha is the dirt level, `TMario::addDirty`).
 fn base_inputs(model: u32) -> Inputs {
     Inputs {
-        k0_alpha: (matches!(model, models::BODY | models::CAP | 1..=4) || model >= RIG_KEY_BASE)
+        k0_alpha: (matches!(model, models::BODY | models::CAP | 1..=4) || (model >= RIG_KEY_BASE && model != HELMET_KEY))
             .then_some(0),
         ..Inputs::default()
     }
@@ -1160,6 +1166,8 @@ impl View {
             luigi: None,
             yoshi: None,
             rig_bodies: Vec::new(),
+            helmet: None,
+            helmet_on: false,
             assets_dir: dir.to_path_buf(),
         })
     }
@@ -1244,6 +1252,8 @@ impl View {
             luigi: None,
             yoshi: None,
             rig_bodies: Vec::new(),
+            helmet: None,
+            helmet_on: false,
             assets_dir: PathBuf::new(),
         })
     }
@@ -1337,6 +1347,8 @@ impl View {
             luigi: None,
             yoshi: None,
             rig_bodies: Vec::new(),
+            helmet: None,
+            helmet_on: false,
             assets_dir: PathBuf::new(),
         };
         view.update_shine(0.0, Vec3::ZERO, 0, 0, 0.0, 1.0, false);
@@ -1546,6 +1558,25 @@ impl View {
                 }
             }
         }
+    }
+
+    /// Wears (or takes off) the diving helmet: `watergun2/body/diver_helm.bmd` on `jnt_head`
+    /// (`TMarioCap::TMarioCap`, MarioCap.cpp; on with `TMario::setDivHelm`). Its glass goes
+    /// through the same TEV bake and alpha blend class as every other model, so it comes
+    /// out translucent. Returns false when the disc's file is missing. Mario and the
+    /// same-rig skins wear it; Luigi's HSD mesh and Yoshi's rig have no `jnt_head` here.
+    pub fn set_helmet(&mut self, on: bool) -> bool {
+        self.helmet_on = false;
+        if self.helmet.is_none() {
+            let built = load_bmd(&self.assets_dir, "watergun2/body/diver_helm.bmd")
+                .ok()
+                .and_then(|bmd| build(bmd, &|_, _| None, HELMET_KEY, &mut self.textures).ok());
+            let Some(model) = built else { return false };
+            self.models.push(model);
+            self.helmet = Some(self.models.len() as u32 - 1);
+        }
+        self.helmet_on = on;
+        true
     }
 
     /// The model a same-rig skin draws as its body, when that skin is current and loaded.
@@ -2063,6 +2094,9 @@ impl View {
         if let Some((model, _)) = rig_body {
             // A same-rig skin: its model on Mario's joints, cap and hands included.
             parts.push((model, Mat4::IDENTITY, &joints));
+            if let (true, Some(hm), Some(h)) = (self.helmet_on, self.helmet, self.head.and_then(|h| joints.get(h))) {
+                parts.push((hm, *h, &self.models[hm as usize].bind));
+            }
         } else if !luigi_body && !yoshi_body {
             parts.push((models::BODY, Mat4::IDENTITY, &joints));
             if let Some(h) = self.head.and_then(|h| joints.get(h)) {
@@ -2072,6 +2106,9 @@ impl View {
                     *h,
                     &self.models[models::CAP as usize].bind,
                 ));
+            }
+            if let (true, Some(hm), Some(h)) = (self.helmet_on, self.helmet, self.head.and_then(|h| joints.get(h))) {
+                parts.push((hm, *h, &self.models[hm as usize].bind));
             }
             let set = match hands {
                 Hands::Open => Some(models::HAND_OPEN),
@@ -2485,6 +2522,43 @@ mod tests {
                 assert!(p[2] >= p[0], "{p:?}");
             }
         }
+    }
+
+    /// The diving helmet (`TMarioCap` model 2): drawn on the head only when worn, and its glass
+    /// goes through the shared TEV bake and comes out a translucent batch, not an opaque one.
+    #[test]
+    fn the_diving_helmet_is_worn_on_the_head_with_translucent_glass() {
+        let Some(mut v) = view() else {
+            eprintln!("skipping: no assets/");
+            return;
+        };
+        if !v.set_helmet(true) {
+            eprintln!("SKIP: watergun2/body/diver_helm.bmd absent");
+            return;
+        }
+        let hm = v.helmet.unwrap();
+        let m = &v.models[hm as usize];
+        let glass = m.bmd.materials.iter().position(|x| x.name == "_mat_diverhelm_helm").unwrap();
+        let bi = m.batches.iter().position(|b| b.material == glass).unwrap();
+        let (blend, color) = (m.batch_blend[bi], m.batch_color_of(bi));
+        eprintln!("glass blend {blend} colour {color:?}");
+        assert_eq!(blend, blend::TRANSLUCENT, "glass must blend");
+        // The shared path hands a see-through batch's fade to hosts per vertex.
+        let first: usize = m.batches[..bi].iter().map(|b| b.vertices.len()).sum();
+        let fade = &m.vertex_alpha[first..first + m.batches[bi].vertices.len()];
+        let (lo, hi) = fade.iter().fold((1.0f32, 0.0f32), |(l, h), &a| (l.min(a), h.max(a)));
+        eprintln!("glass vertex alpha {lo}..{hi}");
+        assert!(lo < 0.9 && color[3] <= 1.0, "glass is not see-through: {lo}..{hi}");
+        let a = libsms::Assets::discover(None).unwrap();
+        let mut sim = Sim::new(a.params, a.anim_table, Vec3::ZERO, 0);
+        let mut host = libsms::FlatHost::default();
+        let pad = libsms::Pad::default();
+        sim.advance(&mut host, &pad, i16::MIN, 1.0 / 60.0);
+        v.update(&mut sim, 1.0 / 60.0);
+        assert!(v.draws.iter().any(|d| d.model == hm), "worn helmet draws");
+        v.set_helmet(false);
+        v.update(&mut sim, 1.0 / 60.0);
+        assert!(!v.draws.iter().any(|d| d.model == hm), "taken off");
     }
 
     #[test]
