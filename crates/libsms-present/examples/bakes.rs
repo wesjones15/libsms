@@ -1,5 +1,5 @@
 //! Writes every baked texture to PNG and lists each model's batches, to eyeball the TEV bake:
-//! `cargo run -p libsms-present --example bakes -- <out dir> [shadow]`.
+//! `cargo run -p libsms-present --example bakes -- <out dir> [shadow|shine]` (`DUMP=1`: the materials too).
 
 use std::io::Write;
 
@@ -9,10 +9,10 @@ fn main() {
     let out = std::path::PathBuf::from(std::env::args().nth(1).unwrap_or_else(|| "bakes".into()));
     std::fs::create_dir_all(&out).unwrap();
     let dir = libsms::assets::find(None).expect("no assets/");
-    let look = if std::env::args().nth(2).as_deref() == Some("shadow") {
-        Look::Shadow
-    } else {
-        Look::Mario
+    let look = match std::env::args().nth(2).as_deref() {
+        Some("shadow") => Look::Shadow,
+        Some("shine") => Look::Shine,
+        _ => Look::Mario,
     };
     let mut v = View::load_look(&dir, look).expect("models");
     // `SKINS=1` also bakes the same-rig skins' bodies (Piantissimo).
@@ -37,8 +37,14 @@ fn main() {
         }
     }
     if std::env::var("DUMP").is_ok() {
-        dump(&v.models[5].bmd.materials[0]);
-        dump(&v.models[6].bmd.materials[0]);
+        if look == Look::Shine {
+            for m in &v.models[0].bmd.materials {
+                dump(m);
+            }
+        } else {
+            dump(&v.models[5].bmd.materials[0]);
+            dump(&v.models[6].bmd.materials[0]);
+        }
     }
     for (i, t) in v.textures.list.iter().enumerate() {
         let path = out.join(format!("bake{i:03}.png"));

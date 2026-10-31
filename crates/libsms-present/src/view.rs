@@ -1397,20 +1397,32 @@ impl View {
         self.normals.clear();
         self.uvs.clear();
         let pose = Pose::new(&model.bmd, Mat4::IDENTITY, &joints);
-        for b in &model.batches {
+        // The body's gold is environment mapped (`_mat_shine_body`: both texgens from the normal), so
+        // its coordinates come from the normal as the camera sees it, turned and mirrored as the host
+        // draws it; its vertices carry none (they all read the bake's white-hot middle).
+        let turn = Quat::from_rotation_y(yaw as f32 * std::f32::consts::PI / 32768.0);
+        let world = |n: Vec3| turn * if mirror { Vec3::new(-n.x, n.y, n.z) } else { n };
+        for (bi, b) in model.batches.iter().enumerate() {
             let hide = model.bmd.materials[b.material].cull == Cull::All;
+            let env = model.batch_env[bi];
             for v in &b.vertices {
                 let (p, n) = pose.skin(v);
+                let n = n.normalize_or_zero();
                 self.positions.push(if hide { Vec3::ZERO } else { p });
-                self.normals.push(n.normalize_or_zero());
-                self.uvs.push([v.uv[0].x, v.uv[0].y]);
+                self.normals.push(n);
+                self.uvs.push(match env {
+                    Some(mtx) => {
+                        let w = world(n);
+                        env_uv(w.dot(self.right), w.dot(self.up), mtx)
+                    }
+                    None => [v.uv[0].x, v.uv[0].y],
+                });
             }
         }
         self.colors = model.batch_color.clone();
         self.texture_ids = model.batch_texture.clone();
 
         // The glow, asked for every game frame (30 a second, four ticks of 120).
-        let turn = Quat::from_rotation_y(yaw as f32 * std::f32::consts::PI / 32768.0);
         let joint = joints[shine.body].w_axis.truncate();
         let joint = if mirror { Vec3::new(-joint.x, joint.y, joint.z) } else { joint };
         let at = Mat4::from_rotation_translation(turn, pos + turn * joint);
@@ -2302,6 +2314,26 @@ mod tests {
         assert_eq!(v.shine_clip_frames(), Some([79.0, 419.0]));
         assert!(v.demo_camera_frames(false) > 400.0);
         assert!(v.demo_camera(false, 10.0).is_some());
+    }
+
+    /// Its gold body is environment mapped: its coordinates spread over the bake with the normals,
+    /// not all on the bake's white-hot middle (it looked white in RoR2).
+    #[test]
+    fn the_shine_body_reads_its_env_map_from_its_normals() {
+        let Some(mut v) = shine() else { return };
+        v.set_camera(Vec3::X, Vec3::Y);
+        v.update_shine(0.0, Vec3::ZERO, 0, 0, 0.0, 1.0, true);
+        let m = &v.models[0];
+        let body = (0..m.batches.len())
+            .find(|&i| m.bmd.materials[m.batches[i].material].name.contains("body"))
+            .expect("the Shine's body batch");
+        assert!(m.batch_env[body].is_some(), "the body isn't env mapped");
+        let first: usize = m.batches[..body].iter().map(|b| b.vertices.len()).sum();
+        let uvs = &v.uvs[first..first + m.batches[body].vertices.len()];
+        let (lo, hi) = uvs.iter().fold(([f32::MAX; 2], [f32::MIN; 2]), |(lo, hi), u| {
+            ([lo[0].min(u[0]), lo[1].min(u[1])], [hi[0].max(u[0]), hi[1].max(u[1])])
+        });
+        assert!(hi[0] - lo[0] > 0.5 && hi[1] - lo[1] > 0.5, "env coordinates bunched: {lo:?}..{hi:?}");
     }
 
     #[test]
