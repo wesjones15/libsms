@@ -44,14 +44,15 @@ while vertical/horizontal components change. Stick circles still sustain the
 roll; releasing restores the dive and gravity. Without a host camera, existing
 stick steering and level flight remain. The RoR2 driver supplies camera input
 for the local Mario; the flight-camera operation is recorded separately from
-FLUDD aim and replayed by puppets (network protocol 10).
+FLUDD aim and replayed by puppets (network protocol 11).
 
 Tightly cropped generated skill portraits explicitly disable cohesive coverage
 using `sms_view_set_water_cohesive`; they keep their approved mask-edge framing.
 The generated portrait images are unchanged. Gameplay water uses the unified mesh.
 
-ABI **40** adds these exports with no struct layout change; network protocol **10**
-adds the flight-camera replay operation.
+ABI **41** adds `sms_sim_equip_nozzle` (the radial menu's one-shot nozzle-box pickup
+feedback) beside the silent quick-swap `sms_sim_select_nozzle`, with no struct layout
+change; network protocol **11** adds the equip-operation replay.
 Install matching `sms.dll` and `MarioTest.dll`. Headless scenarios exercise both
 corkscrews turning both ways, relative pitch, its cap, speed and gravity recovery.
 The managed/native portrait check verifies the stream partition and quad counts.

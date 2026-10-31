@@ -630,7 +630,9 @@ impl Mario {
     }
 
     /// Fits FLUDD's `slot` (0 without FLUDD, else 1 Spray, 2 Hover, 3 Rocket, 4 Turbo), giving
-    /// FLUDD back if it was off. False for an unknown slot.
+    /// FLUDD back if it was off. False for an unknown slot. This is the quick Spray/alternate
+    /// swap, like the game's X button: no backpack swing and no pickup feedback. The radial
+    /// menu uses [`Self::equip_nozzle`] instead.
     pub fn select_nozzle(&mut self, slot: u32) -> bool {
         let kind = match slot {
             0 => {
@@ -643,26 +645,37 @@ impl Mario {
             4 => NozzleKind::Turbo,
             _ => return false,
         };
-        let changed = self.fludd.as_ref().is_none_or(|f| f.nozzle != kind);
         if self.fludd.is_none() {
             self.give_fludd();
         }
         let p = self.params.clone();
         if let Some(f) = self.fludd.as_mut() {
-            // The radial menu fits the nozzle at once: no backpack swing, and no second nozzle
-            // change on top of the selection.
+            // Fit the nozzle at once: no backpack swing, and no second nozzle change on top of
+            // the selection.
             f.fit_nozzle(kind, &p);
-            if changed && kind != NozzleKind::Spray {
-                // Item.cpp TItemNozzle::touchPlayer: 0x484E. getNozzle calls
-                // emitGetEffect: emitter 0x0E at root joint 1 plus sound 0x1989.
-                self.fx("ms_itemget1_a", crate::event::FxAt::JointFollow(1));
-                for name in ["MSD_SE_SY_GET_NOZZLE", "MSD_SE_MA_SHINING_EFF_CALM2"] {
-                    self.events.push(Event::Sound(crate::event::SoundCue { name, pos: self.pos, info: None }));
-                }
-            }
             return true;
         }
         false
+    }
+
+    /// Fits `slot` as a radial-menu equip: [`Self::select_nozzle`] plus Sunshine's nozzle-box
+    /// pickup once when the fitted alternate actually changes. `Item.cpp`
+    /// `TItemNozzle::touchPlayer` (0x484E), and `MarioReceiveMsg.cpp::getNozzle` calls
+    /// `MarioParticle.cpp::emitGetEffect` (JPA 0x0E at root joint 1 plus 0x1989). Spray,
+    /// No FLUDD and the nozzle already fitted stay silent, as does every quick swap.
+    pub fn equip_nozzle(&mut self, slot: u32) -> bool {
+        let before = self.fludd.as_ref().map(|f| f.nozzle);
+        if !self.select_nozzle(slot) {
+            return false;
+        }
+        let after = self.fludd.as_ref().map(|f| f.nozzle);
+        if after.is_some() && after != before && after != Some(NozzleKind::Spray) {
+            self.fx("ms_itemget1_a", crate::event::FxAt::JointFollow(1));
+            for name in ["MSD_SE_SY_GET_NOZZLE", "MSD_SE_MA_SHINING_EFF_CALM2"] {
+                self.events.push(Event::Sound(crate::event::SoundCue { name, pos: self.pos, info: None }));
+            }
+        }
+        true
     }
 
     pub fn has_fludd(&self) -> bool {

@@ -387,6 +387,11 @@ Slots: 0 Spray (`NozzleDeform.prm`), 1 Rocket, 2 Underwater, 3 Yoshi, 4 Hover, 5
   firing `PO_ROCKET_TRIGGER`/`PO_SNIPER_TRIGGER`, refilling `PO_SUCK_WATER_B`, X
   `SY_SELECT_POMP(_BACK)`. As in the game, Turbo's `PO_WATER_HI` gets the nozzle's output
   (`unk378`), which `TNozzleTrigger::movement` never sets, so its pitch curve gates it silent.
+- **Radial equip feedback** (host extension): `Mario::equip_nozzle` is `select_nozzle` plus,
+  when a different alternate is fitted, the nozzle box's pickup once: `ms_itemget1_a`
+  (0x0E) at root joint 1, `SY_GET_NOZZLE` (0x484E) and `MA_SHINING_EFF_CALM2` (0x1989)
+  (`Item.cpp TItemNozzle::touchPlayer`, `MarioReceiveMsg.cpp::getNozzle`). Spray, No FLUDD,
+  re-selecting the current nozzle and the quick swap (`select_nozzle`, the game's X) are silent.
 
 **Water gauge** (`TGCConsole2`, GCConsole2.cpp; ported: `libsms_present::hud`). The layout is
 `game_6/scrn/standard_1.blo` (J2DScreen `blo1`), the `' w_0'` pane at (493, 355) of the 600x480

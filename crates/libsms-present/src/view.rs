@@ -3299,7 +3299,7 @@ mod tests {
         let Some(mut v)=view() else {eprintln!("SKIP: Sunshine cache absent");return;};
         let a=libsms::Assets::discover(None).unwrap();
         let mut sim=Sim::new(a.params,a.anim_table,Vec3::ZERO,0);
-        sim.mario.give_fludd();sim.mario.select_nozzle(2);
+        sim.mario.give_fludd();sim.mario.equip_nozzle(2);
         let mut host=Collect(Vec::new());let mut saw=false;
         for i in 0..720 {
             if i==120 {sim.mario.pos.x+=600.0;sim.mario.prev_pos=sim.mario.pos;}

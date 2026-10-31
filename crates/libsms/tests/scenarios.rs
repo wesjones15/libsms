@@ -4213,18 +4213,28 @@ fn both_corkscrews_follow_camera_yaw_and_only_relative_pitch() {
 }
 
 #[test]
-fn equipping_an_alternate_uses_the_nozzle_pickup_sparkle_and_sounds_once() {
+fn only_a_radial_equip_plays_the_nozzle_pickup_sparkle_and_sounds_once() {
     let mut s=Scene::flat();s.sim.mario.give_fludd();
+    // The quick Spray/alternate swap (the game's X, the host's tap) is silent.
     assert!(s.sim.mario.select_nozzle(2));s.step(1);
     assert_eq!(s.sim.mario.fludd.as_ref().unwrap().nozzle,NozzleKind::Hover);
+    assert_eq!(s.event_count(|e| matches!(e,Event::Particle(c) if c.name=="ms_itemget1_a")),0,"quick swap played pickup");
+    // The radial menu equips a different alternate: one sparkle and both sounds.
+    s.host.events.clear();
+    assert!(s.sim.mario.equip_nozzle(3));s.step(1);
+    assert_eq!(s.sim.mario.fludd.as_ref().unwrap().nozzle,NozzleKind::Rocket);
     assert_eq!(s.event_count(|e| matches!(e,Event::Particle(c) if c.name=="ms_itemget1_a" && c.at==libsms::FxAt::JointFollow(1))),1);
     for name in ["MSD_SE_SY_GET_NOZZLE","MSD_SE_MA_SHINING_EFF_CALM2"] {
         assert_eq!(s.event_count(|e| matches!(e,Event::Sound(c) if c.name==name)),1);
     }
-    s.host.events.clear();assert!(s.sim.mario.select_nozzle(2));s.step(1);
+    s.host.events.clear();assert!(s.sim.mario.equip_nozzle(3));s.step(1);
     assert_eq!(s.event_count(|e| matches!(e,Event::Particle(c) if c.name=="ms_itemget1_a")),0,"unchanged nozzle retriggered pickup");
-    assert!(s.sim.mario.select_nozzle(1));s.step(1);
-    assert_eq!(s.event_count(|e| matches!(e,Event::Particle(c) if c.name=="ms_itemget1_a")),0,"Spray toggle triggered pickup");
+    s.host.events.clear();assert!(s.sim.mario.equip_nozzle(1));s.step(1);
+    assert_eq!(s.event_count(|e| matches!(e,Event::Particle(c) if c.name=="ms_itemget1_a")),0,"returning to Spray triggered pickup");
+    // Equipping from Spray stays a real radial choice and still gets its pickup.
+    s.host.events.clear();assert!(s.sim.mario.equip_nozzle(4));s.step(1);
+    assert_eq!(s.sim.mario.fludd.as_ref().unwrap().nozzle,NozzleKind::Turbo);
+    assert_eq!(s.event_count(|e| matches!(e,Event::Particle(c) if c.name=="ms_itemget1_a")),1,"radial equip from Spray lost its pickup");
 }
 
 fn particle_count<H: Host>(s: &Scene<H>, name: &str) -> usize {
