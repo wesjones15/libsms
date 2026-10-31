@@ -44,7 +44,19 @@ pub struct Helmet {
 impl Helmet {
     pub fn load(dir: &Path) -> Result<Helmet, String> {
         let mut renderer = Renderer::new();
-        let part = Part::load(&mut renderer, dir, "watergun2/body/diver_helm.bmd")?;
+        // The glass fades by its vertices' alpha, as `libsms-present`'s shared TEV bake hands it
+        // to hosts (`Model::vertex_alpha`): the viewer's own TEV run drives the glass's alpha to 1
+        // through COLOR1A1, so pass COLOR0A0's (the vertex alpha) straight through instead.
+        let part = Part::load_edited(&mut renderer, dir, "watergun2/body/diver_helm.bmd", |bmd| {
+            use libsms_assets::bmd::TevCombiner;
+            let pass = |d: u8| TevCombiner { a: 7, b: 7, c: 7, d, op: 0, bias: 0, scale: 0, clamp: true, out: 0 };
+            for m in bmd.materials.iter_mut().filter(|m| m.name == "_mat_diverhelm_helm") {
+                if let [first, second, ..] = &mut m.stages[..] {
+                    first.alpha = pass(5);
+                    second.alpha = pass(0);
+                }
+            }
+        })?;
         Ok(Helmet { renderer, part })
     }
 
