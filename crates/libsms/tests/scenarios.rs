@@ -3737,11 +3737,11 @@ fn a_stick_circle_in_a_turbo_dash_jump_is_a_corkscrew_dive() {
     assert_eq!(s.sim.mario.status, Status::JumpCatch, "the circle didn't start the dive");
     // On top of the Turbo's own top speed (32), not instead of it, and held while it spins.
     assert!(s.sim.mario.forward_vel > 80.0, "no push forward: {} (was {before})", s.sim.mario.forward_vel);
-    // It goes on at the same height for as long as the stick keeps circling.
+    // It goes on at the same height for as long as the stick keeps circling, past the old 6 s cap (720 ticks).
     let y0 = s.sim.mario.pos.y;
     let (mut rolled, mut slowest) = (false, f32::MAX);
     let mut angle = 0.0f32;
-    for i in 0..300 {
+    for i in 0..1000 {
         angle += std::f32::consts::TAU / 12.0;
         s.pad.stick = Vec2::new(angle.cos(), angle.sin());
         s.step(1);

@@ -370,10 +370,8 @@ pub struct Mario {
     pub(crate) corkscrew: u16,
     /// The speed the corkscrew flies at until it ends (it is held, not braked like a plain dive's).
     pub(crate) corkscrew_speed: f32,
-    /// Ticks the corkscrew has lasted (the Turbo's has a cap).
+    /// Ticks the corkscrew has lasted (it burns after CORKSCREW_SUPER_TICKS).
     pub(crate) corkscrew_age: u16,
-    /// The corkscrew came out of the Turbo's thrust (capped at 6 s), not a plain dive (as long as the stick circles).
-    pub(crate) corkscrew_turbo: bool,
     /// This dive has had its corkscrew (so a circle after it ends doesn't start another); cleared by any status change.
     pub(crate) corkscrew_used: bool,
     /// The corkscrew has spun for 1 second: it burns, and its next hit is the super blow. Kept through
@@ -537,7 +535,6 @@ impl Mario {
             corkscrew: 0,
             corkscrew_speed: 0.0,
             corkscrew_age: 0,
-            corkscrew_turbo: false,
             corkscrew_used: false,
             corkscrew_super: false,
             blaze: 0,

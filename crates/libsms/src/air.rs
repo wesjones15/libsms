@@ -15,9 +15,7 @@ pub(crate) const PAD_ACTION_GRACE: u32 = 12;
 /// The Turbo corkscrew lasts as long as the stick keeps circling, and this many ticks (a fifth of a second, the length of the stick history)
 /// past the last full circle's reading, so a slow circle doesn't drop out between turns.
 const CORKSCREW_GRACE: u16 = 24;
-/// ...but no more than this many ticks in all (6 s), so it can't carry him across the map for ever. A plain dive's corkscrew,
-/// at the dive's own speed, has no cap: it goes on as long as the stick circles.
-const CORKSCREW_MAX_TICKS: u16 = 720;
+/// There is no cap on either corkscrew (Turbo or plain dive): it goes on as long as the stick circles.
 /// A corkscrew that has gone on this long (1 s) is in flames and hits with the super blow.
 pub(crate) const CORKSCREW_SUPER_TICKS: u16 = 120;
 /// A burning corkscrew's landing slide keeps its speed and its fire this many ticks (2 s).
@@ -367,7 +365,6 @@ impl Mario {
         self.change_status(Status::JumpCatch, 0, false);
         self.corkscrew = CORKSCREW_GRACE;
         self.corkscrew_age = 0;
-        self.corkscrew_turbo = true;
         self.corkscrew_used = true;
         // One call-out of the spin jump's, not the dive's grunt; the animation's own cues are muted.
         self.events.retain(|e| !matches!(e, Event::Jump(crate::event::JumpKind::Dive)));
@@ -551,7 +548,6 @@ impl Mario {
         if self.corkscrew == 0 && !self.corkscrew_used && !self.on_yoshi() && self.check_stick_rotate().is_some() {
             self.corkscrew = CORKSCREW_GRACE;
             self.corkscrew_age = 0;
-            self.corkscrew_turbo = false;
             self.corkscrew_used = true;
             self.corkscrew_speed = self.forward_vel;
             self.vel.y = 0.0;
@@ -569,9 +565,7 @@ impl Mario {
             if self.corkscrew_age >= CORKSCREW_SUPER_TICKS {
                 self.corkscrew_super = true;
             }
-            if self.corkscrew_turbo && self.corkscrew_age >= CORKSCREW_MAX_TICKS {
-                self.corkscrew = 0;
-            } else if self.check_stick_rotate().is_some() {
+            if self.check_stick_rotate().is_some() {
                 self.corkscrew = CORKSCREW_GRACE;
             } else {
                 self.corkscrew -= 1;
