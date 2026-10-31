@@ -289,13 +289,13 @@ pub enum FlowerEvent {
     TowerAppeared { tower: usize, pos: Vec3 },
     TowerHid { tower: usize, pos: Vec3 },
     /// A tower bit: the host hurts Mario (a stand-in cylinder at the tower's head).
-    TowerBite { tower: usize, from: Vec3 },
+    TowerBite { tower: usize, from: Vec3, target: usize },
     /// A tower or head died: scatter its coins (`genRandomItem`).
     EnemyDied { id: u64, pos: Vec3 },
     /// A head's hop landed or started (the host plays its clip).
     HeadHopped { head: usize, pos: Vec3 },
     /// A head touched Mario.
-    HeadBit { head: usize, from: Vec3 },
+    HeadBit { head: usize, from: Vec3, target: usize },
 }
 
 /// A tower's nerve (`TNerveHanaSambo*`).
@@ -360,6 +360,14 @@ pub struct FlowerWorld {
     pub towers: Vec<Tower>,
     pub heads: Vec<Head>,
     ticks: u32,
+}
+
+/// The nearest of `marios` to `at` on the floor plane, and its index.
+fn nearest(marios: &[Vec3], at: Vec3) -> Option<(usize, Vec3)> {
+    marios.iter().copied().enumerate().min_by(|a, b| {
+        let d = |v: Vec3| (v.x - at.x).powi(2) + (v.z - at.z).powi(2);
+        d(a.1).total_cmp(&d(b.1))
+    })
 }
 
 fn rot_y(v: Vec3, degrees: f32) -> Vec3 {
@@ -569,12 +577,13 @@ impl FlowerWorld {
         }
     }
 
-    /// One 120 Hz tick. `mario` is his feet.
-    pub fn step(&mut self, host: &dyn Host, mario: Vec3, out: &mut Vec<FlowerEvent>) {
+    /// One 120 Hz tick. `marios` are the feet of every Mario in play: the enemies wake for, chase
+    /// and bite the nearest (an event's `target` indexes this slice).
+    pub fn step(&mut self, host: &dyn Host, marios: &[Vec3], out: &mut Vec<FlowerEvent>) {
         self.ticks = self.ticks.wrapping_add(1);
         self.step_units(host, out);
-        self.step_towers(host, mario, out);
-        self.step_heads(host, mario, out);
+        self.step_towers(host, marios, out);
+        self.step_heads(host, marios, out);
     }
 
     fn step_units(&mut self, host: &dyn Host, out: &mut Vec<FlowerEvent>) {
@@ -646,10 +655,12 @@ impl FlowerWorld {
         }
     }
 
-    fn step_towers(&mut self, host: &dyn Host, mario: Vec3, out: &mut Vec<FlowerEvent>) {
+    fn step_towers(&mut self, host: &dyn Host, marios: &[Vec3], out: &mut Vec<FlowerEvent>) {
         let (p, c) = (self.tower_params, self.clips);
         for (i, t) in self.towers.iter_mut().enumerate() {
             t.age += 1;
+            // Nobody to wake for: a tower with no Mario about stays as it is.
+            let (target, mario) = nearest(marios, t.pos).unwrap_or((usize::MAX, Vec3::splat(1.0e9)));
             let d = mario - t.pos;
             let flat = (d.x * d.x + d.z * d.z).sqrt();
             let in_reach = mario.y < t.pos.y + 100.0;
@@ -695,7 +706,7 @@ impl FlowerWorld {
                     // The stand-in head: a cylinder `head_attack_radius` wide around the line
                     // from the base towards Mario, out to the attack distance.
                     if in_reach && flat < p.attack_dist + p.head_attack_radius && t.age % 30 == 1 {
-                        out.push(FlowerEvent::TowerBite { tower: i, from: t.pos });
+                        out.push(FlowerEvent::TowerBite { tower: i, from: t.pos, target });
                     }
                     if t.age > p.attacking_time {
                         t.state = TowerState::AttackEnd;
@@ -740,13 +751,14 @@ impl FlowerWorld {
         }
     }
 
-    fn step_heads(&mut self, host: &dyn Host, mario: Vec3, out: &mut Vec<FlowerEvent>) {
+    fn step_heads(&mut self, host: &dyn Host, marios: &[Vec3], out: &mut Vec<FlowerEvent>) {
         let p = self.head_params;
         // Air time of one hop and the sideways speed that covers `move_dist` in it.
         let air = (2.0 * p.jump_sp / p.move_gravity).max(1.0);
         let hop_xz = p.move_dist / air;
         for (i, h) in self.heads.iter_mut().enumerate() {
             h.age += 1;
+            let (target, mario) = nearest(marios, h.pos).unwrap_or((usize::MAX, Vec3::splat(1.0e9)));
             let d = mario - h.pos;
             let flat = (d.x * d.x + d.z * d.z).sqrt();
             match h.state {
@@ -787,11 +799,126 @@ impl FlowerWorld {
                         && h.state == HeadState::Hopping
                         && h.age % 30 == 1
                     {
-                        out.push(FlowerEvent::HeadBit { head: i, from: h.pos });
+                        out.push(FlowerEvent::HeadBit { head: i, from: h.pos, target });
                     }
                 }
                 HeadState::Dead => {}
             }
+        }
+    }
+}
+
+/// One thing of a snapshot ([`FlowerWorld::items`] / [`FlowerWorld::mirror`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Item {
+    /// 0 flower, 1 tower, 2 head.
+    pub kind: u8,
+    /// The phase / [`TowerState`] / [`HeadState`] as its enum number.
+    pub state: u8,
+    /// The id's low part: flower `unit * 64 + flower`, else the index.
+    pub handle: u32,
+    pub age: u32,
+    pub pos: Vec3,
+    pub yaw: f32,
+}
+
+const BLOOMS: [Bloom; 4] = [Bloom::Closed, Bloom::Opening, Bloom::Open, Bloom::Closing];
+const TOWERS: [TowerState; 10] = [
+    TowerState::Hidden,
+    TowerState::Appearing,
+    TowerState::Waiting,
+    TowerState::AttackStart,
+    TowerState::AttackLoop,
+    TowerState::AttackEnd,
+    TowerState::Hiding,
+    TowerState::Frozen,
+    TowerState::Dying,
+    TowerState::Dead,
+];
+const HEADS: [HeadState; 5] = [
+    HeadState::Dormant,
+    HeadState::Ready,
+    HeadState::Hopping,
+    HeadState::Knocked,
+    HeadState::Dead,
+];
+
+impl FlowerWorld {
+    /// Everything, for a snapshot (flowers in unit order, so `handle`s are increasing).
+    pub fn items(&self) -> Vec<Item> {
+        let mut v = Vec::new();
+        for (ui, u) in self.units.iter().enumerate() {
+            for (fi, f) in u.flowers.iter().enumerate() {
+                v.push(Item {
+                    kind: 0,
+                    state: f.phase as u8,
+                    handle: (ui * 64 + fi) as u32,
+                    age: f.age,
+                    pos: f.pos,
+                    yaw: 0.0,
+                });
+            }
+        }
+        for (i, t) in self.towers.iter().enumerate() {
+            v.push(Item { kind: 1, state: t.state as u8, handle: i as u32, age: t.age, pos: t.pos, yaw: t.yaw });
+        }
+        for (i, h) in self.heads.iter().enumerate() {
+            v.push(Item { kind: 2, state: h.state as u8, handle: i as u32, age: h.age, pos: h.pos, yaw: h.yaw });
+        }
+        v
+    }
+
+    /// Becomes a copy of the server snapshot (a client world: it is not stepped, it is drawn and
+    /// its targets take the spray and stomps the server decides on). Unknown states are ignored;
+    /// a gap in a unit's flowers is filled by a copy of its neighbour.
+    pub fn mirror(&mut self, items: &[Item]) {
+        self.units.clear();
+        self.towers.clear();
+        self.heads.clear();
+        for it in items {
+            match it.kind {
+                0 => {
+                    let (ui, fi) = ((it.handle / 64) as usize, (it.handle % 64) as usize);
+                    let Some(&phase) = BLOOMS.get(it.state as usize) else { continue };
+                    if ui > 64 {
+                        continue;
+                    }
+                    while self.units.len() <= ui {
+                        self.units.push(FlowerUnit::new(it.pos, &[], 0));
+                    }
+                    let u = &mut self.units[ui];
+                    let f = Flower { pos: it.pos, phase, age: it.age, open_for: 0 };
+                    while u.flowers.len() < fi {
+                        u.flowers.push(f);
+                    }
+                    u.flowers.push(f);
+                    u.center = it.pos;
+                }
+                1 => {
+                    let Some(&state) = TOWERS.get(it.state as usize) else { continue };
+                    while self.towers.len() < (it.handle as usize).min(64) {
+                        self.towers.push(Tower { pos: it.pos, yaw: 0.0, state: TowerState::Dead, age: 0, since_attack: 0 });
+                    }
+                    self.towers.push(Tower { pos: it.pos, yaw: it.yaw, state, age: it.age, since_attack: 0 });
+                }
+                2 => {
+                    let Some(&state) = HEADS.get(it.state as usize) else { continue };
+                    while self.heads.len() < (it.handle as usize).min(64) {
+                        self.heads.push(Head { pos: it.pos, home: it.pos, vel: Vec3::ZERO, yaw: 0.0, state: HeadState::Dead, age: 0 });
+                    }
+                    self.heads.push(Head { pos: it.pos, home: it.pos, vel: Vec3::ZERO, yaw: it.yaw, state, age: it.age });
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// A hit reported for `id`: 0 water, anything else a stomp, pound or other attack.
+    pub fn hit(&mut self, id: u64, kind: u8, out: &mut Vec<FlowerEvent>) {
+        if kind == 0 {
+            self.water_hit(id, out);
+        } else {
+            self.stomped(id, out);
         }
     }
 }
@@ -888,10 +1015,11 @@ mod tests {
     use crate::host::FlatHost;
 
     fn run(w: &mut FlowerWorld, mario: Vec3, ticks: u32) -> Vec<FlowerEvent> {
+        let marios = [mario];
         let host = FlatHost::default();
         let mut out = Vec::new();
         for _ in 0..ticks {
-            w.step(&host, mario, &mut out);
+            w.step(&host, &marios, &mut out);
         }
         out
     }
@@ -1012,6 +1140,25 @@ mod tests {
         }
         assert!((1100..=1300).contains(&any), "{any}");
         assert!(counts.iter().all(|&c| c > 0), "{counts:?}");
+    }
+
+    #[test]
+    fn a_snapshot_mirrors_into_an_identical_world() {
+        let mut w = FlowerWorld::new();
+        let u = w.add_unit(FlowerUnit::ring(Vec3::ZERO, 5, 250.0));
+        w.add_unit(FlowerUnit::single(Vec3::new(900.0, 0.0, 0.0)));
+        w.add_tower(Vec3::new(0.0, 0.0, 2000.0), 0.0);
+        w.add_head(Vec3::new(500.0, 0.0, 500.0), 30.0);
+        let mut ev = Vec::new();
+        w.spray_flower(u, 2, &mut ev);
+        run(&mut w, Vec3::new(0.0, 0.0, 1500.0), 50);
+        let mut copy = FlowerWorld::new();
+        copy.mirror(&w.items());
+        assert_eq!(copy.items(), w.items());
+        let (mut a, mut b) = (Vec::new(), Vec::new());
+        copy.targets(&mut a);
+        w.targets(&mut b);
+        assert_eq!(a, b);
     }
 
     #[test]
