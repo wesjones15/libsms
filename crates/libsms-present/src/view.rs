@@ -502,7 +502,34 @@ pub struct View {
     pub helmet_on: bool,
     /// The Sunshine assets folder, kept for loading Luigi's rig and clips later.
     assets_dir: PathBuf,
+    /// The body's named attachment points (head, chest, hands...) posed this frame, in
+    /// model space, for a host that mounts its own props on the body. Indexed by
+    /// [`Anchor`]; `None` where the current skin has no such part.
+    anchors: [Option<Mat4>; ANCHOR_COUNT],
 }
+
+/// Host-facing body attachment points shared by every skin (the FFI's `sms_view_anchor`
+/// ids, in this order). Olimar's and Pikmin's views use the same order, so one host class
+/// mounts item displays on any of them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Anchor {
+    Head = 0,
+    Chest = 1,
+    Pelvis = 2,
+    ShoulderL = 3,
+    ShoulderR = 4,
+    ElbowL = 5,
+    ElbowR = 6,
+    HandL = 7,
+    HandR = 8,
+    LegL = 9,
+    LegR = 10,
+    KneeL = 11,
+    KneeR = 12,
+    FootL = 13,
+    FootR = 14,
+}
+pub const ANCHOR_COUNT: usize = 15;
 
 /// `PARTICLE_MS_M_SPHIPD_A..D` (`TMario::emitBlurHipDropSuper`).
 pub const SUPER_POUND_FLAMES: [&str; 4] = [
@@ -1207,7 +1234,13 @@ impl View {
             helmet: None,
             helmet_on: false,
             assets_dir: dir.to_path_buf(),
+            anchors: [None; ANCHOR_COUNT],
         })
+    }
+
+    /// The body attachment point `id` as the last draw posed it, in model space.
+    pub fn anchor(&self, id: usize) -> Option<Mat4> {
+        self.anchors.get(id).copied().flatten()
     }
 
     /// TCoin's original model and materials, through the same model ABI as Mario. Hosts
@@ -1352,6 +1385,7 @@ impl View {
             head: None,
             chest: None,
             center: None,
+            anchors: [None; ANCHOR_COUNT],
             fx: Particles::default(),
             movement_effects: false,
             pound_flames: false,
@@ -1448,6 +1482,7 @@ impl View {
             head: None,
             chest: None,
             center: None,
+            anchors: [None; ANCHOR_COUNT],
             fx,
             movement_effects: true,
             pound_flames: false,
@@ -2277,6 +2312,66 @@ impl View {
         if let Some((model, at, js)) = &boost_part {
             parts.push((*model, *at, js));
         }
+
+        // The host's attachment points: the same pose the body is skinned from, in model
+        // space (the host places the body at its feet and mirrors it, as for the draws).
+        let mario = |j: usize| joints.get(j).copied();
+        let mut anchors = [None; ANCHOR_COUNT];
+        if let Some(world) = &yoshi_world {
+            let y = |j: usize| world.get(j).copied();
+            anchors[Anchor::Head as usize] = y(22);
+            anchors[Anchor::Chest as usize] = y(19);
+            anchors[Anchor::Pelvis as usize] = y(3);
+            anchors[Anchor::ShoulderR as usize] = y(28);
+            anchors[Anchor::ShoulderL as usize] = y(33);
+            anchors[Anchor::ElbowR as usize] = y(30);
+            anchors[Anchor::ElbowL as usize] = y(35);
+            anchors[Anchor::HandR as usize] = y(31);
+            anchors[Anchor::HandL as usize] = y(36);
+            anchors[Anchor::LegR as usize] = y(6);
+            anchors[Anchor::LegL as usize] = y(11);
+            anchors[Anchor::KneeR as usize] = y(7);
+            anchors[Anchor::KneeL as usize] = y(12);
+            anchors[Anchor::FootR as usize] = y(9);
+            anchors[Anchor::FootL as usize] = y(14);
+        } else if let (Some(world), Some(luigi)) = (&luigi_world, self.luigi.as_ref()) {
+            // His body is skinned at ×10 (Melee units into Sunshine decomp units).
+            let ten = Mat4::from_scale(Vec3::splat(10.0));
+            let l = |part: usize| luigi.parts.get(part).and_then(|&j| world.get(j as usize)).map(|m| ten * *m);
+            anchors[Anchor::Head as usize] = l(34);
+            anchors[Anchor::Chest as usize] = l(16);
+            anchors[Anchor::Pelvis as usize] = l(4);
+            anchors[Anchor::ShoulderL as usize] = l(19);
+            anchors[Anchor::ShoulderR as usize] = l(37);
+            anchors[Anchor::ElbowL as usize] = l(20);
+            anchors[Anchor::ElbowR as usize] = l(38);
+            anchors[Anchor::HandL as usize] = l(21);
+            anchors[Anchor::HandR as usize] = l(39);
+            anchors[Anchor::LegL as usize] = l(7);
+            anchors[Anchor::LegR as usize] = l(12);
+            anchors[Anchor::KneeL as usize] = l(8);
+            anchors[Anchor::KneeR as usize] = l(13);
+            anchors[Anchor::FootL as usize] = l(10);
+            anchors[Anchor::FootR as usize] = l(15);
+        } else {
+            // Mario and Piantissimo (his model is on Mario's exact 29-joint rig).
+            anchors[Anchor::Head as usize] = self.head.and_then(|h| mario(h));
+            anchors[Anchor::Chest as usize] = self.chest.and_then(|c| mario(c));
+            anchors[Anchor::Pelvis as usize] = mario(2);
+            anchors[Anchor::ShoulderR as usize] = mario(15);
+            anchors[Anchor::ShoulderL as usize] = mario(20);
+            anchors[Anchor::ElbowR as usize] = mario(17);
+            anchors[Anchor::ElbowL as usize] = mario(23);
+            anchors[Anchor::HandR as usize] = self.hand_joints[0].and_then(|h| mario(h));
+            anchors[Anchor::HandL as usize] = self.hand_joints[1].and_then(|h| mario(h));
+            anchors[Anchor::LegR as usize] = mario(3);
+            anchors[Anchor::LegL as usize] = mario(8);
+            anchors[Anchor::KneeR as usize] = mario(4);
+            anchors[Anchor::KneeL as usize] = mario(9);
+            anchors[Anchor::FootR as usize] = mario(6);
+            anchors[Anchor::FootL as usize] = mario(11);
+        }
+        self.anchors = anchors;
 
         // The corkscrew tips and rolls the whole drawn body about his middle (as `root` does for the effects).
         let draw_pos = pos + rot * (middle - tilt * middle);
@@ -3542,5 +3637,29 @@ mod tests {
         }
         assert!(saw, "pollen, rocks and smoke should draw quads");
         assert!(v.fx.vertices.iter().all(|p| p.pos.is_finite()));
+    }
+
+    /// The host mounts item displays on these: every skin must put the head above the
+    /// pelvis and have hands, in the same model space as the draws.
+    #[test]
+    fn item_anchors_sit_on_every_skins_body() {
+        let dir = libsms::assets::find(None).expect("assets not found (set SMS_ASSETS)");
+        for skin in [Skin::Mario, Skin::Luigi, Skin::Piantissimo, Skin::Yoshi] {
+            let a = libsms::Assets::discover(None).unwrap();
+            let mut sim = Sim::new(a.params, a.anim_table, Vec3::ZERO, 0);
+            let mut v = View::load(&dir).unwrap();
+            let melee = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../libssbm/assets");
+            let melee = melee.exists().then(|| melee.as_path());
+            if skin != Skin::Mario && !v.load_skin(skin, melee) {
+                eprintln!("{skin:?}: files missing, skipped");
+                continue;
+            }
+            v.set_skin(skin);
+            v.update(&mut sim, 0.0);
+            let head = v.anchor(0).unwrap_or_else(|| panic!("{skin:?}: no head anchor"));
+            let pelvis = v.anchor(2).unwrap_or_else(|| panic!("{skin:?}: no pelvis anchor"));
+            assert!(head.w_axis.y > pelvis.w_axis.y, "{skin:?}: head {head:?} is not above pelvis {pelvis:?}");
+            assert!(v.anchor(7).is_some(), "{skin:?}: no left hand anchor");
+        }
     }
 }

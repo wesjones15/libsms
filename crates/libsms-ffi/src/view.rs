@@ -1169,6 +1169,26 @@ pub unsafe extern "C" fn sms_view_update(
     }
 }
 
+/// The body attachment point `id` as the last [`sms_view_update`] posed it: 16 floats,
+/// column-major, in model space (the space the draws' vertices are in). 0 when the current
+/// skin has no such part. The ids are `libsms_present::view::Anchor`, shared with the
+/// Pikmin view so one host class mounts item displays on either.
+///
+/// # Safety
+/// `view` from [`sms_view_new`]; `out` 16 writable floats.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_anchor(view: *const SmsView, id: u32, out: *mut f32) -> u32 {
+    if view.is_null() || out.is_null() {
+        return 0;
+    }
+    // SAFETY: as documented.
+    let Some(m) = (unsafe { &*view }).view.anchor(id as usize) else {
+        return 0;
+    };
+    unsafe { std::ptr::copy_nonoverlapping(m.to_cols_array().as_ptr(), out, 16) };
+    1
+}
+
 /// Mario says `name` (an `MSD_SE_MV*` voice, e.g. `MSD_SE_MV23_JUMP_LARGE_01`), cutting off
 /// his last voice. Nothing without sound or an unknown name.
 ///

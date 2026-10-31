@@ -72,6 +72,9 @@ pub struct Luigi {
     retarget: sms::Retarget,
     /// Mario's `jnt_chest` frame in Luigi's `WaistN` frame: FLUDD's chest transform.
     chest_align: Mat4,
+    /// `FighterPartsTable` from the Melee cache: common `FtPart` -> Luigi joint, for
+    /// the host's item-display anchors (head, chest, hands...).
+    pub parts: Vec<u8>,
     bck_dir: PathBuf,
     clips: HashMap<String, sms::Clip>,
     /// The current Spray-neck lean, eased toward its target; and the side it last chose
@@ -118,6 +121,8 @@ impl Luigi {
         // bind rotations give the frame that carries FLUDD's Mario-space base to Luigi.
         let chest_align =
             Mat4::from_mat3(retarget.target_bind()[5].transpose() * retarget.source_bind()[14]);
+        let parts = libssbm_assets::held::common_bones(melee_dir, &libssbm_assets::fighter::LUIGI)
+            .unwrap_or_default();
 
         let mut batches = Vec::with_capacity(model.batches.len());
         let mut indices = Vec::new();
@@ -193,6 +198,7 @@ impl Luigi {
             rig,
             retarget,
             chest_align,
+            parts,
             bck_dir: sms_dir.join("bck"),
             clips: HashMap::new(),
             lean: 0.0,
