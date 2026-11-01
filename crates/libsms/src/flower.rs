@@ -671,13 +671,15 @@ impl FlowerWorld {
             }
             // While it is under the ground its stand-in flower is the thing there, and takes
             // the spray on the enemy's own id (`initFlower` keeps `TSamboFlower` hittable).
-            if t.flower.is_some() && t.state == TowerState::Hidden {
-                out.push(Target {
-                    id: ID_BASE + 0x10000 + i as u64,
-                    pos: t.pos,
-                    radius: self.flower.body_radius,
-                    height: self.flower.head_height,
-                });
+            if t.state == TowerState::Hidden {
+                if t.flower.is_some() {
+                    out.push(Target {
+                        id: ID_BASE + 0x10000 + i as u64,
+                        pos: t.pos,
+                        radius: self.flower.body_radius,
+                        height: self.flower.head_height,
+                    });
+                }
                 continue;
             }
             out.push(Target {
