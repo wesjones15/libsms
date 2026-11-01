@@ -9,7 +9,41 @@ The viewer proof is approved and connected to Mario's RoR2 stage-one pod. The ad
 - `map/map/map.bmd`: the Pianta sculpture is shape 23, `_king_storn_1`; the pedestal is separate bounded geometry (shape 3, `_m_white_wall0`) in the same map. Both are retained by `plaza::statue_batches`. The same bounding box also catches the map's baked statue shadow (shape 9, `_m00kage_1`, a flat mesh 3 cm above the plaza floor) and one plaza floor triangle (shape 14, `_m00yuka`); those are decals, not the pedestal, so `statue_batches` drops ground-level horizontal triangles. They drew as a dark plate and a floor chip hanging off the base, and their spread made the RoR2 pedestal collider 10.3 x 11 m instead of the pedestal's own 8 x 8 m. `cargo run --release -p libsms-present --example statue -- assets ../output/statue` prints the per-batch bounds the collider uses and renders the selection.
 - Portal activation rays: `ms_gatewind_a/a2/a3/b.jpa`, cues 0x131–0x134; spray hits: `ms_gatehit_a/b.jpa`, cues 0x1DD–0x1DE. Source: `ModelGate.cpp::perform/receiveMessage` and `System/Particles.hpp`. The interactive preview draws the activation rays; spray-hit particles are unnecessary for its button-triggered opening.
 
-## Demonstrated
+## Smooth stage-one reveal and return (modern)
+
+The exact transition is the `05_gate01.bmd` material driven by `05_gate01.brk`,
+with `05_gate01.btk` continuing the texture distortion. It is not an effect
+model or particle emitter and has no numeric JPA/efSync cue. `ModelGate.cpp`
+`loadAfter` sets `unkD4 = 0.1`, `unkD8 = 0.02`; `perform` applies
+`unkD0 * BRK.end` as the colour-animation frame. The button-triggered host uses
+those source rates at 30 Hz: roughly 0.33 s to reveal, 1.67 s to return.
+
+The former host cache compressed these to 0.18 s and 0.14 s, which read as image
+swaps. Cache revision `SMSPOD05` / `entrance-v5-*` keeps the authored BRK ramp and
+holds the Plaza for three seconds after the normal 1.75-second control handoff.
+The return starts at 4.75 s and completes near 6.42 s. This extra hold is a host
+presentation choice. Mario's reveal, spin, landing, control handoff, cleanup and
+the portal's hidden/offscreen sampling rules retain their previous timing.
+
+The cache hashes all transition timings and source files, so an older fast-fade
+cache cannot be reused. It retains 512-to-256 antialiasing, the original indirect
+map, M mask and existing disc-rendered Plaza still. Idle and return sample the
+same elapsed texture-animation clock when the return finishes.
+
+Viewer proof: `cargo run --release -p viewer --example portal_transition --
+<assets> <output>`. When the graphics dependency build is unavailable, the
+identical source under `crates/viewer/examples/` runs through the device-free
+entry point: `cargo run --release -p libsms-present --example portal_transition
+-- <assets> <output>`. It renders the same antialiased cache frames and writes
+source/identity metadata. Local labeled frames and animation are under
+`../output/mario-portal/smooth-modern/` (disc derivatives; never committed).
+
+Native boundary checks verify the Plaza remains visible after control returns,
+the return includes intermediate BRK frames, eventual idle pixels match direct
+sampling, early slope handoff does not freeze the return, and Mario/Luigi's rider
+geometry and effects retire on schedule. In-game verification remains manual.
+
+## Earlier viewer demonstrations
 
 `cargo run --release -p viewer --example portal -- assets ../output/mario-portal`
 

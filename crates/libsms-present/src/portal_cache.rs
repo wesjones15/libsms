@@ -17,16 +17,20 @@ pub const REVEAL: f32 = 0.8;
 pub const HOP: f32 = 0.8;
 pub const LAND: f32 = 0.15;
 pub const COMPLETE: f32 = REVEAL + HOP + LAND;
-pub const CLOSE: f32 = COMPLETE + 0.14;
-const MAGIC: &[u8; 8] = b"SMSPOD04";
+// ModelGate.cpp: unkD4 = 0.1 opens on water hits; unkD8 = 0.02 returns
+// the BRK toward swirling colours on each 30 Hz perform. Keep those rates.
+pub const OPEN: f32 = 1.0 / (30.0 * 0.1);
+pub const RETURN_START: f32 = COMPLETE + 3.0;
+pub const CLOSE: f32 = RETURN_START + 1.0 / (30.0 * 0.02);
+const MAGIC: &[u8; 8] = b"SMSPOD05";
 const PIXELS: usize = (SIZE * SIZE * 4) as usize;
 const HEADER: usize = 20;
 
 pub fn activation(time: f32) -> f32 {
-    if time <= COMPLETE {
-        (time / 0.18).clamp(0., 1.)
+    if time <= RETURN_START {
+        (time / OPEN).clamp(0., 1.)
     } else {
-        (1. - (time - COMPLETE) / (CLOSE - COMPLETE)).clamp(0., 1.)
+        (1. - (time - RETURN_START) / (CLOSE - RETURN_START)).clamp(0., 1.)
     }
 }
 
@@ -38,7 +42,7 @@ fn cache_path(dir: &Path) -> Result<PathBuf, String> {
         }
     };
     add(MAGIC);
-    for value in [SIZE as f32, FPS, EXIT_FPS, REVEAL, HOP, LAND, CLOSE] {
+    for value in [SIZE as f32, FPS, EXIT_FPS, REVEAL, HOP, LAND, OPEN, RETURN_START, CLOSE] {
         add(&value.to_bits().to_le_bytes());
     }
     for (_, _, path) in libsms::extract::OPTIONAL_EXTRACTS
@@ -50,7 +54,7 @@ fn cache_path(dir: &Path) -> Result<PathBuf, String> {
     }
     Ok(dir
         .join("portal/cache")
-        .join(format!("entrance-v4-{hash:016x}.bin")))
+        .join(format!("entrance-v5-{hash:016x}.bin")))
 }
 
 pub fn complete(dir: &Path) -> bool {
@@ -68,7 +72,7 @@ fn read_header(f: &mut fs::File) -> Result<(usize, usize), String> {
     if &h[..8] != MAGIC
         || n(8) != SIZE as usize
         || !(1..=1000).contains(&idle)
-        || !(1..=120).contains(&exit)
+        || !(1..=600).contains(&exit)
         || f.metadata().map_err(|e| e.to_string())?.len()
             != (HEADER + (idle + exit) * PIXELS) as u64
     {
@@ -102,7 +106,7 @@ pub fn prepare(dir: &Path) -> Result<PathBuf, String> {
             let t = (i - idle) as f32 / EXIT_FPS;
             (t, activation(t))
         };
-        f.write_all(&smooth_frame(&mut portal, time * 60., a)?)
+        f.write_all(&render_frame(&mut portal, time * 60., a)?)
             .map_err(|e| e.to_string())?;
     }
     f.sync_all().map_err(|e| e.to_string())?;
@@ -114,7 +118,8 @@ pub fn prepare(dir: &Path) -> Result<PathBuf, String> {
 // Rasterize the original TEV at 2x, then retain coverage from its alpha-tested edge.
 // Store straight-alpha RGB: transparent subpixels must not darken the dark M border
 // a second time when the host blends the fractional-coverage output pixel.
-fn smooth_frame(portal: &mut Portal, frame: f32, activation: f32) -> Result<Vec<u8>, String> {
+/// Native cache renderer, shared with the device-free Rust viewer proof.
+pub fn render_frame(portal: &mut Portal, frame: f32, activation: f32) -> Result<Vec<u8>, String> {
     let high = portal.image_sized(frame, activation, SIZE * 2);
     if high.width != SIZE * 2 || high.height != SIZE * 2 {
         return Err("portal supersampling requires a 512-square interior".into());
@@ -164,7 +169,7 @@ mod tests {
         let mut portal = Portal::load(&dir).unwrap();
         portal.set_interior(&plaza::plaza_still(&dir, (SIZE * 2) as usize).unwrap());
         for activation in [0., 1.] {
-            let image = smooth_frame(&mut portal, 0., activation).unwrap();
+            let image = render_frame(&mut portal, 0., activation).unwrap();
             assert_eq!(image.len(), PIXELS);
             assert!(
                 image.chunks_exact(4).any(|p| p[3] > 0 && p[3] < 255),
