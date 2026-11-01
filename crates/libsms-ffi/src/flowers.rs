@@ -59,12 +59,14 @@ pub struct SmsFlowerClips {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SmsFlowerItem {
-    /// 0 flower, 1 tower, 2 head.
+    /// 0 a flower, 1 a tower, 2 a head, 3 a buried tower's or head's stand-in flower (drawn with
+    /// the flower's own look and clips).
     pub kind: u8,
     /// The phase / `TowerState` / `HeadState`, in the enums' order.
     pub state: u8,
     pub _pad: [u8; 2],
-    /// A handle that stays the same while the thing lives (flower: unit * 64 + flower).
+    /// A handle that stays the same while the thing lives (flower: unit * 64 + flower;
+    /// stand-in flower: `0x10000 + tower` or `0x20000 + head`).
     pub handle: u32,
     /// Ticks in that state.
     pub age: u32,
@@ -77,7 +79,8 @@ pub struct SmsFlowerItem {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SmsFlowerEvent {
-    /// 1 bloomed (`a`: flowers of its unit still shut), 2 wilted, 3 a coin leaves a ring (pos, vel),
+    /// 1 bloomed (`a`: flowers of its unit still shut, or -1 for a buried stand-in flower,
+    /// which the game opens without its chime), 2 wilted, 3 a coin leaves a ring (pos, vel),
     /// 4 a tower rose, 5 a tower sank, 6 a bite (`a` 0 a tower's, 1 a head's; pos where from;
     /// `target` which of the Marios passed to the step), 7 something died (pos; `a` 1 tower /
     /// 2 head), 8 a head hopped, 9 a tower was frozen by water.
@@ -140,6 +143,10 @@ impl SmsFlowers {
                 self.events.push(ev(7, kind, 0, *pos, Vec3::ZERO));
             }
             FlowerEvent::HeadHopped { pos, .. } => self.events.push(ev(8, 0, 0, *pos, Vec3::ZERO)),
+            // A buried enemy's stand-in flower: pollen, and no chime (a = -1 tells the host).
+            FlowerEvent::StandInBloomed { pos } => {
+                self.events.push(ev(1, -1, 0, *pos, Vec3::ZERO))
+            }
         }
         if self.events.len() > 512 {
             self.events.drain(..256);
@@ -401,6 +408,13 @@ pub unsafe extern "C" fn sms_fw_count(fw: *const SmsFlowers, kind: u8) -> u32 {
         0 => s.world.units.iter().map(|u| u.flowers.len()).sum(),
         1 => s.world.towers.len(),
         2 => s.world.heads.len(),
+        3 => s
+            .world
+            .towers
+            .iter()
+            .filter(|t| t.flower.is_some())
+            .count()
+            + s.world.heads.iter().filter(|h| h.flower.is_some()).count(),
         _ => 0,
     }) as u32
 }

@@ -21,6 +21,7 @@
 
 mod coin;
 mod fludd;
+mod flower;
 mod fx;
 mod helmet;
 mod j3d;
@@ -1090,6 +1091,19 @@ async fn main() {
             .map_err(|e| eprintln!("Strollin' Stu: {e}"))
             .ok()
     });
+    // `SMS_FLOWER=<frame>`: the sambo flower reference scene (a buried enemy's stand-in
+    // flower, an open flower, a tower bursting out and a hopping head) at that clip frame.
+    let flower_frame: Option<f32> = std::env::var("SMS_FLOWER").ok().map(|v| {
+        v.parse().unwrap_or(0.0)
+    });
+    let mut flower_model = assets
+        .as_ref()
+        .filter(|_| flower_frame.is_some())
+        .and_then(|a| {
+            flower::Flowers::load(&a.dir)
+                .map_err(|e| eprintln!("sambo flowers: {e}"))
+                .ok()
+        });
     let (mut cam_a, mut cam_p) = (std::f32::consts::PI, 0.35f32);
     let mut show_help = true;
     let focus_yoshi = std::env::var("SMS_FOCUS").as_deref() == Ok("yoshi");
@@ -1685,6 +1699,35 @@ async fn main() {
                         };
                         sm.draw(s, at, view, proj);
                     }
+                }
+                // `SMS_FLOWER`: the sambo flowers, in front of the spawn. The row is the plain
+                // flower's three clips (`flower_wait` a bud, `flower_hit` opening at three
+                // frames, `flower_fwait` open) — the flower a buried sambo leaves where it
+                // hides (`THanaSambo::initFlower`); behind it the tower bursting out and a
+                // hopping head, at `SMS_FLOWER`'s frame of `sambo_fset` / `sambohead_set`.
+                if let (Some(fm), Some(frame)) = (flower_model.as_mut(), flower_frame) {
+                    let at = |x: f32, z: f32| flower::place(V3::new(x, 0.0, z), 0.0, S);
+                    for (i, (clip, clip_frame)) in [
+                        ("flower_wait", 0.0),
+                        ("flower_hit", 0.0),
+                        ("flower_hit", 15.0),
+                        ("flower_hit", 29.0),
+                        ("flower_fwait", 0.0),
+                    ]
+                    .iter()
+                    .enumerate()
+                    {
+                        let x = -300.0 + i as f32 * 150.0;
+                        fm.draw(flower::Kind::Flower, clip, *clip_frame, at(x, 380.0), view, proj);
+                    }
+                    // A buried tower or head's own frame 0 is under the ground: what stands
+                    // there is the flower it leaves (`initFlower`), gone once it bursts out.
+                    if frame < 1.0 {
+                        fm.draw(flower::Kind::Flower, "flower_wait", 0.0, at(-180.0, 640.0), view, proj);
+                        fm.draw(flower::Kind::Flower, "flower_wait", 0.0, at(180.0, 640.0), view, proj);
+                    }
+                    fm.draw(flower::Kind::Tower, "sambo_fset", frame, at(-180.0, 640.0), view, proj);
+                    fm.draw(flower::Kind::Head, "sambohead_set", frame, at(180.0, 640.0), view, proj);
                 }
             }
             _ => draw_mario(&sim, rig.as_ref(), sim.alpha()),

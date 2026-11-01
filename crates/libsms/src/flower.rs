@@ -17,6 +17,14 @@
 //!   water makes it freeze for a while (`waterDamage`, `TNerveHanaSamboFreeze`).
 //! * **Sambo heads** (`TSamboHead`): the flower that hops after Mario, in rings.
 //!
+//! A tower or head that is under the ground leaves a **plain flower** standing where it is:
+//! `THanaSambo::initFlower` / `TSamboHead::initFlower` spawn a `TSamboFlower` at the enemy's
+//! position (the tower's grows up at tick 75 of its sink, `TNerveHanaSamboHide`), and the
+//! appear nerve hides it again (`unk1A8->hide()`, `TNerveHanaSamboAppear`). That flower is
+//! what a player sees before the enemy bursts out, and it takes the spray
+//! (`TSamboFlower::receiveMessage`) — with no coin unit behind it (`unk164` null) it opens
+//! with pollen and wilts `mSLBloomTimer` ticks later. It is [`StandIn`] here.
+//!
 //! The actors' nerve time (`TSpine::getTime`) counts one per tick of the 120 Hz sim
 //! ([`crate::clock`]), so the disc's tick counts are used as they are. Distances are the game's
 //! units. Clip lengths are not known here: a host passes them in [`Clips`].
@@ -192,8 +200,9 @@ impl HeadParams {
     }
 }
 
-/// How long the clips run, in ticks (a host knows its `.bck` lengths; the disc's clips run at
-/// 30 frames a second, so a clip is `frames * 4` ticks).
+/// How long the clips run, in ticks. The disc's clips are authored at 60 frames a second
+/// (`SMSGetAnmFrameRate` is `60 / 30` on NTSC) and the sim is 120 Hz, so a clip is
+/// `frames * 2` ticks — a host knows its `.bck` lengths.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Clips {
     /// `flower_hit`: a flower opening (or, backwards, closing).
@@ -250,6 +259,64 @@ pub struct Flower {
     open_for: u32,
 }
 
+/// A buried enemy's stand-in flower (`TSamboFlower`, made by `THanaSambo::initFlower` /
+/// `TSamboHead::initFlower`): a plain flower stands where the enemy hides and is gone again
+/// when it bursts out (`unk1A8->hide()` in `TNerveHanaSamboAppear` / `TNerveSamboHeadAppear`).
+/// It is the same model and clips as a coin flower, takes the spray (`bloom`), and — with no
+/// coin unit to wait for (`unk164` null) — wilts again `mSLBloomTimer` ticks after opening.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StandIn {
+    pub phase: Bloom,
+    /// Ticks in the phase.
+    pub age: u32,
+    /// Ticks open (`unk154`).
+    open_for: u32,
+}
+
+impl StandIn {
+    pub fn new() -> StandIn {
+        StandIn { phase: Bloom::Closed, age: 0, open_for: 0 }
+    }
+
+    /// `TSamboFlower::bloom`: a bud starts opening. False if it already was (`unk150`).
+    fn bloom(&mut self) -> bool {
+        if matches!(self.phase, Bloom::Opening | Bloom::Open) {
+            return false;
+        }
+        self.phase = Bloom::Opening;
+        self.age = 0;
+        self.open_for = 0;
+        true
+    }
+
+    /// `TSamboFlower::moveObject`: open after the opening clip, then wilt past the timer.
+    fn step(&mut self, open_ticks: u32, bloom_timer: u32) {
+        self.age += 1;
+        match self.phase {
+            Bloom::Closed => {}
+            Bloom::Opening => {
+                if self.age >= open_ticks {
+                    self.phase = Bloom::Open;
+                    self.age = 0;
+                }
+            }
+            Bloom::Open => {
+                self.open_for += 1;
+                if self.open_for > bloom_timer {
+                    self.phase = Bloom::Closing;
+                    self.age = 0;
+                }
+            }
+            Bloom::Closing => {
+                if self.age >= open_ticks {
+                    self.phase = Bloom::Closed;
+                    self.age = 0;
+                }
+            }
+        }
+    }
+}
+
 /// A coin leaving a ring (`checkGenCoin`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CoinLaunch {
@@ -301,6 +368,9 @@ pub enum FlowerEvent {
     HeadHopped { head: usize, pos: Vec3 },
     /// A head touched Mario.
     HeadBit { head: usize, from: Vec3, target: usize },
+    /// A buried tower's or head's stand-in flower opened under the spray
+    /// (`TSamboFlower::bloom`: pollen only; the game's stand-in has no coin unit, so no chime).
+    StandInBloomed { pos: Vec3 },
 }
 
 /// Joint 3 of `sambo.bmd` is the head (`THanaSambo::mHeadJntIndex`): the game's hit actor for
@@ -405,6 +475,8 @@ pub struct Tower {
     /// Ticks in the state (`TSpine::getTime`).
     pub age: u32,
     since_attack: u32,
+    /// The plain flower it leaves where it hides (`initFlower`; `unk1A8`).
+    pub flower: Option<StandIn>,
 }
 
 /// A head's state.
@@ -428,6 +500,8 @@ pub struct Head {
     pub yaw: f32,
     pub state: HeadState,
     pub age: u32,
+    /// The plain flower it leaves where it hides (`initFlower`; `unk198`).
+    pub flower: Option<StandIn>,
 }
 
 /// The sambo things in a stage.
@@ -531,7 +605,16 @@ impl FlowerWorld {
     }
 
     pub fn add_tower(&mut self, pos: Vec3, yaw: f32) -> usize {
-        self.towers.push(Tower { pos, yaw, state: TowerState::Hidden, age: 0, since_attack: 0 });
+        self.towers.push(Tower {
+            pos,
+            yaw,
+            state: TowerState::Hidden,
+            age: 0,
+            since_attack: 0,
+            // Placed already buried: the game's own spawn plays the sink clip first and leaves
+            // the flower at its end (`TNerveHanaSamboHide`), which would show the tower itself.
+            flower: Some(StandIn::new()),
+        });
         self.towers.len() - 1
     }
 
@@ -543,6 +626,9 @@ impl FlowerWorld {
             yaw,
             state: HeadState::Dormant,
             age: 0,
+            // Buried from the start, so its stand-in flower is already there
+            // (`TNerveSamboHeadHide` -> `initFlower`).
+            flower: Some(StandIn::new()),
         });
         self.heads.len() - 1
     }
@@ -580,7 +666,18 @@ impl FlowerWorld {
             }
         }
         for (i, t) in self.towers.iter().enumerate() {
-            if matches!(t.state, TowerState::Hidden | TowerState::Dead | TowerState::Dying) {
+            if matches!(t.state, TowerState::Dead | TowerState::Dying) {
+                continue;
+            }
+            // While it is under the ground its stand-in flower is the thing there, and takes
+            // the spray on the enemy's own id (`initFlower` keeps `TSamboFlower` hittable).
+            if t.flower.is_some() && t.state == TowerState::Hidden {
+                out.push(Target {
+                    id: ID_BASE + 0x10000 + i as u64,
+                    pos: t.pos,
+                    radius: self.flower.body_radius,
+                    height: self.flower.head_height,
+                });
                 continue;
             }
             out.push(Target {
@@ -591,7 +688,19 @@ impl FlowerWorld {
             });
         }
         for (i, h) in self.heads.iter().enumerate() {
-            if matches!(h.state, HeadState::Dormant | HeadState::Dead) {
+            if h.state == HeadState::Dead {
+                continue;
+            }
+            if h.flower.is_some() && h.state == HeadState::Dormant {
+                out.push(Target {
+                    id: ID_BASE + 0x20000 + i as u64,
+                    pos: h.pos,
+                    radius: self.flower.body_radius,
+                    height: self.flower.head_height,
+                });
+                continue;
+            }
+            if h.state == HeadState::Dormant {
                 continue;
             }
             out.push(Target {
@@ -626,11 +735,16 @@ impl FlowerWorld {
         if n < 0x10000 {
             self.spray_flower((n / 64) as usize, (n % 64) as usize, out);
         } else if n < 0x20000 {
-            // `THanaSambo::waterDamage`: only a waiting tower freezes.
+            // `THanaSambo::waterDamage`: only a waiting tower freezes. A buried tower's
+            // stand-in flower opens instead (`TSamboFlower::receiveMessage` -> `bloom`).
             if let Some(t) = self.towers.get_mut((n - 0x10000) as usize) {
                 if t.state == TowerState::Waiting {
                     t.state = TowerState::Frozen;
                     t.age = 0;
+                } else if let Some(f) = t.flower.as_mut()
+                    && f.bloom()
+                {
+                    out.push(FlowerEvent::StandInBloomed { pos: t.pos });
                 }
             }
         } else if let Some(h) = self.heads.get_mut((n - 0x20000) as usize) {
@@ -641,6 +755,10 @@ impl FlowerWorld {
                 h.vel = Vec3::new(away.x * p.hit_jump_sp_xz, p.hit_jump_sp_y, away.z * p.hit_jump_sp_xz);
                 h.state = HeadState::Knocked;
                 h.age = 0;
+            } else if let Some(f) = h.flower.as_mut()
+                && f.bloom()
+            {
+                out.push(FlowerEvent::StandInBloomed { pos: h.pos });
             }
         }
     }
@@ -746,6 +864,7 @@ impl FlowerWorld {
 
     fn step_towers(&mut self, host: &dyn Host, marios: &[Vec3], out: &mut Vec<FlowerEvent>) {
         let (p, c) = (self.tower_params, self.clips);
+        let (open, bloom_timer) = (c.flower_open, self.flower.bloom_timer);
         let rig = self.rig.clone();
         for (i, t) in self.towers.iter_mut().enumerate() {
             t.age += 1;
@@ -762,6 +881,9 @@ impl FlowerWorld {
                     if flat < p.appear_dist {
                         t.state = TowerState::Appearing;
                         t.age = 0;
+                        // `TNerveHanaSamboAppear` at time 0: `unk1A8->hide()`, the stand-in
+                        // flower goes as the tower comes up through it.
+                        t.flower = None;
                         out.push(FlowerEvent::TowerAppeared { tower: i, pos: t.pos });
                     }
                 }
@@ -805,9 +927,15 @@ impl FlowerWorld {
                     }
                 }
                 TowerState::Hiding => {
+                    // `TNerveHanaSamboHide`: the flower comes up at tick 75, while the tower
+                    // is still sinking, and stays when it is under (`initFlower`).
+                    if t.age == 75 {
+                        t.flower.get_or_insert_with(StandIn::new);
+                    }
                     if t.age >= c.tower_hide {
                         t.state = TowerState::Hidden;
                         t.age = 0;
+                        t.flower.get_or_insert_with(StandIn::new);
                     }
                 }
                 TowerState::Frozen => {
@@ -855,6 +983,10 @@ impl FlowerWorld {
                     t.pos.y = g.height;
                 }
             }
+            // The stand-in flower's own clips (`TSamboFlower::moveObject`).
+            if let Some(f) = t.flower.as_mut() {
+                f.step(open, bloom_timer);
+            }
         }
     }
 
@@ -863,6 +995,7 @@ impl FlowerWorld {
         // Air time of one hop and the sideways speed that covers `move_dist` in it.
         let air = (2.0 * p.jump_sp / p.move_gravity).max(1.0);
         let hop_xz = p.move_dist / air;
+        let (open, bloom_timer) = (self.clips.flower_open, self.flower.bloom_timer);
         for (i, h) in self.heads.iter_mut().enumerate() {
             h.age += 1;
             let (target, mario) = nearest(marios, h.pos).unwrap_or((usize::MAX, Vec3::splat(1.0e9)));
@@ -870,9 +1003,13 @@ impl FlowerWorld {
             let flat = (d.x * d.x + d.z * d.z).sqrt();
             match h.state {
                 HeadState::Dormant => {
+                    // Buried: its stand-in flower is what is there (`initFlower`).
+                    h.flower.get_or_insert_with(StandIn::new);
                     if flat < p.appear_dist {
                         h.state = HeadState::Ready;
                         h.age = 0;
+                        // `TNerveSamboHeadAppear` at time 0: `unk198->hide()`.
+                        h.flower = None;
                     }
                 }
                 HeadState::Ready => {
@@ -911,6 +1048,9 @@ impl FlowerWorld {
                 }
                 HeadState::Dead => {}
             }
+            if let Some(f) = h.flower.as_mut() {
+                f.step(open, bloom_timer);
+            }
         }
     }
 }
@@ -918,11 +1058,12 @@ impl FlowerWorld {
 /// One thing of a snapshot ([`FlowerWorld::items`] / [`FlowerWorld::mirror`]).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Item {
-    /// 0 flower, 1 tower, 2 head.
+    /// 0 flower, 1 tower, 2 head, 3 a buried tower's or head's stand-in flower.
     pub kind: u8,
     /// The phase / [`TowerState`] / [`HeadState`] as its enum number.
     pub state: u8,
-    /// The id's low part: flower `unit * 64 + flower`, else the index.
+    /// The id's low part: flower `unit * 64 + flower`, else the index — and for a stand-in
+    /// flower `0x10000 + tower` or `0x20000 + head` (the id a hit on it carries while buried).
     pub handle: u32,
     pub age: u32,
     pub pos: Vec3,
@@ -972,6 +1113,32 @@ impl FlowerWorld {
         for (i, h) in self.heads.iter().enumerate() {
             v.push(Item { kind: 2, state: h.state as u8, handle: i as u32, age: h.age, pos: h.pos, yaw: h.yaw });
         }
+        // The buried enemies' stand-in flowers, after the enemies themselves so a mirror has
+        // them to attach to.
+        for (i, t) in self.towers.iter().enumerate() {
+            if let Some(f) = t.flower {
+                v.push(Item {
+                    kind: 3,
+                    state: f.phase as u8,
+                    handle: 0x10000 + i as u32,
+                    age: f.age,
+                    pos: t.pos,
+                    yaw: t.yaw,
+                });
+            }
+        }
+        for (i, h) in self.heads.iter().enumerate() {
+            if let Some(f) = h.flower {
+                v.push(Item {
+                    kind: 3,
+                    state: f.phase as u8,
+                    handle: 0x20000 + i as u32,
+                    age: f.age,
+                    pos: h.pos,
+                    yaw: h.yaw,
+                });
+            }
+        }
         v
     }
 
@@ -1004,16 +1171,60 @@ impl FlowerWorld {
                 1 => {
                     let Some(&state) = TOWERS.get(it.state as usize) else { continue };
                     while self.towers.len() < (it.handle as usize).min(64) {
-                        self.towers.push(Tower { pos: it.pos, yaw: 0.0, state: TowerState::Dead, age: 0, since_attack: 0 });
+                        self.towers.push(Tower {
+                            pos: it.pos,
+                            yaw: 0.0,
+                            state: TowerState::Dead,
+                            age: 0,
+                            since_attack: 0,
+                            flower: None,
+                        });
                     }
-                    self.towers.push(Tower { pos: it.pos, yaw: it.yaw, state, age: it.age, since_attack: 0 });
+                    self.towers.push(Tower {
+                        pos: it.pos,
+                        yaw: it.yaw,
+                        state,
+                        age: it.age,
+                        since_attack: 0,
+                        flower: None,
+                    });
                 }
                 2 => {
                     let Some(&state) = HEADS.get(it.state as usize) else { continue };
                     while self.heads.len() < (it.handle as usize).min(64) {
-                        self.heads.push(Head { pos: it.pos, home: it.pos, vel: Vec3::ZERO, yaw: 0.0, state: HeadState::Dead, age: 0 });
+                        self.heads.push(Head {
+                            pos: it.pos,
+                            home: it.pos,
+                            vel: Vec3::ZERO,
+                            yaw: 0.0,
+                            state: HeadState::Dead,
+                            age: 0,
+                            flower: None,
+                        });
                     }
-                    self.heads.push(Head { pos: it.pos, home: it.pos, vel: Vec3::ZERO, yaw: it.yaw, state, age: it.age });
+                    self.heads.push(Head {
+                        pos: it.pos,
+                        home: it.pos,
+                        vel: Vec3::ZERO,
+                        yaw: it.yaw,
+                        state,
+                        age: it.age,
+                        flower: None,
+                    });
+                }
+                3 => {
+                    // A buried enemy's stand-in flower: `0x10000 + tower` or `0x20000 + head`.
+                    let Some(&phase) = BLOOMS.get(it.state as usize) else { continue };
+                    let flower = StandIn { phase, age: it.age, open_for: 0 };
+                    if it.handle >= 0x20000 {
+                        if let Some(h) = self.heads.get_mut((it.handle - 0x20000) as usize) {
+                            h.flower = Some(flower);
+                        }
+                    } else if it.handle >= 0x10000
+                        && let Some(t) = self.towers.get_mut((it.handle - 0x10000) as usize)
+                    {
+                        t.flower = Some(flower);
+                    }
                 }
                 _ => {}
             }
@@ -1222,6 +1433,90 @@ mod tests {
     }
 
     #[test]
+    fn a_buried_tower_shows_a_flower_until_it_bursts_out() {
+        let mut w = FlowerWorld::new();
+        let t = w.add_tower(Vec3::ZERO, 0.0);
+        // Placed already under the ground, with the flower the game leaves there.
+        let stand_in = |w: &FlowerWorld, handle: u32| {
+            w.items()
+                .into_iter()
+                .find(|i| i.kind == 3 && i.handle == handle)
+                .unwrap_or_else(|| panic!("no stand-in flower for {handle:#x}"))
+        };
+        let f = stand_in(&w, 0x10000 + t as u32);
+        assert_eq!(f.state, Bloom::Closed as u8);
+        assert_eq!(f.pos, Vec3::ZERO);
+        // Far away it stays buried, and the flower stays; it is what the spray can reach
+        // (`targets` gives the buried tower the flower's own cylinder).
+        run(&mut w, Vec3::splat(5000.0), 100);
+        assert!(w.towers[0].flower.is_some());
+        let mut targets = Vec::new();
+        w.targets(&mut targets);
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].pos, Vec3::ZERO);
+        // Mario coming near bursts the tower up and takes the flower away
+        // (`TNerveHanaSamboAppear`: `unk1A8->hide()`).
+        let ev = run(&mut w, Vec3::new(0.0, 0.0, 400.0), 2);
+        assert!(ev.iter().any(|e| matches!(e, FlowerEvent::TowerAppeared { .. })));
+        assert!(w.towers[0].flower.is_none());
+        assert!(!w.items().iter().any(|i| i.kind == 3));
+    }
+
+    #[test]
+    fn a_sinking_tower_leaves_its_flower_at_tick_75() {
+        let mut w = FlowerWorld::new();
+        w.add_tower(Vec3::ZERO, 0.0);
+        // Wake it, then walk away so it sinks (`TNerveHanaSamboHide`).
+        run(&mut w, Vec3::new(0.0, 0.0, 700.0), 200);
+        run(&mut w, Vec3::new(0.0, 0.0, 3000.0), 1);
+        assert_eq!(w.towers[0].state, TowerState::Hiding);
+        // The flower rises while the tower is still going down.
+        run(&mut w, Vec3::new(0.0, 0.0, 3000.0), 73);
+        assert!(w.towers[0].flower.is_none());
+        run(&mut w, Vec3::new(0.0, 0.0, 3000.0), 2);
+        assert!(w.towers[0].flower.is_some());
+        // And it is still there once the tower is fully under.
+        run(&mut w, Vec3::new(0.0, 0.0, 3000.0), 400);
+        assert_eq!(w.towers[0].state, TowerState::Hidden);
+        assert!(w.towers[0].flower.is_some());
+    }
+
+    #[test]
+    fn a_buried_head_shows_a_flower_until_mario_wakes_it() {
+        let mut w = FlowerWorld::new();
+        w.add_head(Vec3::ZERO, 0.0);
+        assert!(w.items().iter().any(|i| i.kind == 3 && i.handle == 0x20000));
+        // Inside `mSLAppearDist` it comes out and the flower goes (`unk198->hide()`).
+        run(&mut w, Vec3::new(0.0, 0.0, 600.0), 2);
+        assert_eq!(w.heads[0].state, HeadState::Ready);
+        assert!(w.heads[0].flower.is_none());
+        assert!(!w.items().iter().any(|i| i.kind == 3));
+        // It hides again past `mSLHideDist` and a flower grows back in its place.
+        run(&mut w, Vec3::new(0.0, 0.0, 2000.0), 2);
+        assert_eq!(w.heads[0].state, HeadState::Dormant);
+        assert!(w.heads[0].flower.is_some());
+    }
+
+    #[test]
+    fn spraying_a_buried_flower_opens_it_and_it_wilts() {
+        let mut w = FlowerWorld::new();
+        let t = w.add_tower(Vec3::ZERO, 0.0);
+        let id = ID_BASE + 0x10000 + t as u64;
+        let mut ev = Vec::new();
+        w.water_hit(id, &mut ev);
+        assert!(ev.iter().any(|e| matches!(e, FlowerEvent::StandInBloomed { .. })));
+        assert_eq!(w.towers[0].flower.unwrap().phase, Bloom::Opening);
+        // Once more does nothing: it is already opening (`unk150`).
+        w.water_hit(id, &mut ev);
+        assert_eq!(ev.iter().filter(|e| matches!(e, FlowerEvent::StandInBloomed { .. })).count(), 1);
+        run(&mut w, Vec3::splat(5000.0), 60);
+        assert_eq!(w.towers[0].flower.unwrap().phase, Bloom::Open);
+        // No coin unit to wait for, so it wilts `mSLBloomTimer` ticks after opening.
+        run(&mut w, Vec3::splat(5000.0), 300 + 60 + 5);
+        assert_eq!(w.towers[0].flower.unwrap().phase, Bloom::Closed);
+    }
+
+    #[test]
     fn rolls_are_rare_and_cover_every_kind() {
         let t = SpawnTable::default();
         let mut counts = [0usize; 4];
@@ -1285,6 +1580,7 @@ mod tests {
         w.add_tower(Vec3::ZERO, 90.0);
         let h = tower_head(&w.rig, &w.tower_params, &Tower {
             pos: Vec3::ZERO, yaw: 90.0, state: TowerState::Waiting, age: 0, since_attack: 0,
+            flower: None,
         });
         // Turned 90 degrees about Y, a head that was off along Z is now off along X.
         assert!((h.x - wait.z).abs() < 1.0 && (h.z + wait.x).abs() < 1.0, "{h:?} vs {wait:?}");

@@ -2,7 +2,7 @@
 //!
 //!     cargo run -p libsms-assets --example dump -- bmd/ma_mdl1.bmd
 
-use libsms_assets::{Bmd, btp::TexPattern};
+use libsms_assets::{Bmd, MaterialTable, btp::TexPattern};
 
 fn main() {
     let rel = std::env::args()
@@ -10,6 +10,27 @@ fn main() {
         .unwrap_or_else(|| "bmd/ma_mdl1.bmd".into());
     let dir = libsms::assets::find(None).expect("no assets/ folder");
     let data = std::fs::read(dir.join(&rel)).expect("read");
+    if rel.ends_with(".bmt") {
+        let t = MaterialTable::parse(&data).expect("parse material table");
+        println!("{} materials, {} textures", t.materials.len(), t.textures.len());
+        for m in &t.materials {
+            println!(
+                "  material {} mode {} blend {:?} cull {:?} tex {:?}",
+                m.name,
+                m.mode,
+                m.blend(),
+                m.cull,
+                m.textures
+            );
+        }
+        for t in &t.textures {
+            println!(
+                "  tex {} fmt {} {}x{} wrap {:?}/{:?}",
+                t.name, t.format, t.image.width, t.image.height, t.wrap_s, t.wrap_t
+            );
+        }
+        return;
+    }
     if rel.ends_with(".btp") {
         let p = TexPattern::parse(&data).expect("parse");
         println!("loop {} length {}", p.loop_mode, p.length);

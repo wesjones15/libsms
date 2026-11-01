@@ -1028,7 +1028,16 @@ impl View {
             return Self::load_shine(dir);
         }
         match look {
-            Look::Flower => return Self::load_prop(dir, "samboflower", "flower.bmd"),
+            Look::Flower => {
+                // The game's flower draws `flower_orange.bmt`, not its own placeholder
+                // material (`TSamboFlowerManager::load`, `TSamboFlower::setMActorAndKeeper`).
+                return Self::load_prop_table(
+                    dir,
+                    "samboflower",
+                    "flower.bmd",
+                    Some("flower_orange.bmt"),
+                );
+            }
             Look::Sambo => return Self::load_prop(dir, "sambo", "sambo.bmd"),
             Look::SamboHead => return Self::load_prop(dir, "sambohead", "sambohead.bmd"),
             Look::Effects => return Self::load_effects(dir),
@@ -1256,8 +1265,24 @@ impl View {
     /// A sambo model (`enemy/<folder>/<file>`) with every `.bck` in its folder, posed by
     /// [`Self::update_prop`].
     fn load_prop(dir: &Path, folder: &str, file: &str) -> Result<View, String> {
+        Self::load_prop_table(dir, folder, file, None)
+    }
+
+    /// The same, with a `.bmt` material table in the same folder swapped in first (the game's
+    /// `J3DModelData::setMaterialTable`): the plain flower's own material is a placeholder over
+    /// `K_name_dummy`, and `flower_orange.bmt` gives it its texture.
+    fn load_prop_table(
+        dir: &Path,
+        folder: &str,
+        file: &str,
+        table: Option<&str>,
+    ) -> Result<View, String> {
         let root = dir.join("enemy").join(folder);
-        let mut view = Self::load_static(dir, &root.join(file))?;
+        let mut view = Self::load_static_table(
+            dir,
+            &root.join(file),
+            table.map(|t| root.join(t)).as_deref(),
+        )?;
         let mut clips = Vec::new();
         for e in std::fs::read_dir(&root).map_err(|e| e.to_string())?.flatten() {
             let path = e.path();
@@ -1351,15 +1376,27 @@ impl View {
     }
 
     fn load_static(dir: &Path, path: &Path) -> Result<View, String> {
-        let data = std::fs::read(path).map_err(|e| e.to_string())?;
+        Self::load_static_table(dir, path, None)
+    }
+
+    /// `table`, if given, is a `.bmt` material table swapped into the model before its
+    /// materials are baked (`J3DModelData::setMaterialTable`).
+    fn load_static_table(
+        dir: &Path,
+        path: &Path,
+        table: Option<&Path>,
+    ) -> Result<View, String> {
+        let data = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
         let skeleton = Skeleton::from_bmd(&data).ok_or("coin has no rig")?;
+        let mut bmd = Bmd::parse(&data).map_err(|e| format!("{}: {e}", path.display()))?;
+        if let Some(table) = table {
+            let t = std::fs::read(table).map_err(|e| format!("{}: {e}", table.display()))?;
+            let t = libsms_assets::MaterialTable::parse(&t)
+                .map_err(|e| format!("{}: {e}", table.display()))?;
+            bmd.set_material_table(&t);
+        }
         let mut textures = Textures::default();
-        let model = build(
-            Bmd::parse(&data).map_err(|e| e.to_string())?,
-            &|_, _| None,
-            models::COUNT as u32,
-            &mut textures,
-        )?;
+        let model = build(bmd, &|_, _| None, models::COUNT as u32, &mut textures)?;
         let pose = Pose::new(&model.bmd, Mat4::IDENTITY, &model.bind);
         let mut positions = Vec::new();
         let mut normals = Vec::new();

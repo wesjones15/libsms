@@ -418,6 +418,28 @@ pub struct Bmd {
     arrays: Vec<Array>,
 }
 
+/// A `J3D2bmt3` material table (`J3DModelLoaderDataBase::loadMaterialTable`): `MAT3` and
+/// `TEX1` only, no geometry. The game swaps one into a model with
+/// [`Bmd::set_material_table`]; `TSamboFlowerManager::load` reads
+/// `scene/samboflower/flower_orange.bmt` for the plain flower (`Enemy/hanasambo.cpp`).
+#[derive(Debug, Clone, Default)]
+pub struct MaterialTable {
+    pub materials: Vec<Material>,
+    pub textures: Vec<Texture>,
+}
+
+impl MaterialTable {
+    pub fn parse(d: &[u8]) -> Result<MaterialTable, Error> {
+        if d.get(0..8) != Some(b"J3D2bmt3") {
+            return Err(Error::Bad("not a J3D2bmt3 material table".into()));
+        }
+        Ok(MaterialTable {
+            materials: read_materials(d)?,
+            textures: read_textures(d)?,
+        })
+    }
+}
+
 fn chunk<'a>(d: &'a [u8], tag: &[u8; 4]) -> Result<(usize, Be<'a>), Error> {
     let r = Be(d);
     let n = r.u32(12)? as usize;
@@ -482,6 +504,20 @@ impl Bmd {
 
     pub fn joint(&self, name: &str) -> Option<usize> {
         self.joints.iter().position(|j| j.name == name)
+    }
+
+    /// `J3DModelData::setMaterialTable(table, J3DMatCopyFlag_All)`: the table's materials
+    /// replace the model's in order (a shape's material index is unchanged) and the textures
+    /// they name replace its own. `TSamboFlower::setMActorAndKeeper` (Enemy/hanasambo.cpp)
+    /// does this to `flower.bmd` with `flower_orange.bmt`, whose own material draws the
+    /// placeholder `K_name_dummy`.
+    pub fn set_material_table(&mut self, table: &MaterialTable) {
+        if !table.materials.is_empty() {
+            self.materials = table.materials.clone();
+        }
+        if !table.textures.is_empty() {
+            self.textures = table.textures.clone();
+        }
     }
 
     pub fn material(&self, name: &str) -> Option<usize> {

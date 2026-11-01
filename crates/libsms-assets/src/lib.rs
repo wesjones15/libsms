@@ -31,7 +31,7 @@ pub mod treasure;
 use std::fmt;
 use std::path::PathBuf;
 
-pub use bmd::{Batch, BatchVertex, Bmd, Material, Skin};
+pub use bmd::{Batch, BatchVertex, Bmd, Material, MaterialTable, Skin};
 pub use pose::Pose;
 pub use texture::Image;
 
