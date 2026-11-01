@@ -56,8 +56,12 @@ The generated portrait images are unchanged. Gameplay water uses the unified mes
 
 ABI **40** added the stream/flight exports and network protocol **10** the flight-camera
 replay. ABI **41** adds `sms_sim_equip_nozzle` (the radial menu's one-shot nozzle-box
-pickup feedback) beside the silent quick-swap `sms_sim_select_nozzle`, with no struct
+pickup feedback) beside the silent state-sync `sms_sim_select_nozzle`, with no struct
 layout change; network protocol **11** adds the equip-operation replay.
+The nozzle-sound hotfix adds `sms_sim_switch_nozzle` for a player's quick swap:
+`WaterGun.cpp::changeBackup`'s 0x0812 out / 0x0811 back selection cue, without pickup.
+Silent state refresh still uses `sms_sim_select_nozzle`; the ABI layouts and network
+protocol stay unchanged. Both DLLs must be updated together for the new export.
 Install matching `sms.dll` and `MarioTest.dll`. Headless scenarios exercise both
 corkscrews turning both ways, relative pitch, its cap, speed and gravity recovery.
 The managed/native portrait check verifies the stream partition and quad counts.

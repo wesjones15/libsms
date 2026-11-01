@@ -741,6 +741,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn nozzle_switch_cues_resolve_and_render_audible_pcm_through_scene_audio() {
+        let Some((assets, _)) = fixture() else { return; };
+        let data = Arc::new(SoundData::load(&assets.dir).unwrap());
+        let mario = Mario::new(assets.params, assets.anim_table, Vec3::ZERO, 0);
+        // WaterGun.cpp::changeBackup; SoundEffects.hpp: distinct from pickup 0x484E.
+        for (name, id) in [("MSD_SE_SY_SELECT_POMP_BACK", 0x0812), ("MSD_SE_SY_SELECT_POMP", 0x0811)] {
+            let mut sys = SoundSystem::new(data.clone());
+            assert_eq!(sys.id(name), Some(id));
+            let mut scene = SceneAudio::load(&assets.dir, &sys);
+            scene.events(&mut sys, &[Event::Sound(SoundCue { name, pos: Vec3::ZERO, info: None })], &mario);
+            let mut pcm = [0.0f32; 1600];
+            let mut peak = 0.0f32;
+            for _ in 0..60 {
+                sys.frame(); sys.render(&mut pcm, 24000.0);
+                assert!(pcm.iter().all(|v| v.is_finite()));
+                peak = pcm.iter().fold(peak, |p, v| p.max(v.abs()));
+            }
+            assert!(peak > 0.001, "silent nozzle-switch cue {name}: {peak}");
+        }
+    }
+
+    #[test]
     fn nozzle_pickup_and_sparkle_sounds_resolve_and_render_audible_pcm() {
         let Some(dir)=libsms::assets::find(None) else {eprintln!("SKIP: Sunshine cache absent");return;};
         if !dir.join(libsms_assets::sound::INIT_DATA).is_file() {eprintln!("SKIP: Sunshine audio absent");return;}

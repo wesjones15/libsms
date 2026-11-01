@@ -630,9 +630,9 @@ impl Mario {
     }
 
     /// Fits FLUDD's `slot` (0 without FLUDD, else 1 Spray, 2 Hover, 3 Rocket, 4 Turbo), giving
-    /// FLUDD back if it was off. False for an unknown slot. This is the quick Spray/alternate
-    /// swap, like the game's X button: no backpack swing and no pickup feedback. The radial
-    /// menu uses [`Self::equip_nozzle`] instead.
+    /// FLUDD back if it was off. False for an unknown slot. Silent fitted-state synchronization:
+    /// no backpack swing, switch sound or pickup feedback. A player quick swap uses
+    /// [`Self::switch_nozzle`]; the radial menu uses [`Self::equip_nozzle`].
     pub fn select_nozzle(&mut self, slot: u32) -> bool {
         let kind = match slot {
             0 => {
@@ -658,11 +658,28 @@ impl Mario {
         false
     }
 
+    /// A host's instant quick swap, with TWaterGun::changeBackup's original
+    /// selection cue (WaterGun.cpp, 0x0812 out / 0x0811 back). No pickup effect.
+    pub fn switch_nozzle(&mut self, slot: u32) -> bool {
+        let before = self.fludd.as_ref().map(|f| f.nozzle);
+        if !self.select_nozzle(slot) { return false; }
+        let after = self.fludd.as_ref().map(|f| f.nozzle);
+        if let (Some(from), Some(to)) = (before, after)
+            && from != to
+        {
+            self.events.push(Event::Sound(crate::event::SoundCue {
+                name: Fludd::switch_sound(from == NozzleKind::Spray), pos: self.pos, info: None,
+            }));
+        }
+        true
+    }
+
     /// Fits `slot` as a radial-menu equip: [`Self::select_nozzle`] plus Sunshine's nozzle-box
     /// pickup once when the fitted alternate actually changes. `Item.cpp`
     /// `TItemNozzle::touchPlayer` (0x484E), and `MarioReceiveMsg.cpp::getNozzle` calls
     /// `MarioParticle.cpp::emitGetEffect` (JPA 0x0E at root joint 1 plus 0x1989). Spray,
-    /// No FLUDD and the nozzle already fitted stay silent, as does every quick swap.
+    /// No FLUDD and the nozzle already fitted stay silent. Quick swaps use their
+    /// separate selection cues through [`Self::switch_nozzle`].
     pub fn equip_nozzle(&mut self, slot: u32) -> bool {
         let before = self.fludd.as_ref().map(|f| f.nozzle);
         if !self.select_nozzle(slot) {

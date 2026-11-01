@@ -225,14 +225,14 @@ impl Fludd {
     pub fn swap_nozzle(&mut self, p: &Params, cycle: bool) -> Option<&'static str> {
         let mut sound = None;
         if self.switch_progress == 0.0 {
-            sound = Some("MSD_SE_SY_SELECT_POMP_BACK");
+            sound = Some(Self::switch_sound(true));
             self.switch_speed = p.water_gun.change_speed;
             if cycle {
                 self.second = CYCLE[0];
             }
         }
         if self.switch_progress == 1.0 {
-            sound = Some("MSD_SE_SY_SELECT_POMP");
+            sound = Some(Self::switch_sound(false));
             self.switch_speed = -p.water_gun.change_speed;
             if cycle {
                 self.cycle_to = CYCLE
@@ -243,6 +243,12 @@ impl Fludd {
             }
         }
         sound
+    }
+
+    /// WaterGun.cpp::TWaterGun::changeBackup: 0x0812 out to the alternate,
+    /// 0x0811 back to Spray. These are distinct from a new-nozzle pickup.
+    pub(crate) fn switch_sound(to_alternate: bool) -> &'static str {
+        if to_alternate { "MSD_SE_SY_SELECT_POMP_BACK" } else { "MSD_SE_SY_SELECT_POMP" }
     }
 
     pub fn is_switching(&self) -> bool {

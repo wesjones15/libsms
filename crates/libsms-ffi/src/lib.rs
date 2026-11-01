@@ -1118,8 +1118,8 @@ pub unsafe extern "C" fn sms_sim_refill(sim: *mut SmsSim) {
 /// Fits FLUDD's nozzle at once, or takes FLUDD away: `slot` 0 no FLUDD, 1 Spray, 2 Hover,
 /// 3 Rocket, 4 Turbo. Returns 0 for an unknown slot. Fitting a nozzle while FLUDD is off gives
 /// it back with a full tank. Unlike the game's X button this has no backpack swing; this is the
-/// quick Spray/alternate swap and plays no pickup feedback. A radial menu uses
-/// [`sms_sim_equip_nozzle`].
+/// silent state-sync path. A player quick swap uses [`sms_sim_switch_nozzle`]; a
+/// radial menu uses [`sms_sim_equip_nozzle`].
 ///
 /// # Safety
 /// `sim` from [`sms_sim_new`].
@@ -1128,6 +1128,20 @@ pub unsafe extern "C" fn sms_sim_select_nozzle(sim: *mut SmsSim, slot: u32) -> u
     // SAFETY: the caller promised a valid pointer.
     match unsafe { sim.as_mut() } {
         Some(s) => s.sim.mario.select_nozzle(slot) as u8,
+        None => 0,
+    }
+}
+
+/// Quick Spray/alternate switch with Sunshine's changeBackup selection cue
+/// (0x0812 out / 0x0811 back), never the nozzle-pickup sound or sparkle.
+/// Same slots as sms_sim_select_nozzle; repeated/invalid selections and FLUDD
+/// enable/disable do not replay a switch. Silent state refresh uses select_nozzle.
+/// # Safety
+/// `sim` from [`sms_sim_new`] or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_sim_switch_nozzle(sim: *mut SmsSim, slot: u32) -> u8 {
+    match unsafe { sim.as_mut() } {
+        Some(s) => s.sim.mario.switch_nozzle(slot) as u8,
         None => 0,
     }
 }

@@ -4213,9 +4213,43 @@ fn both_corkscrews_follow_camera_yaw_and_only_relative_pitch() {
 }
 
 #[test]
+fn quick_nozzle_switch_plays_the_source_selection_cue_once_without_pickup() {
+    let mut s = Scene::flat();
+    s.sim.mario.give_fludd();
+    for alternate in [2, 3, 4] {
+        for (slot, name, other) in [
+            (alternate, "MSD_SE_SY_SELECT_POMP_BACK", "MSD_SE_SY_SELECT_POMP"),
+            (1, "MSD_SE_SY_SELECT_POMP", "MSD_SE_SY_SELECT_POMP_BACK"),
+        ] {
+            s.host.events.clear();
+            assert!(s.sim.mario.switch_nozzle(slot));
+            s.step(24);
+            assert_eq!(sound_count(&s, name), 1, "wrong quick-switch cue for slot {slot}");
+            assert_eq!(sound_count(&s, other), 0);
+            assert_eq!(sound_count(&s, "MSD_SE_SY_GET_NOZZLE"), 0);
+            assert_eq!(sound_count(&s, "MSD_SE_MA_SHINING_EFF_CALM2"), 0);
+            assert_eq!(particle_count(&s, "ms_itemget1_a"), 0);
+            s.host.events.clear();
+            assert!(s.sim.mario.switch_nozzle(slot));
+            s.step(1);
+            assert_eq!(sound_count(&s, name), 0, "unchanged nozzle replayed selection");
+        }
+    }
+    s.host.events.clear();
+    assert!(!s.sim.mario.switch_nozzle(99));
+    assert!(s.sim.mario.switch_nozzle(0));
+    assert!(s.sim.mario.switch_nozzle(2));
+    assert!(s.sim.mario.select_nozzle(1)); // Fitted-state refresh stays silent.
+    s.step(1);
+    for name in ["MSD_SE_SY_SELECT_POMP", "MSD_SE_SY_SELECT_POMP_BACK", "MSD_SE_SY_GET_NOZZLE"] {
+        assert_eq!(sound_count(&s, name), 0, "sync/enable/disable played {name}");
+    }
+}
+
+#[test]
 fn only_a_radial_equip_plays_the_nozzle_pickup_sparkle_and_sounds_once() {
     let mut s=Scene::flat();s.sim.mario.give_fludd();
-    // The quick Spray/alternate swap (the game's X, the host's tap) is silent.
+    // Fitted-state synchronization is silent; quick swaps are tested separately.
     assert!(s.sim.mario.select_nozzle(2));s.step(1);
     assert_eq!(s.sim.mario.fludd.as_ref().unwrap().nozzle,NozzleKind::Hover);
     assert_eq!(s.event_count(|e| matches!(e,Event::Particle(c) if c.name=="ms_itemget1_a")),0,"quick swap played pickup");
@@ -4223,6 +4257,8 @@ fn only_a_radial_equip_plays_the_nozzle_pickup_sparkle_and_sounds_once() {
     s.host.events.clear();
     assert!(s.sim.mario.equip_nozzle(3));s.step(1);
     assert_eq!(s.sim.mario.fludd.as_ref().unwrap().nozzle,NozzleKind::Rocket);
+    assert_eq!(sound_count(&s, "MSD_SE_SY_SELECT_POMP"), 0);
+    assert_eq!(sound_count(&s, "MSD_SE_SY_SELECT_POMP_BACK"), 0);
     assert_eq!(s.event_count(|e| matches!(e,Event::Particle(c) if c.name=="ms_itemget1_a" && c.at==libsms::FxAt::JointFollow(1))),1);
     for name in ["MSD_SE_SY_GET_NOZZLE","MSD_SE_MA_SHINING_EFF_CALM2"] {
         assert_eq!(s.event_count(|e| matches!(e,Event::Sound(c) if c.name==name)),1);
