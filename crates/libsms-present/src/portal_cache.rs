@@ -17,10 +17,10 @@ pub const REVEAL: f32 = 0.8;
 pub const HOP: f32 = 0.8;
 pub const LAND: f32 = 0.15;
 pub const COMPLETE: f32 = REVEAL + HOP + LAND;
-// ModelGate.cpp: unkD4 = 0.1 opens on water hits; unkD8 = 0.02 returns
-// the BRK toward swirling colours on each 30 Hz perform. Keep those rates.
-pub const OPEN: f32 = 1.0 / (30.0 * 0.1);
-pub const RETURN_START: f32 = COMPLETE + 3.0;
+// Keep the authored BRK curve, with a slower host reveal. ModelGate.cpp's
+// unkD8 = 0.02 still returns it toward swirling colours at the source closing rate.
+pub const OPEN: f32 = 0.8;
+pub const RETURN_START: f32 = COMPLETE + 2.0;
 pub const CLOSE: f32 = RETURN_START + 1.0 / (30.0 * 0.02);
 const MAGIC: &[u8; 8] = b"SMSPOD05";
 const PIXELS: usize = (SIZE * SIZE * 4) as usize;

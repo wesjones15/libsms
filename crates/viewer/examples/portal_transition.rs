@@ -23,5 +23,5 @@ pub fn main() {
         if frame % 30 == 0 { println!("{time:.2}s: BRK activation {activation:.3}"); }
     }
     std::fs::write(out.join("SOURCE.txt"),
-        "Exact asset: dolpic1.szs:map/map/gate/05_gate01.bmd + 05_gate01.btk + 05_gate01.brk. Material transition, not a particle emitter or effect model; no numeric JPA/efSync ID. Source: sms-main/src/MoveBG/ModelGate.cpp::loadAfter (unkD4=.1, unkD8=.02) and perform (unkD0 * BRK end frame). Original indirect distortion, M mask and Y/U/V TEV stages. Host adaptation: hold the revealed Plaza until three seconds after control returns, then use the source's BRK closing rate. Existing disc-rendered Plaza still is unchanged. Frames at 30 fps.\n").unwrap();
+        "Exact asset: dolpic1.szs:map/map/gate/05_gate01.bmd + 05_gate01.btk + 05_gate01.brk. Material transition, not a particle emitter or effect model; no numeric JPA/efSync ID. Source: sms-main/src/MoveBG/ModelGate.cpp::loadAfter (unkD4=.1, unkD8=.02) and perform (unkD0 * BRK end frame). Original indirect distortion, M mask and Y/U/V TEV stages. Host adaptation: reveal over 0.8 seconds, hold the revealed Plaza until two seconds after control returns, then use the source's BRK closing rate. Existing disc-rendered Plaza still is unchanged. Frames at 30 fps.\n").unwrap();
 }

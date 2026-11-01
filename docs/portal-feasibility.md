@@ -15,13 +15,14 @@ The exact transition is the `05_gate01.bmd` material driven by `05_gate01.brk`,
 with `05_gate01.btk` continuing the texture distortion. It is not an effect
 model or particle emitter and has no numeric JPA/efSync cue. `ModelGate.cpp`
 `loadAfter` sets `unkD4 = 0.1`, `unkD8 = 0.02`; `perform` applies
-`unkD0 * BRK.end` as the colour-animation frame. The button-triggered host uses
-those source rates at 30 Hz: roughly 0.33 s to reveal, 1.67 s to return.
+`unkD0 * BRK.end` as the colour-animation frame. The button-triggered host keeps
+the authored curve, slows its reveal to 0.8 s, and retains the source closing
+rate at 30 Hz (roughly 1.67 s).
 
 The former host cache compressed these to 0.18 s and 0.14 s, which read as image
 swaps. Cache revision `SMSPOD05` / `entrance-v5-*` keeps the authored BRK ramp and
-holds the Plaza for three seconds after the normal 1.75-second control handoff.
-The return starts at 4.75 s and completes near 6.42 s. This extra hold is a host
+holds the Plaza for two seconds after the normal 1.75-second control handoff.
+The return starts at 3.75 s and completes near 5.42 s. This extra hold is a host
 presentation choice. Mario's reveal, spin, landing, control handoff, cleanup and
 the portal's hidden/offscreen sampling rules retain their previous timing.
 
