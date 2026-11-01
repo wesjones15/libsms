@@ -37,7 +37,9 @@ Workspace:
   `SMS_CAM=yaw,pitch,dist`, `SMS_HIDE=body,cap,hands,fludd,nozzle`) takes a screenshot and quits;
   `SMS_R=<0-255>` holds the trigger, `SMS_HANG=1` starts hanging from a ledge, `SMS_HOLD=1`
   starts carrying fruit, `SMS_YOSHI=1` rides Yoshi (`=2`: he stands by), `SMS_B=<frame>` presses
-  B once, `SMS_HIT=<frame>` hurts Mario then (K in play), `SMS_FOCUS=yoshi` points the camera at Yoshi, `SMS_PROF=1` prints where each second's
+  B once, `SMS_HIT=<frame>` hurts Mario then (K in play), `SMS_FOCUS=yoshi` points the camera at Yoshi, `SMS_FLOWER=<frame>` draws
+  the sambo flower (all three clips), the tower and the head for reference captures (the flower with its
+  `flower_orange.bmt` material table unless `SMS_FLOWER_NOTABLE=1`), `SMS_PROF=1` prints where each second's
   frame time went (sim, scene, water). No GL state queries per frame: `glGetIntegerv` waits for
   the GPU (it cost 5 ms a frame while spraying). FLUDD and the nozzle pose from `Mario::fludd_look`, and the drawn
   muzzles go back through `Mario::set_emitters`. It draws the JPA particle effects (the nozzle mist, smoke, bursts, exhaust) through `libsms-present`'s `View` (`fx.rs`, macroquad quads; refraction batches and the water-boost cone model aren't drawn); the `nozzle` example renders them headlessly to a PNG, and the nozzle tests in `view.rs` check them (set `SMS_ASSETS` or they skip). Water is `libsms::water` drawn like the game: coverage into the
