@@ -13,6 +13,13 @@ Keep `SoundHandle`s to move, adjust, stop or refresh sounds.
 `refresh` renews a held sound without restarting its sequence; stale handles return false.
 Initial sound commands remain queued until the SE sequence has created its child tracks.
 
+The host lets `MSD_SE_MV05_DAMAGE_FIRE_01` / `_02` finish before accepting routine
+Mario voice cues. Landing recovery and movement previously replaced these cries
+through category 7's per-emitter limit. This playback policy follows the active
+sound handle through natural completion, rather than using an estimated timeout;
+the down/death voice can still interrupt. The fire tests compare the complete PCM
+with an uninterrupted reference while repeatedly requesting recovery/action voices.
+
 ## Animation cues
 
 `TMario::initModel` in `Player/MarioDraw.cpp` loads `bas/ma_<stem>.bas` beside

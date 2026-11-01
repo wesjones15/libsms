@@ -435,6 +435,8 @@ pub struct SoundSystem {
     voice_set: VoiceSet,
     stream: Option<StreamPlay>,
     voice: Option<SoundHandle>,
+    /// Host playback policy: finish the fire cry before routine Mario voice cues replace it.
+    fire_voice: Option<SoundHandle>,
     out: std::collections::VecDeque<f32>,
     resample_pos: f64,
     /// Overall volumes the host can set.
@@ -492,6 +494,7 @@ impl SoundSystem {
             voice_set: VoiceSet::Mario,
             stream: None,
             voice: None,
+            fire_voice: None,
             out: Default::default(),
             resample_pos: 0.0,
             master: 1.0,
@@ -963,6 +966,9 @@ impl SoundSystem {
         if self.voice.is_some_and(|v| v.slot == s) {
             self.voice = None;
         }
+        if self.fire_voice.is_some_and(|v| v.slot == s) {
+            self.fire_voice = None;
+        }
     }
 
     /// Port 0 = 0 then interrupt 5 on an SE track: the sequence stops the sound.
@@ -1391,6 +1397,16 @@ impl SoundSystem {
     /// Mario's voice (`MSound::startMarioVoice`): tired variants at low health and random
     /// alternates, one voice at a time.
     pub fn mario_voice(&mut self, name: &str) -> Option<SoundHandle> {
+        if let Some(fire) = self.fire_voice {
+            if self.is_playing(fire) {
+                if !name.starts_with("MSD_SE_MV08") {
+                    return None;
+                }
+                // Down/death still takes precedence; movement and landing recovery do not.
+                self.stop(fire, 0);
+            }
+            self.fire_voice = None;
+        }
         if self.voice_set != VoiceSet::Mario {
             if PIANTISSIMO_JUMP_VOICES.contains(&name) {
                 if let Some(sid) = self.id(PIANTISSIMO_JUMP_CUE) {
@@ -1441,6 +1457,9 @@ impl SoundSystem {
         let sid = self.id(pick).or_else(|| self.id(name))?;
         let h = self.play_se(sid, Some(self.player), 0x4D41_5249)?;
         self.voice = Some(h);
+        if matches!(name, "MSD_SE_MV05_DAMAGE_FIRE_01" | "MSD_SE_MV05_DAMAGE_FIRE_02") {
+            self.fire_voice = Some(h);
+        }
         Some(h)
     }
 
