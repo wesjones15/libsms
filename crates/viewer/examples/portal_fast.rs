@@ -4,7 +4,7 @@
 use ::glam::{Mat4 as GMat, Vec3 as G3};
 use libsms_present::{
     View,
-    view::{Draw, Entrance},
+    view::{Draw, Entrance, ENTRANCE_RETURN},
 };
 use macroquad::{
     miniquad::{
@@ -166,7 +166,9 @@ async fn main() {
         let at = if fire.is_some() {
             G3::new(0., 8., -3.)
         } else {
-            G3::new(0., 1.8, 1.4)
+            // Aim through the final rider's X/Z from the very first frame.
+            // The host retains this shot during normal player camera following.
+            G3::new(0., 1.8, ENTRANCE_RETURN.z * 0.01)
         };
         let matrix = GMat::look_at_rh(eye, at, G3::Y);
         let right = matrix.inverse().x_axis.truncate();
@@ -253,6 +255,12 @@ async fn main() {
             fire.draw(time, vec3(fire_center.x, fire_center.y, fire_center.z));
         }
         set_default_camera();
+        if fire.is_none() {
+            draw_line(screen_width() * 0.5, 64., screen_width() * 0.5,
+                screen_height() - 68., 1., Color::new(1., 1., 1., 0.3));
+            draw_text("05_gate01 model | ModelGate.cpp::loadAfter | MarioAutodemo.cpp::warpOut",
+                18., 747., 17., LIGHTGRAY);
+        }
         draw_rectangle(0., 0., 1100., 62., Color::new(0.04, 0.05, 0.08, 0.95));
         draw_text(
             if fire.is_some() {
