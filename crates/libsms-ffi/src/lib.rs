@@ -855,6 +855,9 @@ pub unsafe extern "C" fn sms_sim_new(
         // RoR2 permits the primary Spray while B-diving or belly sliding.
         sim.mario.options.spray_during_dive = true;
         sim.mario.options.redive_after_slide = true;
+        // RoR2's drops are long: FLUDD may pump out of the flail two seconds into a fall, which
+        // Sunshine's `thrown` animation table entry otherwise forbids.
+        sim.mario.options.pump_in_long_fall = true;
         // The decomp's burn hop and recovery, with host audio/escape grace only.
         sim.mario.options.host_fire_reaction = true;
         Some(sim)
@@ -863,8 +866,10 @@ pub unsafe extern "C" fn sms_sim_new(
         Ok(Some(sim)) => Box::into_raw(Box::new(SmsSim {
             water: {
                 let mut water = WaterManager::new(&sim.mario.params);
-                // RoR2 pacing: traverse the same Spray arc 40% faster (1.2 played a bit slow).
+                // RoR2 pacing: traverse the same Spray arc 40% faster (1.2 played a bit slow), and
+                // run the rest of FLUDD's water (body runoff, the other nozzles) at that pace too.
                 water.spray_speed = 1.4;
+                water.water_speed = 1.4;
                 water
             },
             water_ticks: 0,
@@ -1759,7 +1764,9 @@ mod tests {
             assert!(!sim.is_null());
             assert!((*sim).sim.mario.options.spray_during_dive);
             assert!((*sim).sim.mario.options.redive_after_slide);
+            assert!((*sim).sim.mario.options.pump_in_long_fall);
             assert_eq!((*sim).water.spray_speed, 1.4);
+            assert_eq!((*sim).water.water_speed, 1.4);
             assert!((*sim).sim.mario.options.host_fire_reaction);
             assert!(!(*sim).sim.mario.options.fire_panic_run);
             let run = SmsPad {

@@ -211,7 +211,11 @@ carries the drop from the top of the hover (`unk104`) to the floor.
 
 **Long falls** (`landing`, MarioJump.cpp; the `Landing` status is a plain fall, e.g. off a ledge):
 after 240 ticks falling (2 s) Mario flails (`ANIM_THROWN`) and cries out (`MV10B_CRY_JUMP`; the
-game requests it every tick from then, libsms once). Jumps falling as far don't.
+game requests it every tick from then, libsms once). Jumps falling as far don't. The `thrown`
+animation table entry is `isPumpOK` false, so the game allows no FLUDD pump out of the flail;
+`Options::pump_in_long_fall` (off in the core, enabled by the RoR2 FFI, whose drops are long)
+lets B dive, hover, rocket and the other pump moves out of it anyway. B dive and L ground pound
+already leave the flail through `checkBackTrig`.
 
 **Particle effects** (`libsms_present::particles`, from the disc's `particle.szs` `.jpa` files):
 `JPABaseEmitter` and its particles run once per game frame (4 ticks): emission over the volume
@@ -338,12 +342,16 @@ Slots: 0 Spray (`NozzleDeform.prm`), 1 Rocket, 2 Underwater, 3 Yoshi, 4 Hover, 5
   `pump` clip (23 frames, ping-pong) with `upper_on` left off. Both trigger histories (held
   into the dive, or pressed during the slide) pulse; the arms stay in the slide pose.
   `WaterManager::spray_speed` separately accelerates the Spray's flight (core/viewer default
-  1.0, RoR2 FFI 1.2). It advances the same discrete-gravity trajectory and airborne lifetime
-  20% faster, keeping the arc and effective range within a ground-collision frame. Emission
-  count, attack, tank drain, recoil and surface-water drying are unchanged. Both renderers
-  stretch and interpolate with the actual velocity to retain stream coverage. This is a host
-  extension to `ModelWaterManager.cpp::move` / `calcDrawVtx`, not a new particle asset:
-  Spray is `TNozzleDeform::emit`, `NozzleDeform.prm` mType 0, with `timg/watermask.bti`.
+  1.0, RoR2 FFI 1.4). `WaterManager::water_speed` does the same for every other FLUDD water
+  particle — body runoff and the other nozzles (RoR2 FFI also 1.4); Yoshi's juice keeps its
+  rate. Each advances the same
+  discrete-gravity trajectory and airborne lifetime faster, keeping the arc and effective range
+  within a ground-collision frame. Emission count, attack, tank drain, recoil and
+  surface-water drying are unchanged. Both renderers stretch and interpolate with the actual
+  velocity to retain stream coverage. This is a host extension to
+  `ModelWaterManager.cpp::move` / `calcDrawVtx`, not a new particle asset: Spray is
+  `TNozzleDeform::emit`, `NozzleDeform.prm` mType 0, with `timg/watermask.bti`. The wet slide's
+  spray is `MS_M_WATSLIDE_A..C`; `View::set_water_speed` runs those JPA clips at the same rate.
   Viewer comparison: `SMS_WATER_SPEED=1.2`, `SMS_WATER_REACH=2`.
 - **Trigger nozzles** (Rocket, Hover, Turbo; `TNozzleTrigger::movement`): while pumping,
   `fill += 150 * rLevel` each tick, `fill -= mInsidePressureDec`, clamp to `mInsidePressureMax`; on
@@ -399,7 +407,7 @@ Slots: 0 Spray (`NozzleDeform.prm`), 1 Rocket, 2 Underwater, 3 Yoshi, 4 Hover, 5
   these cue names; no ABI layout or network operation changed.
 
 **Water gauge** (`TGCConsole2`, GCConsole2.cpp; ported: `libsms_present::hud`). The layout is
-`game_6/scrn/standard_1.blo` (J2DScreen `blo1`), the `' w_0'` pane at (493, 355) of the 600x480
+`game_6/scrn/standard_1.blo` (J2DScreen `blo1`), the `'w_0'` pane at (493, 355) of the 600x480
 screen, its pictures in `game_6/timg/`. `drawWaterBack`: the splash `w_ba` in blue (TEV C0/C1
 0x0000FF, alpha 0x78 x texture alpha); while a trigger nozzle charges (`isPressureOn`: its
 `unk388 > 0`) the part below `y1 + (1 - p / pMax) * height` is 0xFF3F3F at alpha 0xC8, and at a
@@ -438,7 +446,8 @@ reaction to the host (ror2-mario turns it into damage, by the player's request, 
 
 **Host tuning, not the game**: `WaterManager::reach` multiplies the Spray nozzle's particle speed
 and its horizontal cap (`size`); the landing distance grows about linearly (full R, standing:
-960 units at 1, 1480 at 1.5, 2040 at 2). `Options::cycle_nozzles` makes X step Spray, Hover,
+960 units at 1, 1480 at 1.5, 2040 at 2). `WaterManager::spray_speed` / `water_speed` scale the
+Spray stream and all other water's flight time; `Options::cycle_nozzles` makes X step Spray, Hover,
 Rocket, Turbo, Spray: from Spray the backpack swings out to Hover as usual; from a secondary it
 swings back and, at the halfway point where the game fits Spray, fits the next secondary and
 swings out again; from Turbo it swings back to Spray.

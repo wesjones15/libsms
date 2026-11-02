@@ -639,6 +639,15 @@ pub const SMOKE_EFFECTS: &[&str] = &[
     "ms_m_sphipd_hit_b",
 ];
 
+/// FLUDD water thrown by Mario's movement rather than the nozzle: the wet belly slide's spray.
+/// Host pacing may run these at the same rate as the Spray stream (the rest of the water, the
+/// runoff drips, is in the sim's water manager).
+pub const WATER_EFFECTS: &[&str] = &[
+    "ms_m_watslide_a",
+    "ms_m_watslide_b",
+    "ms_m_watslide_c",
+];
+
 /// Every effect that is a smoke or dust cloud (the `kemuball` billboard; the others in
 /// [`SMOKE_EFFECTS`] are debris, shock rings and marks). Host preference: its puffs spread and
 /// fade at their birth height instead of drifting up, whether from a pound, a landing, a run's
@@ -1685,6 +1694,14 @@ impl View {
     /// Host tuning for smoke only; 1 preserves disc timing, 2 plays it twice as fast.
     pub fn set_smoke_speed(&mut self, speed: f32) {
         for &name in SMOKE_EFFECTS {
+            self.fx.set_speed(name, speed);
+        }
+    }
+
+    /// Host tuning for FLUDD water thrown by movement (the wet slide's spray); 1 preserves disc
+    /// timing. The Spray stream and the runoff drips are scaled in the sim's water manager.
+    pub fn set_water_speed(&mut self, speed: f32) {
+        for &name in WATER_EFFECTS {
             self.fx.set_speed(name, speed);
         }
     }

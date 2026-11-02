@@ -426,8 +426,14 @@ impl Mario {
         let dive_spray = self.options.spray_during_dive
             && f.nozzle == NozzleKind::Spray
             && matches!(self.status, Status::JumpCatch | Status::Catch);
+        // Host extension: the long fall's `thrown` table entry has `isPumpOK` false, so the game
+        // offers no Hover or Rocket out of a fall of more than two seconds. Hosts with long drops
+        // may ask for the pump anyway (the `pump` arm clip draws over the flail).
+        let long_fall_pump = self.options.pump_in_long_fall
+            && self.status == Status::Landing
+            && self.anim.clip == "thrown";
         !self.on_yoshi()
-            && (crate::anim::pump_clip(self.anim.clip).is_some() || dive_spray)
+            && (crate::anim::pump_clip(self.anim.clip).is_some() || dive_spray || long_fall_pump)
             // Host extension: not while a use the host granted this press (`Limits::air_uses`) starts the next one.
             && !(self.status == Status::RocketLanding && np.rocket_type == 1 && !self.limit_granted())
             && !(f.nozzle.is_trigger() && f.trigger_state() == TriggerState::Dead)

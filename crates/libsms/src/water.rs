@@ -88,7 +88,8 @@ pub struct Particle {
     pub attack: i16,
     /// [`WaterManager::reach`] when it left the nozzle (1 for all but Spray's).
     pub reach: f32,
-    /// Flight time scale captured from the Spray tuning; ignored on surfaces.
+    /// Flight time scale captured from the host tuning (Spray's stream or all other water);
+    /// ignored on surfaces.
     pub travel_speed: f32,
     /// From a light press's burst ([`WaterEmit::burst`]).
     pub burst: bool,
@@ -180,6 +181,11 @@ pub struct WaterManager {
     /// Spray-only flight speed, independent of reach. Accelerates its trajectory and
     /// airborne lifetime together, preserving its arc and range. 1: the game's.
     pub spray_speed: f32,
+    /// Flight time scale for every water particle that is not the Spray's stream: body runoff
+    /// (the drips off a wet Mario) and the other FLUDD nozzles' water and splashes. Accelerates
+    /// each trajectory and its airborne lifetime together, preserving its arc and range. 1: the
+    /// game's. Yoshi's juice keeps its own rate.
+    pub water_speed: f32,
     /// A light press's burst has been emitted: lay its wet circles at Mario's feet on the next step,
     /// facing this way (horizontal) with this particle type.
     stamp: Option<(Vec3, usize)>,
@@ -204,6 +210,7 @@ impl WaterManager {
             events: Vec::new(),
             reach: 1.0,
             spray_speed: 1.0,
+            water_speed: 1.0,
             stamp: None,
             seed: 0x2545_F491,
         }
@@ -278,6 +285,8 @@ impl WaterManager {
             };
             let travel_speed = if w.nozzle == crate::params::NozzleKind::Spray && self.spray_speed.is_finite() {
                 self.spray_speed.clamp(1.0, 2.0)
+            } else if w.nozzle != crate::params::NozzleKind::Yoshi && self.water_speed.is_finite() {
+                self.water_speed.clamp(1.0, 2.0)
             } else {
                 1.0
             };
@@ -1023,6 +1032,30 @@ mod tests {
                 assert_eq!(normal.events, fast.events);
             }
         }
+    }
+
+    #[test]
+    fn water_speed_scales_body_runoff_and_other_nozzles_but_not_spray() {
+        let params = Params::default();
+        let mut fast = WaterManager::new(&params);
+        fast.water_speed = 1.2;
+        // Runoff (the drips off a wet Mario) takes the general water scale.
+        let drips = fast.emit_body_drip(Vec3::Y * 200.0, Vec3::X * 3.0);
+        assert!(drips > 0);
+        assert_eq!(fast.particles.len(), drips as usize);
+        assert!(fast.particles.iter().all(|p| p.travel_speed == 1.2));
+        // Spray keeps its own stream scale, whatever the general one is.
+        fast.emit(&emit(Vec3::Z));
+        assert_eq!(fast.particles.last().unwrap().travel_speed, 1.0);
+        // The other nozzles do not.
+        let mut other = emit(Vec3::Z);
+        other.nozzle = NozzleKind::Hover;
+        fast.emit(&other);
+        assert_eq!(fast.particles.last().unwrap().travel_speed, 1.2);
+        // Yoshi's juice is not FLUDD water and keeps its rate.
+        other.nozzle = NozzleKind::Yoshi;
+        fast.emit(&other);
+        assert_eq!(fast.particles.last().unwrap().travel_speed, 1.0);
     }
 
     #[test]

@@ -2600,6 +2600,77 @@ fn a_long_fall_cries_out_once() {
 }
 
 #[test]
+fn a_long_fall_can_still_dive_out() {
+    struct Cliff;
+    impl Host for Cliff {
+        fn ground(&self, p: Vec3) -> Option<libsms::GroundHit> {
+            let h = if p.z < 200.0 { 0.0 } else { -100_000.0 };
+            (p.y >= h).then_some(libsms::GroundHit {
+                height: h,
+                normal: Vec3::Y,
+                flags: libsms::SurfaceFlags::NONE,
+            })
+        }
+    }
+    let mut s = Scene::new(Cliff);
+    s.run_forward();
+    assert!(s.until(600, |m| m.status == Status::Landing));
+    s.step(300);
+    assert_eq!(s.mario().anim.clip, "thrown");
+    s.pad.b = true;
+    s.step(1);
+    s.pad.b = false;
+    assert_eq!(
+        s.mario().status,
+        Status::JumpCatch,
+        "B did not take him out of the long fall"
+    );
+    s.step(10);
+    assert_eq!(s.mario().status, Status::JumpCatch, "the dive ended in mid-air");
+}
+
+#[test]
+fn a_long_fall_can_still_hover_out() {
+    if need_disc() {
+        return;
+    }
+    struct Cliff;
+    impl Host for Cliff {
+        fn ground(&self, p: Vec3) -> Option<libsms::GroundHit> {
+            let h = if p.z < 200.0 { 0.0 } else { -100_000.0 };
+            (p.y >= h).then_some(libsms::GroundHit {
+                height: h,
+                normal: Vec3::Y,
+                flags: libsms::SurfaceFlags::NONE,
+            })
+        }
+    }
+    let mut s = Scene::new(Cliff);
+    // RoR2's host option: the game refuses the pump in the `thrown` flail (its table entry is
+    // `isPumpOK` false); RoR2's long drops must still allow a Hover/Rocket out.
+    s.sim.mario.options.pump_in_long_fall = true;
+    s.sim.mario.give_fludd();
+    {
+        let p = s.sim.mario.params.clone();
+        let f = s.sim.mario.fludd.as_mut().unwrap();
+        f.change_nozzle(NozzleKind::Hover, false, &p);
+        f.refill(&p);
+    }
+    s.run_forward();
+    assert!(s.until(600, |m| m.status == Status::Landing));
+    s.step(300);
+    assert_eq!(s.mario().anim.clip, "thrown");
+    s.pad.r = true;
+    s.pad.r_analog = 255;
+    s.step(2);
+    assert_eq!(
+        s.mario().status,
+        Status::Rocket,
+        "the Hover did not take him out of the long fall"
+    );
+}
+
+#[test]
 fn short_hop_option_keeps_a_tapped_jump_high() {
     fn apex(short_hop: f32, hold_ticks: u32) -> f32 {
         let mut s = Scene::flat();
