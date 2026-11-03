@@ -69,7 +69,9 @@ The generated portrait images are unchanged. Gameplay water uses the unified mes
 
 ABI **40** added the stream/flight exports and network protocol **10** the flight-camera
 replay. ABI **42** added the flower world's item kind 3 (a buried sambo's stand-in flower);
-ABI **43** adds `SmsTuning::corkscrew_hold_degrees`, growing `SmsTuning`. ABI **41** adds
+ABI **43** added `sms_view_set_water_speed`; ABI **44** adds
+`SmsTuning::corkscrew_hold_degrees`, growing `SmsTuning` (so it is not 43: a plugin built
+against 43's 56-byte struct would read past it). ABI **41** adds
 `sms_sim_equip_nozzle` (the radial menu's one-shot nozzle-box
 pickup feedback) beside the silent state-sync `sms_sim_select_nozzle`, with no struct
 layout change; network protocol **11** adds the equip-operation replay.
