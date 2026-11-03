@@ -44,18 +44,33 @@ This is a host extension to `MarioJump.cpp::jumpCatch`, not Sunshine behavior.
 from FLUDD's crosshair/lock target. At roll start it captures camera pitch; later
 changes contribute 35% of their delta, clamped to +/-15 degrees and smoothed at
 120 Hz. Yaw chases the camera at `mRotSp` per tick. Total flight speed is retained
-while vertical/horizontal components change. Stick circles still sustain the
-roll; releasing restores the dive and gravity. Without a host camera, existing
-stick steering and level flight remain. The RoR2 driver supplies camera input
-for the local Mario; the flight-camera operation is recorded separately from
-FLUDD aim and replayed by puppets (network protocol 11).
+while vertical/horizontal components change. Releasing the stick restores the
+dive and gravity. Without a host camera, existing stick steering and level flight
+remain. The RoR2 driver supplies camera input for the local Mario; the
+flight-camera operation is recorded separately from FLUDD aim and replayed by
+puppets (network protocol 11).
+
+How the stick holds the roll is `Options::corkscrew_hold_degrees` (host
+extension). A whole stick circle still starts it, the game's own
+`checkStickRotate` (all four quadrants inside `mStickRotateTime`, 0x18 samples).
+Once started, the roll is held by *sweep*: `Mario::corkscrew_turning` adds each
+tick's change of the stick's own angle (camera yaw taken back out, so a turning
+camera adds nothing) and refreshes the roll each time it has gone that many
+degrees the same way round before `CORKSCREW_GRACE` (24 ticks) runs out; turning
+back on itself starts the sweep again. 60 is the default: a sixth of a turn a
+fifth of a second, so a slow, gentle circle (about one a second) holds the roll
+where the old per-tick whole-circle test demanded a fast, full-tilt one. 360 is
+the strict reading (a whole circle inside one grace window); 0 holds it while the
+stick is merely out of its dead zone.
 
 Tightly cropped generated skill portraits explicitly disable cohesive coverage
 using `sms_view_set_water_cohesive`; they keep their approved mask-edge framing.
 The generated portrait images are unchanged. Gameplay water uses the unified mesh.
 
 ABI **40** added the stream/flight exports and network protocol **10** the flight-camera
-replay. ABI **41** adds `sms_sim_equip_nozzle` (the radial menu's one-shot nozzle-box
+replay. ABI **42** added the flower world's item kind 3 (a buried sambo's stand-in flower);
+ABI **43** adds `SmsTuning::corkscrew_hold_degrees`, growing `SmsTuning`. ABI **41** adds
+`sms_sim_equip_nozzle` (the radial menu's one-shot nozzle-box
 pickup feedback) beside the silent state-sync `sms_sim_select_nozzle`, with no struct
 layout change; network protocol **11** adds the equip-operation replay.
 The nozzle-sound hotfix adds `sms_sim_switch_nozzle` for a player's quick swap:

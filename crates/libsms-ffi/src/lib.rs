@@ -381,6 +381,12 @@ pub struct SmsTuning {
     /// 1: after a knock-down's slide, A, the stick, B, L or R gets Mario up at once; 0: the
     /// game's (the whole get-up clip).
     pub knockdown_cancel: u8,
+    /// The corkscrew dive's hold: degrees the stick must keep sweeping about its circle to hold
+    /// the roll once it has started (60: a sixth of a turn before the grace runs out, which a
+    /// slow circle meets; 360: a whole circle, the strict reading). 0 holds it while the stick
+    /// is merely out of its dead zone. See `Options::corkscrew_hold_degrees`; not the game's
+    /// (host extension).
+    pub corkscrew_hold_degrees: f32,
 }
 
 /// A host's own limits on FLUDD and the slide ([`libsms::Limits`]), for games that bill them
@@ -1564,6 +1570,11 @@ pub unsafe extern "C" fn sms_sim_set_tuning(sim: *mut SmsSim, tuning: *const Sms
         } else {
             0.0
         };
+        o.corkscrew_hold_degrees = if t.corkscrew_hold_degrees.is_finite() {
+            t.corkscrew_hold_degrees.clamp(0.0, 360.0)
+        } else {
+            60.0
+        };
     }
 }
 
@@ -1988,7 +1999,7 @@ mod tests {
         assert_eq!(
             &sizes[..n],
             &[
-                12, 20, 8, 16, 32, 72, 24, 52, 40, 24, 12, 64, 48, 56, 24, 28, 24, 36, 16, 12, 32,
+                12, 20, 8, 16, 32, 72, 24, 52, 40, 24, 12, 64, 48, 60, 24, 28, 24, 36, 16, 12, 32,
                 36, 72, 40, 52, 16, 40
             ]
         );

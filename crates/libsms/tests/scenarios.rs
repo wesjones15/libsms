@@ -3986,6 +3986,54 @@ fn corkscrew_scene(enemies: Vec<(Vec3, f32, f32)>) -> Scene<Enemies> {
     s
 }
 
+/// Once the corkscrew has started, holding it only asks the stick to keep *turning*
+/// (`Options::corkscrew_hold_degrees`, a host extension): a slow, half-tilt circle holds the
+/// roll, where the game's whole-circle test would want a fast, full sweep every fifth of a
+/// second.
+#[test]
+fn a_slow_gentle_circle_holds_the_corkscrew() {
+    let mut s = corkscrew_scene(vec![]);
+    assert_eq!(s.sim.mario.status, Status::JumpCatch, "the circle didn't start the dive");
+    // Half the stick, 90 degrees every 12 ticks: a full circle takes 0.4 s (48 ticks), twice
+    // the 0x18-sample window Sunshine's circle test looks at.
+    let mut angle = std::f32::consts::TAU / 12.0 * 12.0; // where the fast start left it
+    for i in 0..600 {
+        angle += std::f32::consts::TAU / 48.0;
+        s.pad.stick = Vec2::new(angle.cos(), angle.sin()) * 0.5;
+        s.step(1);
+        if s.sim.mario.status != Status::JumpCatch {
+            panic!("the slow circle dropped the corkscrew after {i} ticks");
+        }
+        assert_eq!(s.sim.mario.model_pitch, 0x4000, "it stopped rolling after {i} ticks");
+    }
+    // Centering the stick ends it, as before.
+    s.pad.stick = Vec2::ZERO;
+    s.step(40);
+    assert_ne!(s.sim.mario.model_pitch, 0x4000, "it kept rolling with no stick");
+}
+
+/// `CorkscrewHold = 360` is the strict reading: the stick must circle the whole way in one
+/// grace window, so the same slow circle drops the roll.
+#[test]
+fn a_whole_circle_rule_drops_a_slow_corkscrew() {
+    let mut s = corkscrew_scene(vec![]);
+    s.sim.mario.options.corkscrew_hold_degrees = 360.0;
+    assert_eq!(s.sim.mario.status, Status::JumpCatch);
+    let mut angle = std::f32::consts::TAU;
+    let mut ended = None;
+    for i in 0..200 {
+        angle += std::f32::consts::TAU / 48.0;
+        s.pad.stick = Vec2::new(angle.cos(), angle.sin()) * 0.5;
+        s.step(1);
+        if s.sim.mario.model_pitch != 0x4000 {
+            ended = Some(i);
+            break;
+        }
+    }
+    let ended = ended.expect("a slow circle held a whole-circle rule");
+    assert!(ended < 60, "it took {ended} ticks to drop");
+}
+
 /// Switching to the Spray in a corkscrew turns the water with the roll: the spin's water, round the line of
 /// flight and down, whatever the host aims at.
 #[test]

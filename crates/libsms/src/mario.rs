@@ -271,6 +271,15 @@ pub struct Options {
     /// Yoshi being ridden, and his orange juice in FLUDD. A host turns it on for that skin only;
     /// false: the game's (flutter only on Yoshi, water is water).
     pub yoshi_skin: bool,
+    /// Host extension, the corkscrew dive: how far the stick must keep *turning* about its
+    /// circle to hold the roll once it has started (a full stick circle starts it, the game's
+    /// own circle test). Degrees of sweep the same way round that refresh the roll before
+    /// `air::CORKSCREW_GRACE` runs out: 60 asks for a sixth of a turn a fifth of a second,
+    /// which a slow, gentle circle (about one a second) meets too; 360 is a whole circle in that
+    /// window (the strict reading, a full `mStickRotateTime` history); 0 holds it while the
+    /// stick is merely out of its dead zone. Default 60. The game has no corkscrew (host
+    /// extension).
+    pub corkscrew_hold_degrees: f32,
 }
 
 /// Ticks either side of a stomp in which A counts for [`Options::stomp_jump`].
@@ -303,6 +312,7 @@ impl Default for Options {
             fire_panic_run: false,
             host_fire_reaction: false,
             yoshi_skin: false,
+            corkscrew_hold_degrees: 60.0,
         }
     }
 }
@@ -389,6 +399,11 @@ pub struct Mario {
     /// The corkscrew has spun for 1 second: it burns, and its next hit is the super blow. Kept through
     /// the dive after it; any status change clears it.
     pub(crate) corkscrew_super: bool,
+    /// The stick's own sweep about its circle since the corkscrew last refreshed
+    /// (`Options::corkscrew_hold_degrees`), and the angle it was at last tick: the host
+    /// extension that holds the roll while the stick keeps turning.
+    pub(crate) corkscrew_sweep: i32,
+    pub(crate) corkscrew_stick_prev: Angle,
     /// Ticks left of the blazing slide a burning corkscrew lands in: it keeps its flight speed and its fire.
     pub(crate) blaze: u16,
     /// Where the Rocket started this jump, and whether the spin out of its climb has doubled that
@@ -552,6 +567,8 @@ impl Mario {
             corkscrew_age: 0,
             corkscrew_used: false,
             corkscrew_super: false,
+            corkscrew_sweep: 0,
+            corkscrew_stick_prev: 0,
             blaze: 0,
             rocket_start_y: 0.0,
             rocket_super: false,
@@ -1202,6 +1219,48 @@ impl Mario {
             Some(if inc > dec { 2 } else { 3 })
         } else {
             None
+        }
+    }
+
+    /// The stick's own angle about its circle: `intended_yaw` is world-space (the camera's yaw
+    /// added), so take the camera back out and the camera turning stops mattering.
+    fn stick_angle(&self) -> Angle {
+        self.intended_yaw.wrapping_sub(self.camera_yaw)
+    }
+
+    /// Starts the corkscrew's hold sweep (`Options::corkscrew_hold_degrees`): the roll refreshes
+    /// once the stick has swept that far from here.
+    pub(crate) fn begin_corkscrew_hold(&mut self) {
+        self.corkscrew_sweep = 0;
+        self.corkscrew_stick_prev = self.stick_angle();
+    }
+
+    /// Host extension: holds the corkscrew dive while the stick keeps *turning* about its
+    /// circle. Adds this tick's stick sweep and returns true each time it has gone
+    /// `Options::corkscrew_hold_degrees` the same way round — a slow, gentle circle refreshes it
+    /// too, where Sunshine's whole-circle `checkStickRotate` (24 samples) would need a fast one.
+    /// The stick back inside its dead zone, or a sweep that turns back on itself, is no hold.
+    pub(crate) fn corkscrew_turning(&mut self) -> bool {
+        let need = (self.options.corkscrew_hold_degrees.clamp(0.0, 360.0) / 360.0 * 65536.0) as i32;
+        if self.intended_mag <= 0.0 {
+            return false;
+        }
+        if need == 0 {
+            return true;
+        }
+        let now = self.stick_angle();
+        let d = now.wrapping_sub(self.corkscrew_stick_prev) as i32;
+        self.corkscrew_stick_prev = now;
+        if d != 0 && self.corkscrew_sweep != 0 && (d > 0) != (self.corkscrew_sweep > 0) {
+            // Turned back: the sweep starts again from here.
+            self.corkscrew_sweep = 0;
+        }
+        self.corkscrew_sweep += d;
+        if self.corkscrew_sweep.abs() >= need {
+            self.corkscrew_sweep = 0;
+            true
+        } else {
+            false
         }
     }
 

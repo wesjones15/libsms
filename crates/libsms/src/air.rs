@@ -367,6 +367,7 @@ impl Mario {
         self.corkscrew_camera_start = self.flight_camera.map(|a| a.pitch);
         self.corkscrew_age = 0;
         self.corkscrew_used = true;
+        self.begin_corkscrew_hold();
         // One call-out of the spin jump's, not the dive's grunt; the animation's own cues are muted.
         self.events.retain(|e| !matches!(e, Event::Jump(crate::event::JumpKind::Dive)));
         self.events.push(Event::Sound(crate::event::SoundCue {
@@ -551,6 +552,7 @@ impl Mario {
             self.corkscrew_camera_start = self.flight_camera.map(|a| a.pitch);
             self.corkscrew_age = 0;
             self.corkscrew_used = true;
+            self.begin_corkscrew_hold();
             self.corkscrew_speed = self.forward_vel;
             self.vel.y = 0.0;
             self.events.push(Event::Sound(crate::event::SoundCue {
@@ -562,12 +564,16 @@ impl Mario {
         if self.corkscrew > 0 {
             // The spin jump's own motion laid flat: tipped head first along the dive, spinning about
             // his length at the spin jump's rate (4096 a tick), then the plain dive.
-            // It goes on at the same height while the stick keeps circling; once it stops, the dive.
+            // It goes on at the same height while the stick keeps turning about its circle; once it
+            // stops, the dive.
             self.corkscrew_age = self.corkscrew_age.saturating_add(1);
             if self.corkscrew_age >= CORKSCREW_SUPER_TICKS {
                 self.corkscrew_super = true;
             }
-            if self.check_stick_rotate().is_some() {
+            // Host extension: a slow circle holds it as long as it keeps turning
+            // (`Options::corkscrew_hold_degrees` a refresh); the game's whole-circle test would
+            // ask for a fast one every tick.
+            if self.corkscrew_turning() {
                 self.corkscrew = CORKSCREW_GRACE;
             } else {
                 self.corkscrew -= 1;

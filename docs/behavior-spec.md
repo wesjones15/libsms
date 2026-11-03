@@ -847,3 +847,7 @@ identity, viewer proof command, unified coverage mesh/host contract and ABI 40.
 Both ordinary and Turbo corkscrews follow host camera yaw and a smoothed 35% change
 from their starting camera pitch, capped at +/-15 degrees. This is host behavior;
 without camera input the previous stick steering and level flight remain.
+Holding the roll no longer repeats the whole-circle test every tick: it asks the stick
+to keep turning `Options::corkscrew_hold_degrees` (60 by default) the same way round
+inside the grace (`Mario::corkscrew_turning`, host extension; 360 is the strict
+reading). A whole circle still starts it.
