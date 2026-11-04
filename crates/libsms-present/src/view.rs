@@ -506,6 +506,9 @@ pub struct View {
     /// model space, for a host that mounts its own props on the body. Indexed by
     /// [`Anchor`]; `None` where the current skin has no such part.
     anchors: [Option<Mat4>; ANCHOR_COUNT],
+    /// The host's VR arms ([`View::set_vr_arms`]), and each body's arm frames once found.
+    vr_arms: bool,
+    vr_arm_frames: Vec<((u32, usize), Option<Mat4>)>,
 }
 
 /// Host-facing body attachment points shared by every skin (the FFI's `sms_view_anchor`
@@ -1257,6 +1260,8 @@ impl View {
             helmet_on: false,
             assets_dir: dir.to_path_buf(),
             anchors: [None; ANCHOR_COUNT],
+            vr_arms: false,
+            vr_arm_frames: Vec::new(),
         })
     }
 
@@ -1436,6 +1441,8 @@ impl View {
             chest: None,
             center: None,
             anchors: [None; ANCHOR_COUNT],
+            vr_arms: false,
+            vr_arm_frames: Vec::new(),
             fx: Particles::default(),
             movement_effects: false,
             pound_flames: false,
@@ -1533,6 +1540,8 @@ impl View {
             chest: None,
             center: None,
             anchors: [None; ANCHOR_COUNT],
+            vr_arms: false,
+            vr_arm_frames: Vec::new(),
             fx,
             movement_effects: true,
             pound_flames: false,
@@ -1811,6 +1820,18 @@ impl View {
         }
         self.helmet_on = on;
         true
+    }
+
+    /// Also draws each forearm and glove on its own, for a host that puts them on a VR
+    /// player's controllers (the body itself is then the host's to leave out). Each is cut
+    /// from the body by its skin weights: a triangle whose three vertices all hang mostly
+    /// (half or more) from the elbow down (`jnt_arm_R2`, `jnt_hand_R`, `M_hand1_R`, and the
+    /// left's). The body's own glove shapes are kept even while the animation shows the
+    /// separate hand models (`changeHand`). Each draw is posed as the body is but given in its
+    /// own arm space ([`vr_arm_frame`]), keyed [`VR_ARM_KEY`] + side (0 right, 1 left) under
+    /// the body model; Mario and the same-rig skins only.
+    pub fn set_vr_arms(&mut self, on: bool) {
+        self.vr_arms = on;
     }
 
     /// The model a same-rig skin draws as its body, when that skin is current and loaded.
@@ -2514,6 +2535,10 @@ impl View {
         // Luigi's HSD body: CPU-skinned into the same buffers as the parts, ×10 from Melee
         // units into Sunshine's decomp units, drawn as one instance at the index after the J3D
         // models (dynamic, so the entrance's own extra models keep their earlier indices).
+        if self.vr_arms && !luigi_body && !yoshi_body {
+            let body = rig_body.map_or(models::BODY, |(m, _)| m);
+            self.push_vr_arms(body, &joints, flags, &hidden, rig_body.is_none());
+        }
         if let (Some(luigi), Some(world)) = (self.luigi.as_ref(), luigi_world.as_ref()) {
             let (first_vertex, first_color) = luigi.skin_into(
                 world,
@@ -2542,6 +2567,148 @@ impl View {
             sim.mario.set_emitters(kind, &muzzles);
         }
         sim.mario.juice_mouth = mouth_route;
+    }
+}
+
+/// The low byte of a VR arm draw's key ([`View::set_vr_arms`]): + 0 right, + 1 left.
+pub const VR_ARM_KEY: u64 = 0x10;
+/// Each side's elbow (the forearm's own joint) and wrist on Mario's rig, right then left.
+const VR_ARM_JOINTS: [(&str, &str); 2] = [("jnt_arm_R2", "jnt_hand_R"), ("jnt_arm_L2", "jnt_hand_L")];
+
+/// `root` and every joint below it.
+fn joint_subtree(bmd: &Bmd, root: usize) -> Vec<bool> {
+    let mut set = vec![false; bmd.joints.len()];
+    for j in 0..bmd.joints.len() {
+        let mut at = Some(j);
+        while let Some(i) = at {
+            if i == root {
+                set[j] = true;
+                break;
+            }
+            at = bmd.joints[i].parent;
+        }
+    }
+    set
+}
+
+/// How much of a vertex hangs from the joints in `set`.
+fn skin_weight(bmd: &Bmd, skin: libsms_assets::bmd::Skin, set: &[bool]) -> f32 {
+    use libsms_assets::bmd::Skin;
+    let on = |j: u16| set.get(j as usize).copied().unwrap_or(false);
+    match skin {
+        Skin::Joint(j) => on(j) as u8 as f32,
+        Skin::Envelope(e) => bmd
+            .envelopes
+            .get(e as usize)
+            .map_or(0.0, |ws| ws.iter().filter(|(j, _)| on(*j)).map(|(_, w)| *w).sum()),
+    }
+}
+
+/// A VR arm's own space, as a matrix from it into the wrist joint's: the origin at the middle
+/// of the glove (its vertices' centre in the bind pose), +z along the forearm toward the
+/// fingers, +y the bind pose's up, +x = y × z (right-handed; a host mirroring X, as ModelView
+/// does, gets x right, y up, z forward: a VR controller's own axes). The forearm hangs back
+/// along -z.
+fn vr_arm_frame(bmd: &Bmd, batches: &[Batch], elbow: usize, wrist: usize) -> Option<Mat4> {
+    let bind = bmd.bind_world();
+    let pose = Pose::new(bmd, Mat4::IDENTITY, &bind);
+    let hand = joint_subtree(bmd, wrist);
+    let (mut sum, mut n) = (Vec3::ZERO, 0u32);
+    for b in batches {
+        for v in &b.vertices {
+            if skin_weight(bmd, v.skin, &hand) >= 0.5 {
+                sum += pose.skin(v).0;
+                n += 1;
+            }
+        }
+    }
+    if n == 0 {
+        return None;
+    }
+    let centre = sum / n as f32;
+    let forward = (bind.get(wrist)?.w_axis.truncate() - bind.get(elbow)?.w_axis.truncate()).try_normalize()?;
+    let up = (Vec3::Y - forward * forward.dot(Vec3::Y))
+        .try_normalize()
+        .or_else(|| (Vec3::Z - forward * forward.dot(Vec3::Z)).try_normalize())?;
+    let right = up.cross(forward);
+    let frame = Mat4::from_cols(right.extend(0.0), up.extend(0.0), forward.extend(0.0), centre.extend(1.0));
+    Some(bind.get(wrist)?.inverse() * frame)
+}
+
+impl View {
+    /// The VR arms for `body` ([`View::set_vr_arms`]), after its own draw this frame: the same
+    /// vertices and batches, every one off the arm collapsed to a point.
+    fn push_vr_arms(&mut self, body: u32, joints: &[Mat4], flags: u8, hidden: &[usize], mario_body: bool) {
+        let body_key = (body as u64) << 56;
+        let Some((body_vertex, body_color)) = self
+            .draws
+            .iter()
+            .rev()
+            .find(|d| d.key == body_key)
+            .map(|d| (d.first_vertex as usize, d.first_color as usize))
+        else {
+            return;
+        };
+        let Some(mdl) = self.models.get(body as usize) else { return };
+        let bmd = &mdl.bmd;
+        let pose = Pose::new(bmd, Mat4::IDENTITY, joints);
+        for (side, (elbow, wrist)) in VR_ARM_JOINTS.iter().enumerate() {
+            let (Some(elbow), Some(wrist)) = (bmd.joint(elbow), bmd.joint(wrist)) else { continue };
+            let frame = match self.vr_arm_frames.iter().find(|(k, _)| *k == (body, side)) {
+                Some((_, f)) => *f,
+                None => {
+                    let f = vr_arm_frame(bmd, &mdl.batches, elbow, wrist);
+                    self.vr_arm_frames.push(((body, side), f));
+                    f
+                }
+            };
+            let (Some(frame), Some(wrist_now)) = (frame, joints.get(wrist)) else { continue };
+            let to_arm = (*wrist_now * frame).inverse();
+            let arm = joint_subtree(bmd, elbow);
+            let first_vertex = self.positions.len() as u32;
+            let first_color = self.colors.len() as u32;
+            let mut at = body_vertex;
+            for (bi, b) in mdl.batches.iter().enumerate() {
+                // Mario's body hides its cap shape and the Shine Shirt as the body does, but keeps
+                // its own gloves (BODY_HAND_SHAPES) whichever hands the clip shows.
+                let shown = if mario_body {
+                    !(hidden.contains(&b.shape) && !BODY_HAND_SHAPES.contains(&b.shape))
+                } else {
+                    !hidden.contains(&b.shape)
+                } && bmd.materials[b.material].cull != Cull::All;
+                for tri in b.vertices.chunks(3) {
+                    let keep = shown && tri.len() == 3 && tri.iter().all(|v| skin_weight(bmd, v.skin, &arm) >= 0.5);
+                    for v in tri {
+                        if keep {
+                            let (p, n) = pose.skin(v);
+                            self.positions.push(to_arm.transform_point3(p));
+                            self.normals.push(to_arm.transform_vector3(n).normalize_or_zero());
+                        } else {
+                            self.positions.push(Vec3::ZERO);
+                            self.normals.push(Vec3::Y);
+                        }
+                        let uv = self.uvs.get(at).copied().unwrap_or([v.uv[0].x, v.uv[0].y]);
+                        self.uvs.push(uv);
+                        at += 1;
+                    }
+                }
+                let tex = self.texture_ids.get(body_color + bi).copied().unwrap_or(-1);
+                let color = self.colors.get(body_color + bi).copied().unwrap_or(mdl.batch_color[bi]);
+                self.texture_ids.push(tex);
+                self.colors.push(color);
+            }
+            self.draws.push(Draw {
+                key: body_key | (VR_ARM_KEY + side as u64),
+                model: body,
+                kind: body as u8,
+                flags,
+                pos: Vec3::ZERO,
+                rot: Quat::IDENTITY,
+                first_vertex,
+                first_color,
+                alpha: 1.0,
+            });
+        }
     }
 }
 
@@ -3736,6 +3903,35 @@ mod tests {
             let pelvis = v.anchor(2).unwrap_or_else(|| panic!("{skin:?}: no pelvis anchor"));
             assert!(head.w_axis.y > pelvis.w_axis.y, "{skin:?}: head {head:?} is not above pelvis {pelvis:?}");
             assert!(v.anchor(7).is_some(), "{skin:?}: no left hand anchor");
+        }
+    }
+
+
+    /// The VR arms: one draw a side, both cut from the body (most of each glove and forearm kept,
+    /// nothing else), the glove in front of the forearm in arm space.
+    #[test]
+    fn vr_arms_are_the_forearms_and_gloves() {
+        let Some(dir) = libsms::assets::find(None) else {
+            eprintln!("SKIP: no assets/ (set SMS_ASSETS)");
+            return;
+        };
+        let a = libsms::Assets::load(&dir);
+        let mut sim = Sim::new(a.params, a.anim_table, Vec3::ZERO, 0);
+        let mut v = View::load(&dir).unwrap();
+        v.update(&mut sim, 0.0);
+        assert!(v.draws.iter().all(|d| d.key & 0xFF < VR_ARM_KEY), "no arms until asked");
+        v.set_vr_arms(true);
+        v.update(&mut sim, 0.0);
+        let arms: Vec<Draw> = v.draws.iter().filter(|d| d.key & 0xFF >= VR_ARM_KEY).copied().collect();
+        assert_eq!(arms.len(), 2);
+        let n = (arms[1].first_vertex - arms[0].first_vertex) as usize;
+        for arm in &arms {
+            let kept: Vec<Vec3> = v.positions[arm.first_vertex as usize..][..n].iter().copied().filter(|p| *p != Vec3::ZERO).collect();
+            assert!(kept.len() > 200 && kept.len() < n / 4, "{} of {n} vertices kept", kept.len());
+            let lo = kept.iter().fold(Vec3::INFINITY, |a, p| a.min(*p));
+            let hi = kept.iter().fold(Vec3::NEG_INFINITY, |a, p| a.max(*p));
+            assert!(-lo.z > hi.z, "the forearm hangs back along -z: {lo:?}..{hi:?}");
+            assert!(hi.z > 5.0 && lo.z < -15.0, "glove ahead, forearm behind: {lo:?}..{hi:?}");
         }
     }
 }

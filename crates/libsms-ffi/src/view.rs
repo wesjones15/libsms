@@ -769,6 +769,20 @@ pub unsafe extern "C" fn sms_view_set_paused(view: *mut SmsView, paused: u8) {
     }
 }
 
+/// Also draws each forearm and glove on its own (nonzero) for a VR host to put on the
+/// player's controllers: [`libsms_present::View::set_vr_arms`]. Each is a draw of the body
+/// model keyed `VR_ARM_KEY` (0x10) + side (0 right, 1 left) in its low byte, posed in its own
+/// arm space (glove centre at the origin, +z toward the fingers, +y up), so the host places it
+/// at the controller instead of at Mario. Mario and the same-rig skins only.
+///
+/// # Safety
+/// `view` from [`sms_view_new`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_set_vr_arms(view: *mut SmsView, on: u8) {
+    // SAFETY: as documented.
+    unsafe { with_view(view, (), |v| v.view.set_vr_arms(on != 0)) }
+}
+
 /// # Safety
 /// `view` from [`sms_view_new`] and not used afterwards. Null is ignored.
 #[unsafe(no_mangle)]
