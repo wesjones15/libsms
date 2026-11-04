@@ -52,7 +52,10 @@ Workspace:
   with raw GL instead.
 - `crates/libsms-present/`: presentation for hosts that draw Mario themselves: `view` (the
   disc's body, hands, cap, FLUDD and nozzles posed from the sim like the viewer's
-  `mario_model.rs`, CPU-skinned into one vertex buffer in Mario's model space), `tev` (each
+  `mario_model.rs`, CPU-skinned into one vertex buffer in Mario's model space; `set_vr_arms`
+  adds each forearm and glove cut from the body by skin weight, keyed `VR_ARM_KEY` + side and
+  posed in its own arm space for a VR host's controllers, `examples/vr_arms.rs` in the viewer
+  captures them), `tev` (each
   material's TEV run on the CPU per texel and baked into one RGBA texture, at full diffuse
   light with no specular: Mario's materials light themselves in TEV with a toon ramp read at
   the lit colour (`GX_TG_SRTG`) plus a highlight; env-only materials bake over the env map's
