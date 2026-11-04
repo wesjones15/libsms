@@ -95,6 +95,28 @@ pub struct Luigi {
 }
 
 impl Luigi {
+    /// His body in its bind pose as [`Luigi::skin_into`] lays it out (×10, in Sunshine decomp
+    /// units, with his index list), for his VR arms; his sides are the common bone table's.
+    pub fn vr_mesh(&self) -> (libcommon::vr_arms::Mesh, [Option<libcommon::vr_arms::Side>; 2]) {
+        let ten = Mat4::from_scale(Vec3::splat(10.0));
+        let bind = self.model.bind_world();
+        let mut m = libcommon::vr_arms::Mesh {
+            parents: self.model.joints.iter().map(|j| j.parent).collect(),
+            bind: bind.iter().map(|b| (ten * *b).to_cols_array()).collect(),
+            ..Default::default()
+        };
+        for hb in &self.batches {
+            let batch = &self.model.batches[hb.src];
+            for ((p, _), v) in self.model.skin(hb.src, &bind).into_iter().zip(&batch.vertices) {
+                m.positions.push((p * 10.0).into());
+                m.weights.push(v.weights.iter().map(|&(j, w)| (j as u16, w)).collect());
+            }
+        }
+        m.triangles = self.indices.chunks_exact(3).map(|t| [t[0], t[1], t[2]]).collect();
+        let sides = libssbm_assets::vr_arms::sides(&self.parts);
+        (m, sides)
+    }
+
     /// Loads Luigi's HSD mesh from the Melee cache and prepares its static host mesh; `sms_dir`
     /// supplies the Sunshine rig and clips the retarget needs. `textures` gains one plain baked
     /// texture per textured batch.

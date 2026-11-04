@@ -21,6 +21,7 @@ pub mod screenfx;
 pub mod tev;
 pub mod treasure;
 pub mod view;
+pub mod vr_arms;
 pub mod water;
 pub mod water_hit;
 

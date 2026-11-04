@@ -109,6 +109,42 @@ pub unsafe extern "C" fn sms_extract(
     ok
 }
 
+/// First run, after extraction: cuts every skin's VR arms (forearms and hands: libcommon's
+/// `vr_arms`) into `dir/vr_arms/`, keeping cuts already there: Mario, Piantissimo and Yoshi from
+/// `dir`, and Luigi when `melee_dir` (null to skip him) holds his Melee files. Returns 1 with
+/// each body's note in `msg`.
+///
+/// # Safety
+/// `dir` and `melee_dir` must be null or nul-terminated strings; `msg` null or writable for
+/// `msg_len` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_bake_vr_arms(
+    dir: *const c_char,
+    melee_dir: *const c_char,
+    msg: *mut u8,
+    msg_len: u32,
+) -> u8 {
+    let result = catch_unwind(|| -> Result<String, String> {
+        // SAFETY: as documented.
+        let dir = unsafe { path_arg(dir) }.ok_or("missing asset directory")?;
+        // SAFETY: as documented.
+        let melee = unsafe { path_arg(melee_dir) };
+        let mut view = libsms_present::View::load(&dir).map_err(|e| e.to_string())?;
+        for skin in libsms_present::view::Skin::ALL {
+            view.load_skin(skin, melee.as_deref());
+        }
+        Ok(view.bake_vr_arms().join("; "))
+    });
+    let (ok, text) = match result {
+        Ok(Ok(text)) => (1, text),
+        Ok(Err(text)) => (0, text),
+        Err(_) => (0, "the VR arm bake panicked".into()),
+    };
+    // SAFETY: as documented.
+    unsafe { write_str(&text, msg, msg_len) };
+    ok
+}
+
 /// Fills in the optional pieces of an otherwise complete asset folder (the screen wipes' pictures)
 /// from the user's disc: `msg` says what was written. Returns 1 if the folder has them all after.
 ///

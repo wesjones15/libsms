@@ -9,6 +9,7 @@ name = "sms-viewer"
 path = "src/main.rs"
 
 [dependencies]
+libcommon.workspace = true
 libsms.workspace = true
 macroquad = "0.4"
 libsms-assets.workspace = true

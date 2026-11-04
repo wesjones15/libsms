@@ -93,6 +93,20 @@ fn main() {
         ("wet slide", vec![(run, 60), (Pad { b: true, ..run }, 2), (run, 70)]),
     ];
     let mut canvas = Canvas::new(P * 3, P * poses.len());
+    // The body model's triangles: each batch's index list, offset by its first vertex.
+    let tris: Vec<[usize; 3]> = {
+        let (mut out, mut first) = (Vec::new(), 0usize);
+        for b in &view.models[0].batches {
+            out.extend(b.indices.chunks_exact(3).map(|t| [first + t[0] as usize, first + t[1] as usize, first + t[2] as usize]));
+            first += b.vertices.len();
+        }
+        out
+    };
+    // A triangle drawn from `base` that isn't collapsed or snapped flat.
+    let live = |pos: &[Vec3], base: usize, t: &[usize; 3]| {
+        let [a, b, c] = t.map(|k| pos[base + k]);
+        (b - a).cross(c - a).length_squared() > 1e-8
+    };
     for (row, (name, presses)) in poses.iter().enumerate() {
         for (pad, ticks) in presses {
             for _ in 0..*ticks {
@@ -127,45 +141,37 @@ fn main() {
         }
         let centre = (lo + hi) * 0.5;
         let body_scale = P as f32 * 0.9 / (hi - lo).max_element();
-        for t in (0..n).step_by(3) {
-            let i = body.first_vertex as usize + t;
-            if pos[i] == Vec3::ZERO && pos[i + 1] == Vec3::ZERO && pos[i + 2] == Vec3::ZERO {
+        for t in &tris {
+            let b0 = body.first_vertex as usize;
+            if !live(pos, b0, t) {
                 continue;
             }
-            let side = (0..2).find(|&s| pos[arms[s].first_vertex as usize + t] != Vec3::ZERO);
+            let side = (0..2).find(|&s| live(pos, arms[s].first_vertex as usize, t));
             let base = match side { Some(0) => [1.0, 0.25, 0.25], Some(_) => [0.3, 0.45, 1.0], None => [0.55, 0.55, 0.55] };
-            let col = shade(base, nrm[i], Vec3::Z);
-            canvas.tri(
-                to(pos[i], 0, row, body_scale, centre, (0, 1)),
-                to(pos[i + 1], 0, row, body_scale, centre, (0, 1)),
-                to(pos[i + 2], 0, row, body_scale, centre, (0, 1)),
-                col,
-            );
+            let col = shade(base, nrm[b0 + t[0]], Vec3::Z);
+            let [a, b, c] = t.map(|k| to(pos[b0 + k], 0, row, body_scale, centre, (0, 1)));
+            canvas.tri(a, b, c, col);
         }
         // 2 and 3: the arms in arm space, both sides overlaid, with the origin's axes.
         let arm_scale = P as f32 * 0.45 / 40.0;
         for (panel, axes, toward) in [(1usize, (2usize, 1usize), Vec3::X), (2, (0, 2), Vec3::Y)] {
             for (s, arm) in arms.iter().enumerate() {
-                for t in (0..n).step_by(3) {
-                    let i = arm.first_vertex as usize + t;
-                    if pos[i] == Vec3::ZERO && pos[i + 1] == Vec3::ZERO && pos[i + 2] == Vec3::ZERO {
+                for t in &tris {
+                    let b0 = arm.first_vertex as usize;
+                    if !live(pos, b0, t) {
                         continue;
                     }
                     if panel == 1 {
                         kept[s] += 1;
-                        for k in 0..3 {
-                            ext[s].0 = ext[s].0.min(pos[i + k]);
-                            ext[s].1 = ext[s].1.max(pos[i + k]);
+                        for &k in t {
+                            ext[s].0 = ext[s].0.min(pos[b0 + k]);
+                            ext[s].1 = ext[s].1.max(pos[b0 + k]);
                         }
                     }
                     let base = if s == 0 { [1.0, 0.35, 0.35] } else { [0.4, 0.55, 1.0] };
-                    let col = shade(base, nrm[i], toward);
-                    canvas.tri(
-                        to(pos[i], panel, row, arm_scale, Vec3::ZERO, axes),
-                        to(pos[i + 1], panel, row, arm_scale, Vec3::ZERO, axes),
-                        to(pos[i + 2], panel, row, arm_scale, Vec3::ZERO, axes),
-                        col,
-                    );
+                    let col = shade(base, nrm[b0 + t[0]], toward);
+                    let [a, b, c] = t.map(|k| to(pos[b0 + k], panel, row, arm_scale, Vec3::ZERO, axes));
+                    canvas.tri(a, b, c, col);
                 }
             }
             let o = to(Vec3::ZERO, panel, row, arm_scale, Vec3::ZERO, axes);
