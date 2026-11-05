@@ -16,6 +16,7 @@ pub mod event;
 pub mod extract;
 pub mod fludd;
 pub mod fludd_anim;
+pub mod goop;
 pub mod host;
 pub mod input;
 pub mod limits;

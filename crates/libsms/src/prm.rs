@@ -47,6 +47,11 @@ impl Prm {
         self.entries.is_empty()
     }
 
+    /// Every key and its raw big-endian value, in no particular order.
+    pub fn entries(&self) -> impl Iterator<Item = (&str, &[u8])> {
+        self.entries.iter().map(|(k, v)| (k.as_str(), v.as_slice()))
+    }
+
     pub fn contains(&self, key: &str) -> bool {
         self.entries.contains_key(key)
     }
