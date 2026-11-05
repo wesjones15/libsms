@@ -35,6 +35,9 @@ pub enum Event {
     /// Sinking in brown goop this tick (`checkSink`): `SMS_EmitSinkInPollutionEffect` at his
     /// feet (the `ms_m_ashios` goop around them).
     GoopSink { pos: Vec3 },
+    /// Mario spreads goop (`gpPollution->pollute`: running on oil): the host paints `radius`
+    /// of `kind` at `pos`.
+    GoopPaint { pos: Vec3, radius: f32, kind: crate::goop::GoopKind },
     /// FLUDD nozzle changed.
     NozzleChanged(NozzleKind),
     /// The hover/rocket trigger finished charging and fired (`TNozzleTrigger::movement`).

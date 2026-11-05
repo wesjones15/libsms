@@ -45,10 +45,18 @@ pub enum DamageKind {
     LampTrapSpike,
     /// Shadow Mario (`TEnemyMario`).
     EnemyMario,
+    /// Burning goop (`mDmgParamsGraffitoFire`, `checkGraffitoFire`).
+    GraffitoFire,
+    /// Electric goop (`mDmgParamsGraffitoElec`, `electricDamage`).
+    GraffitoElec,
+    /// Poison goop (`mDmgParamsGraffitoPoison`; no check uses it in the game).
+    GraffitoPoison,
+    /// Lava goop (`mDmgParamsGraffitoLava`; `checkGraffitoLava` is empty in the game).
+    GraffitoLava,
 }
 
 impl DamageKind {
-    pub const ALL: [DamageKind; 13] = [
+    pub const ALL: [DamageKind; 17] = [
         DamageKind::EnemyCommon,
         DamageKind::Hamukuri,
         DamageKind::Namekuri,
@@ -62,6 +70,10 @@ impl DamageKind {
         DamageKind::LampTrapIron,
         DamageKind::LampTrapSpike,
         DamageKind::EnemyMario,
+        DamageKind::GraffitoFire,
+        DamageKind::GraffitoElec,
+        DamageKind::GraffitoPoison,
+        DamageKind::GraffitoLava,
     ];
 }
 
@@ -113,7 +125,7 @@ impl Mario {
 
     /// Down for good (`MARIO_FLAG_GAME_OVER`).
     pub fn is_down(&self) -> bool {
-        self.status == Status::DownLoser
+        matches!(self.status, Status::DownLoser | Status::SinkLoser)
     }
 
     /// An enemy at `from` hits Mario with one of the disc's damage kinds (`receiveMessage`,
@@ -181,7 +193,7 @@ impl Mario {
     }
 
     /// The fire hit: `FIRE_DOWN` with its sound and flames.
-    fn start_fire_down(&mut self) {
+    pub(crate) fn start_fire_down(&mut self) {
         if self.guarded_fire() && (self.fire_rearm_ticks > 0 || self.is_wet()) {
             return;
         }
@@ -341,7 +353,7 @@ impl Mario {
     }
 
     /// `decHP`.
-    fn dec_hp(&mut self, hp: i16) {
+    pub(crate) fn dec_hp(&mut self, hp: i16) {
         self.health -= hp;
         if self.health <= 0 {
             self.health = 0;
@@ -356,7 +368,7 @@ impl Mario {
     }
 
     /// `loserExec`: out of health. Yoshi, if any, runs off.
-    fn loser_exec(&mut self) {
+    pub(crate) fn loser_exec(&mut self) {
         if self.is_down() {
             return;
         }

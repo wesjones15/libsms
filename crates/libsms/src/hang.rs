@@ -119,6 +119,8 @@ impl Mario {
             Status::DownLoser => self.loser_down(),
             Status::WinDemo => self.win_demo(host),
             Status::Carried => self.carried_pose(),
+            Status::ElectricDamage => self.electric_damage(host),
+            Status::SinkLoser => self.sink_loser(host),
             _ => false,
         }
     }

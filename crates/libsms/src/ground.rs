@@ -440,6 +440,9 @@ impl Mario {
             SlipFore => self.slip_fore(host),
             SlipBack => self.slip_back(host),
             Catch => self.catching(host),
+            OilRun => self.oil_run(host),
+            OilSlip => self.oil_slip(host),
+            OilSlope => self.oil_slope(host),
             JumpSlip => self.jump_slip(
                 host,
                 JumpSlipRec {
@@ -911,7 +914,7 @@ impl Mario {
     }
 
     /// `slipBack`/`slipBackCommon`: sliding downhill facing uphill.
-    fn slip_back(&mut self, host: &mut dyn Host) -> bool {
+    pub(crate) fn slip_back(&mut self, host: &mut dyn Host) -> bool {
         if self.status_timer > 20 {
             if !self.input.slip && self.input.jump && self.can_slip_jump() {
                 return self.change_status(Status::CatchStop, 0, false);

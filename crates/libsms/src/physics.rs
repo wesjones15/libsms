@@ -51,6 +51,10 @@ impl Mario {
     /// `isForceSlip`.
     pub(crate) fn is_force_slip(&self) -> bool {
         self.ground.flags.has(SurfaceFlags::FORCE_SLIP)
+            // Oil on a slope (`mPollutionTypeStandingOn == SLIP` and dirty).
+            || (self.goop.on_goop
+                && self.goop.kind == Some(crate::goop::GoopKind::Slip)
+                && self.ground.normal.y < self.params.dirty.slope_angle)
             || self.ground.normal.y < self.params.mario.force_slip_angle
     }
 

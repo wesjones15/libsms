@@ -1,28 +1,45 @@
 //! The goop (Sunshine's pollution, `落書き`: Map/PollutionManager.cpp `TPollutionManager`,
-//! PollutionLayer.cpp `TPollutionLayer`, PollutionCount.cpp `TPollutionCounterLayer`).
+//! PollutionLayer.cpp `TPollutionLayer`, PollutionAction.cpp, PollutionCount.cpp
+//! `TPollutionCounterLayer`).
 //!
 //! In the game each stage has a few goop *layers*: flat or wall planes, each with an 8-bit
 //! density texture (`mPollutionMap`, one texel per `mTexelSize` world units) projected onto the
-//! map. Everything that paints or cleans draws a *stamp* into those textures on the GPU
+//! map, and each of one *type* ([`GoopKind`]: brown sinking goop, burning goop, oil, electric
+//! goop, ...). Everything that paints or cleans draws a *stamp* into those textures on the GPU
 //! (`pushStampTask` -> `drawTexStamp`): `stamp(1, ..)` is the pollute stamp
 //! (`/common/map/pollute.bti`), `clean` is `stamp(0, ..)` with `/common/map/clean.bti`, both blended
 //! source-alpha over the density (`GX_BL_SRCALPHA`/`GX_BL_INVSRCALPHA`): a pollute stamp moves
 //! each texel toward 255 by the stamp's alpha, a clean stamp toward 0. A point is goop when its
-//! texel is over the layer's threshold (`mPollutedThreshold`: 30 for ordinary goop, 128 fire,
-//! 200 the `UNK7` kind; `initLayerInfo`) and the point is at the layer's depth (`isSame`).
+//! texel is over the type's threshold (`mPollutedThreshold`: 30 for most, 128 fire, 200 the
+//! `UNK7` kind; `initLayerInfo`) and the point is at the layer's depth (`isSame`).
 //!
 //! A host like Risk of Rain 2 has no goop layers, so this is one field over the whole world: a
-//! sparse grid of [`TEXEL`]-unit texels in 16x16 chunks, each texel with its density and the
-//! ground height it was painted at (probed through [`Host::ground`] when stamped). Stamps blend
-//! like the game's; [`GoopField::is_polluted`] tests a point like `TPollutionLayer::isPolluted`.
-//! What paints and what cleans call in: Shadow Mario's brush ([`crate::koopajr`]), the goop
-//! enemies ([`crate::goop_critters`]) and FLUDD's water (`TModelWaterManager::splashGround` /
-//! `splashWall` clean at the particle with `mCleanSize * 10` / `* 32`; the FFI routes
+//! sparse grid of [`TEXEL`]-unit texels in 16x16 chunks, each texel with its density, its type
+//! and the ground height it was painted at (probed through [`Host::ground`] when stamped).
+//! Stamps blend like the game's; [`GoopField::is_polluted`] tests a point like
+//! `TPollutionLayer::isPolluted`. What paints and what cleans call in: Shadow Mario's brush
+//! ([`crate::koopajr`]), the goop enemies ([`crate::goop_critters`]), Mario running on oil
+//! (`Event::GoopPaint`) and FLUDD's water (`TModelWaterManager::splashGround` / `splashWall`
+//! clean at the particle with `mCleanSize * 10` / `* 32`; the FFI routes
 //! [`crate::water::WaterManager`]'s ground impacts here).
 //!
-//! Not the game's: the texel size (32 units, the step `TMario::checkGraffito` probes goop
-//! with), the height band, the bounded chunk budget (oldest painted chunks go first) and the
-//! optional drying ([`GoopField::dry_ticks`]); all are host choices for an open world.
+//! **The goop's look and sound** (`TPollutionLayer::action`): near Mario, a burning layer starts
+//! `ms_newfire_b`/`_a` (at 1.5x) and `MSD_SE_EF_FIRE` at a random burning spot every
+//! `mFireEffectWaitTime` (20) ticks within `mFireArea` (1600); an electric one `ms_thunder_s`
+//! and `MSD_SE_EF_ELEC` every 16 ticks within `mThunderArea` (1000); every other kind ripples
+//! (`ms_raku_indawa`) every 16 ticks within `mSpreadArea` (2000). [`GoopField::ambient`] does
+//! that around the points a host passes (its players); [`GoopKind::surface`] names the layer
+//! model whose material a host may draw each kind with.
+//!
+//! Not the game's (host choices for an open world, all tunable): the texel size (32 units, the
+//! step `TMario::checkGraffito` probes goop with), the height band, the **lifetime** (goop
+//! fades over [`GoopField::fade`] ticks and is gone [`GoopField::lifetime`] ticks after it was
+//! last painted; 0 keeps it until cleaned, as in the game), and the **cap**
+//! ([`GoopField::max_texels`] and [`GoopField::max_chunks`]: past either, the oldest goop goes
+//! first). The two host kinds [`GoopKind::Poison`] and [`GoopKind::Lava`] use the disc's
+//! `DmgGraffitoPoison`/`DmgGraffitoLava` tables, whose checks are empty in the game
+//! (`checkGraffitoDamage`, `checkGraffitoLava`). Layer spreading (`FLAG_CAN_SPREAD`) isn't
+//! ported.
 
 use std::collections::HashMap;
 
@@ -45,37 +62,171 @@ pub const HEIGHT_BAND: f32 = 100.0;
 const STEP_BAND: f32 = 150.0;
 /// Probes per stamp side: heights between them are interpolated.
 const PROBES: usize = 5;
+/// The lifetime sweep visits each chunk once every this many ticks.
+const SWEEP: u64 = 30;
 
-/// `TPollutionLayer::getPollutionType` (PollutionLayer.hpp `POLLUTION_TYPE_*`).
+/// `TPollutionLayer::getPollutionType` (PollutionLayer.hpp `POLLUTION_TYPE_*`), and two host
+/// kinds past the game's range.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
 #[repr(u8)]
 pub enum GoopKind {
     /// Brown goop Mario sinks into (`POLLUTION_TYPE_SINK`): `TMario::checkSink`.
     #[default]
     Sink = 0,
-    /// Burning goop (`POLLUTION_TYPE_FIRE`): `checkGraffitoFire`.
+    /// Burning goop (`POLLUTION_TYPE_FIRE`): `checkGraffitoFire` sets his seat alight.
     Fire = 1,
-    /// Oil Mario slides on (`POLLUTION_TYPE_SLIP`): `checkGraffitoSlip`.
+    /// Oil Mario slides on (`POLLUTION_TYPE_SLIP`): `checkGraffitoSlip`, the `OIL_*` statuses.
     Slip = 2,
-    /// Electric goop (`POLLUTION_TYPE_ELECTRIC`): `checkGraffitoElec`.
+    /// Goop Mario can't walk into (`POLLUTION_TYPE_GLASS_WALL`): he's put back where he was.
+    GlassWall = 3,
+    /// Electric goop (`POLLUTION_TYPE_ELECTRIC`): `checkGraffitoElec`, `ELECTRIC_DAMAGE`.
     Electric = 4,
+    /// Goop that swallows Mario at once (`POLLUTION_TYPE_INSTAKILL`): `SINK_LOSER`.
+    Instakill = 5,
+    /// Goop that only dirties (`POLLUTION_TYPE_SAFE`).
+    Safe = 6,
+    /// Dense burning goop (`POLLUTION_TYPE_UNK7`): burns like [`GoopKind::Fire`], threshold 200.
+    Scorch = 7,
+    /// Host kind: poison goop, a stumble from `DmgGraffitoPoison.prm` every `mSinkDmgTime`.
+    Poison = 16,
+    /// Host kind: lava goop, a burn with `DmgGraffitoLava.prm`.
+    Lava = 17,
+}
+
+/// What a host might show for a kind.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GoopLook {
+    /// Surface tint (linear RGB), for hosts not drawing the layer model.
+    pub tint: [f32; 3],
+    /// The ambient effects ([`GoopField::ambient`]) and their sound.
+    pub effects: &'static [&'static str],
+    pub effect_scale: f32,
+    pub sound: Option<&'static str>,
+    /// Ticks between ambient effects near a player, and how far round them.
+    pub period: u32,
+    pub area: f32,
 }
 
 impl GoopKind {
+    pub const ALL: [GoopKind; 10] = [
+        GoopKind::Sink,
+        GoopKind::Fire,
+        GoopKind::Slip,
+        GoopKind::GlassWall,
+        GoopKind::Electric,
+        GoopKind::Instakill,
+        GoopKind::Safe,
+        GoopKind::Scorch,
+        GoopKind::Poison,
+        GoopKind::Lava,
+    ];
+
     /// `mPollutedThreshold` for the kind (`TPollutionLayer::initLayerInfo`).
     pub fn threshold(self) -> u8 {
         match self {
-            GoopKind::Fire => 128,
+            GoopKind::Scorch => 200,
+            GoopKind::Fire | GoopKind::Lava => 128,
             _ => POLLUTED,
         }
     }
 
     pub fn from_u8(v: u8) -> GoopKind {
-        match v {
-            1 => GoopKind::Fire,
-            2 => GoopKind::Slip,
-            4 => GoopKind::Electric,
-            _ => GoopKind::Sink,
+        GoopKind::ALL.into_iter().find(|k| *k as u8 == v).unwrap_or(GoopKind::Sink)
+    }
+
+    /// Burns what stands in it (`checkGraffitoFire`'s kinds).
+    pub fn burns(self) -> bool {
+        matches!(self, GoopKind::Fire | GoopKind::Scorch | GoopKind::Lava)
+    }
+
+    /// `checkGraffito`'s probe pattern: the oil kinds test his body's point and the eight
+    /// around it; the sinking kinds his feet on the floor and the four beside them; electric
+    /// goop just the point under his feet.
+    pub fn probe(self) -> Probe {
+        match self {
+            GoopKind::Slip | GoopKind::Instakill | GoopKind::Safe => Probe::Square,
+            GoopKind::Electric => Probe::Point,
+            _ => Probe::Plus,
+        }
+    }
+
+    /// The stage layer model (`/scene/map/pollution/<name>.bmd`, with its `.btk` scroll) a
+    /// host may draw the kind with. The stages pair models and types per layer (scene .prm);
+    /// this pairing is a host default.
+    pub fn surface(self) -> &'static str {
+        match self {
+            GoopKind::Sink | GoopKind::Instakill => "pollution00",
+            GoopKind::Fire | GoopKind::Scorch | GoopKind::Lava => "pollution03",
+            GoopKind::Slip => "pollution02",
+            GoopKind::Electric => "pollution04",
+            GoopKind::GlassWall => "pollution05",
+            GoopKind::Safe => "pollution01",
+            GoopKind::Poison => "pollution06",
+        }
+    }
+
+    /// The ambient effects and a tint (`TPollutionLayer::action`, `fire`, `electric`).
+    pub fn look(self) -> GoopLook {
+        const RIPPLE: &[&str] = &["ms_raku_indawa"];
+        const FIRE: &[&str] = &["ms_newfire_b", "ms_newfire_a"];
+        const THUNDER: &[&str] = &["ms_thunder_s"];
+        let ripple = |tint| GoopLook {
+            tint,
+            effects: RIPPLE,
+            effect_scale: 1.0,
+            sound: None,
+            period: 16,
+            area: 2000.0,
+        };
+        let fire = |tint| GoopLook {
+            tint,
+            effects: FIRE,
+            effect_scale: 1.5,
+            sound: Some("MSD_SE_EF_FIRE"),
+            period: 21,
+            area: 1600.0,
+        };
+        match self {
+            GoopKind::Sink => ripple([0.28, 0.16, 0.08]),
+            GoopKind::Slip => ripple([0.05, 0.04, 0.03]),
+            GoopKind::GlassWall => ripple([0.35, 0.55, 0.6]),
+            GoopKind::Instakill => ripple([0.06, 0.02, 0.05]),
+            GoopKind::Safe => ripple([0.4, 0.3, 0.2]),
+            GoopKind::Poison => ripple([0.35, 0.05, 0.45]),
+            GoopKind::Fire => fire([0.7, 0.18, 0.02]),
+            GoopKind::Scorch => fire([0.55, 0.08, 0.02]),
+            GoopKind::Lava => fire([0.9, 0.3, 0.03]),
+            GoopKind::Electric => GoopLook {
+                tint: [0.85, 0.75, 0.1],
+                effects: THUNDER,
+                effect_scale: 1.0,
+                sound: Some("MSD_SE_EF_ELEC"),
+                period: 16,
+                area: 1000.0,
+            },
+        }
+    }
+}
+
+/// Which points around Mario's feet `checkGraffito` tests for each kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Probe {
+    Point,
+    Plus,
+    Square,
+}
+
+impl Probe {
+    /// Offsets in texels.
+    pub fn offsets(self) -> &'static [(i8, i8)] {
+        match self {
+            Probe::Point => &[(0, 0)],
+            Probe::Plus => &[(0, -1), (1, 0), (0, 0), (-1, 0), (0, 1)],
+            Probe::Square => &[
+                (-1, -1), (0, -1), (1, -1),
+                (-1, 0), (0, 0), (1, 0),
+                (-1, 1), (0, 1), (1, 1),
+            ],
         }
     }
 }
@@ -129,29 +280,61 @@ pub struct Chunk {
     pub density: [u8; CHUNK_TEXELS],
     /// The ground height each texel was painted at.
     pub height: [f32; CHUNK_TEXELS],
-    pub kind: GoopKind,
+    /// Each texel's kind (the last paint's).
+    pub kind: [GoopKind; CHUNK_TEXELS],
+    /// [`GoopField::ticks`] (low 32 bits) when each texel was last painted.
+    pub born: [u32; CHUNK_TEXELS],
     /// Bumped on every change, for hosts that cache meshes.
     pub version: u32,
-    /// [`GoopField::ticks`] when last painted (the budget drops the oldest first).
-    painted: u64,
-    /// Ticks since the last change, for drying.
-    idle: u32,
+    /// No live texel here is older than this (a lower bound; exact after a sweep).
+    oldest: u32,
+    /// Which tick of the [`SWEEP`] cycle visits it.
+    slot: u8,
 }
 
 impl Chunk {
-    fn new(kind: GoopKind) -> Chunk {
+    fn new(slot: u8) -> Chunk {
         Chunk {
             density: [0; CHUNK_TEXELS],
             height: [0.0; CHUNK_TEXELS],
-            kind,
+            kind: [GoopKind::Sink; CHUNK_TEXELS],
+            born: [0; CHUNK_TEXELS],
             version: 0,
-            painted: 0,
-            idle: 0,
+            oldest: u32::MAX,
+            slot,
         }
     }
 
     fn empty(&self) -> bool {
         self.density.iter().all(|&d| d == 0)
+    }
+
+    fn live(&self) -> usize {
+        self.density.iter().filter(|&&d| d > 0).count()
+    }
+
+    fn recompute_oldest(&mut self) {
+        self.oldest = (0..CHUNK_TEXELS)
+            .filter(|&i| self.density[i] > 0)
+            .map(|i| self.born[i])
+            .min()
+            .unwrap_or(u32::MAX);
+    }
+
+    /// Clears texels painted at or before `upto`; returns how many.
+    fn drop_older(&mut self, upto: u32) -> usize {
+        let mut n = 0;
+        for i in 0..CHUNK_TEXELS {
+            if self.density[i] > 0 && self.born[i] <= upto {
+                self.density[i] = 0;
+                n += 1;
+            }
+        }
+        if n > 0 {
+            self.version = self.version.wrapping_add(1);
+        }
+        self.recompute_oldest();
+        n
     }
 }
 
@@ -159,30 +342,41 @@ impl Chunk {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum GoopEvent {
     /// A stamp went down (`Painted` sounds are the painter's own).
-    Painted { pos: Vec3, radius: f32 },
+    Painted { pos: Vec3, radius: f32, kind: GoopKind },
     /// Dense goop wiped off (`TPollutionLayer::cleaned`): `MSD_SE_ERASE_SCRAWL` at a volume of
     /// the stamp's size and the `ms_raku_kie` steam (`PARTICLE_MS_RAKU_KIE`).
     Erased { pos: Vec3, size: f32 },
+    /// A kind's ambient effect near a player ([`GoopField::ambient`]): start each of the
+    /// look's `effects` at `pos`, scaled, and its sound.
+    Ambient { pos: Vec3, kind: GoopKind },
 }
 
 /// The world's goop.
 #[derive(Debug, Clone)]
 pub struct GoopField {
     chunks: HashMap<(i32, i32), Chunk>,
-    /// Chunks kept at most; painting past it drops the oldest painted.
+    /// Chunks kept at most; painting past it drops the chunks with the oldest goop.
     pub max_chunks: usize,
-    /// Host option: an untouched chunk loses one density step every this many ticks (0: goop
-    /// stays until cleaned, as in the game).
-    pub dry_ticks: u32,
+    /// Goop texels kept at most; painting past it clears the oldest goop first.
+    pub max_texels: usize,
+    /// Ticks goop lasts after it was last painted (0: until cleaned, as in the game).
+    pub lifetime: u32,
+    /// Ticks at the end of its life that goop thins out over.
+    pub fade: u32,
     pub pollute: Mask,
     pub clean: Mask,
     pub events: Vec<GoopEvent>,
     pub ticks: u64,
+    live: usize,
+    next_slot: u8,
     /// `TPollutionLayer::cleaned`'s `effect_counter` and offset tables' cursors.
     erase_counter: u32,
     erase_cursor: (usize, usize),
     /// Per-enemy ticks left before goop hurts it again ([`GoopField::contacts`]).
     cooldowns: HashMap<u64, u32>,
+    /// `mEffectTimer` per kind, per player slot.
+    ambient_timers: HashMap<(usize, GoopKind), u32>,
+    seed: u32,
 }
 
 impl Default for GoopField {
@@ -207,20 +401,40 @@ pub fn texel_center(key: (i32, i32), i: usize) -> (f32, f32) {
     ((tx as f32 + 0.5) * TEXEL, (tz as f32 + 0.5) * TEXEL)
 }
 
+/// Default lifetime: 90 seconds at 120 Hz.
+pub const DEFAULT_LIFETIME: u32 = 90 * 120;
+/// Default fade: the last 5 seconds.
+pub const DEFAULT_FADE: u32 = 5 * 120;
+/// Default cap: 48k texels (about 49 million square units, a 7000-unit square).
+pub const DEFAULT_MAX_TEXELS: usize = 48 * 1024;
+
 impl GoopField {
     pub fn new() -> GoopField {
         GoopField {
             chunks: HashMap::new(),
-            max_chunks: 1024,
-            dry_ticks: 0,
+            max_chunks: 768,
+            max_texels: DEFAULT_MAX_TEXELS,
+            lifetime: DEFAULT_LIFETIME,
+            fade: DEFAULT_FADE,
             pollute: Mask::disc(32),
             clean: Mask::disc(32),
             events: Vec::new(),
             ticks: 0,
+            live: 0,
+            next_slot: 0,
             erase_counter: 1,
             erase_cursor: (0, 0),
             cooldowns: HashMap::new(),
+            ambient_timers: HashMap::new(),
+            seed: 0x2545_F491,
         }
+    }
+
+    fn rand(&mut self) -> f32 {
+        self.seed ^= self.seed << 13;
+        self.seed ^= self.seed >> 17;
+        self.seed ^= self.seed << 5;
+        (self.seed >> 8) as f32 / (1u32 << 24) as f32
     }
 
     /// Density at `pos`'s texel (0 when none), ignoring height.
@@ -229,8 +443,8 @@ impl GoopField {
         self.chunks.get(&key).map_or(0, |c| c.density[i])
     }
 
-    /// `TPollutionManager::isPolluted`: is the point on goop (its texel over the threshold and
-    /// the point at the texel's height)?
+    /// `TPollutionManager::isPolluted`: is the point on goop (its texel over its kind's
+    /// threshold and the point at the texel's height)?
     pub fn is_polluted(&self, pos: Vec3) -> bool {
         self.kind_at(pos).is_some()
     }
@@ -239,17 +453,15 @@ impl GoopField {
     pub fn kind_at(&self, pos: Vec3) -> Option<GoopKind> {
         let (key, i) = chunk_of(pos.x, pos.z);
         let c = self.chunks.get(&key)?;
-        (c.density[i] > c.kind.threshold() && (pos.y - c.height[i]).abs() < HEIGHT_BAND)
-            .then_some(c.kind)
+        let k = c.kind[i];
+        (c.density[i] > k.threshold() && (pos.y - c.height[i]).abs() < HEIGHT_BAND).then_some(k)
     }
 
     /// `TMario::checkGraffito`'s test for ordinary goop: the point and the eight around it a
     /// texel away all on goop (a lone texel or the very rim doesn't catch Mario).
     pub fn is_polluted_under(&self, pos: Vec3) -> bool {
-        (-1..=1).all(|dz| {
-            (-1..=1).all(|dx| {
-                self.is_polluted(pos + Vec3::new(dx as f32 * TEXEL, 0.0, dz as f32 * TEXEL))
-            })
+        Probe::Square.offsets().iter().all(|&(dx, dz)| {
+            self.is_polluted(pos + Vec3::new(dx as f32 * TEXEL, 0.0, dz as f32 * TEXEL))
         })
     }
 
@@ -261,7 +473,7 @@ impl GoopField {
             .sum()
     }
 
-    /// The chunks, for drawing: key, kind, densities, heights, version.
+    /// The chunks, for drawing: key, kinds, densities, heights, version.
     pub fn chunks(&self) -> impl Iterator<Item = ((i32, i32), &Chunk)> {
         self.chunks.iter().map(|(k, c)| (*k, c))
     }
@@ -270,8 +482,14 @@ impl GoopField {
         self.chunks.len()
     }
 
+    /// Goop texels in the world.
+    pub fn texel_count(&self) -> usize {
+        self.live
+    }
+
     pub fn clear(&mut self) {
         self.chunks.clear();
+        self.live = 0;
     }
 
     /// `stamp(1, x, y, z, size)`: paints a disc of goop of `radius` at `pos` with the pollute
@@ -280,7 +498,7 @@ impl GoopField {
         let mask = std::mem::replace(&mut self.pollute, Mask { size: 0, alpha: Vec::new() });
         self.stamp_mask(host, pos, radius, 0.0, &mask, kind);
         self.pollute = mask;
-        self.events.push(GoopEvent::Painted { pos, radius });
+        self.events.push(GoopEvent::Painted { pos, radius, kind });
     }
 
     /// `stampModel`'s effect with a host-made mask (a model's top-down silhouette): `mask`
@@ -300,8 +518,9 @@ impl GoopField {
         let heights = Heights::probe(host, pos, half * std::f32::consts::SQRT_2);
         let (s, c) = yaw.sin_cos();
         let reach = half * std::f32::consts::SQRT_2;
-        let tick = self.ticks;
-        self.for_texels(pos, reach, true, kind, |x, z, chunk, i| {
+        let tick = self.ticks as u32;
+        let mut added = 0usize;
+        self.for_texels(pos, reach, true, |x, z, chunk, i| {
             let (dx, dz) = (x - pos.x, z - pos.z);
             // Into the mask's own axes.
             let (mx, mz) = (dx * c - dz * s, dx * s + dz * c);
@@ -315,11 +534,20 @@ impl GoopField {
                 // Goop on another floor here: leave it.
                 return;
             }
-            let new = old + (255.0 - old) * a;
-            chunk.density[i] = new.round().clamp(0.0, 255.0) as u8;
+            let new = (old + (255.0 - old) * a).round().clamp(0.0, 255.0) as u8;
+            if new == 0 {
+                return;
+            }
+            if old == 0.0 {
+                added += 1;
+            }
+            chunk.density[i] = new;
             chunk.height[i] = h;
-            chunk.painted = tick;
+            chunk.kind[i] = kind;
+            chunk.born[i] = tick;
+            chunk.oldest = chunk.oldest.min(tick);
         });
+        self.live += added;
         self.enforce_budget();
     }
 
@@ -329,7 +557,8 @@ impl GoopField {
         let mask = std::mem::replace(&mut self.clean, Mask { size: 0, alpha: Vec::new() });
         let mut dense = false;
         let mut changed = 0u32;
-        self.for_texels(pos, radius, false, GoopKind::Sink, |x, z, chunk, i| {
+        let mut gone = 0usize;
+        self.for_texels(pos, radius, false, |x, z, chunk, i| {
             let d = chunk.density[i];
             if d == 0 || (chunk.height[i] - pos.y).abs() > HEIGHT_BAND + radius {
                 return;
@@ -346,8 +575,12 @@ impl GoopField {
             if new != d {
                 chunk.density[i] = new;
                 changed += 1;
+                if new == 0 {
+                    gone += 1;
+                }
             }
         });
+        self.live = self.live.saturating_sub(gone);
         self.clean = mask;
         if changed > 0 {
             self.chunks.retain(|_, c| !c.empty());
@@ -377,14 +610,13 @@ impl GoopField {
     }
 
     /// Visits the texels whose centres are within `reach` of `pos` (XZ). With `create`, missing
-    /// chunks are made (of `kind`); without, only existing ones are visited. Bumps the version
-    /// of every chunk visited.
+    /// chunks are made; without, only existing ones are visited. Bumps the version of every
+    /// chunk visited.
     fn for_texels(
         &mut self,
         pos: Vec3,
         reach: f32,
         create: bool,
-        kind: GoopKind,
         mut f: impl FnMut(f32, f32, &mut Chunk, usize),
     ) {
         let t0x = ((pos.x - reach) / TEXEL).floor() as i32;
@@ -396,7 +628,12 @@ impl GoopField {
             for kx in t0x.div_euclid(n)..=t1x.div_euclid(n) {
                 let key = (kx, kz);
                 let chunk = if create {
-                    self.chunks.entry(key).or_insert_with(|| Chunk::new(kind))
+                    let slot = &mut self.next_slot;
+                    self.chunks.entry(key).or_insert_with(|| {
+                        let c = Chunk::new(*slot);
+                        *slot = ((*slot as u64 + 1) % SWEEP) as u8;
+                        c
+                    })
                 } else {
                     match self.chunks.get_mut(&key) {
                         Some(c) => c,
@@ -424,7 +661,6 @@ impl GoopField {
                 }
                 if touched {
                     chunk.version = chunk.version.wrapping_add(1);
-                    chunk.idle = 0;
                 }
             }
         }
@@ -433,52 +669,142 @@ impl GoopField {
         }
     }
 
+    /// The cap: past [`Self::max_chunks`] the chunks holding the oldest goop go whole; past
+    /// [`Self::max_texels`] the oldest goop is cleared, a tick's worth of paint at a time.
     fn enforce_budget(&mut self) {
         while self.chunks.len() > self.max_chunks.max(1) {
-            let Some(oldest) = self.chunks.iter().min_by_key(|(_, c)| c.painted).map(|(k, _)| *k)
+            let Some(oldest) = self.chunks.iter().min_by_key(|(_, c)| c.oldest).map(|(k, _)| *k)
             else {
                 break;
             };
-            self.chunks.remove(&oldest);
+            if let Some(c) = self.chunks.remove(&oldest) {
+                self.live = self.live.saturating_sub(c.live());
+            }
+        }
+        let cap = self.max_texels.max(1);
+        let mut guard = 0;
+        while self.live > cap && guard < 4096 {
+            guard += 1;
+            let Some((key, upto)) =
+                self.chunks.iter().min_by_key(|(_, c)| c.oldest).map(|(k, c)| (*k, c.oldest))
+            else {
+                break;
+            };
+            let c = self.chunks.get_mut(&key).unwrap();
+            // `oldest` may be a stale lower bound: tighten it before clearing.
+            c.recompute_oldest();
+            if c.oldest > upto {
+                continue;
+            }
+            let n = c.drop_older(upto);
+            self.live = self.live.saturating_sub(n);
+            if c.empty() {
+                self.chunks.remove(&key);
+            }
         }
     }
 
-    /// One tick: drying (if on) and the contact cooldowns.
+    /// One tick: the lifetime sweep and the contact cooldowns.
     pub fn step(&mut self) {
         self.ticks += 1;
         self.cooldowns.retain(|_, t| {
             *t = t.saturating_sub(1);
             *t > 0
         });
-        if self.dry_ticks == 0 {
+        if self.lifetime == 0 {
             return;
         }
-        let dry = self.dry_ticks;
-        for c in self.chunks.values_mut() {
-            c.idle += 1;
-            if c.idle % dry == 0 {
-                for d in c.density.iter_mut() {
-                    *d = d.saturating_sub(1);
+        let now = self.ticks as u32;
+        let slot = (self.ticks % SWEEP) as u8;
+        let (life, fade) = (self.lifetime, self.fade.min(self.lifetime));
+        let mut gone = 0usize;
+        for c in self.chunks.values_mut().filter(|c| c.slot == slot) {
+            if c.oldest == u32::MAX || now.wrapping_sub(c.oldest) < life - fade {
+                continue;
+            }
+            let mut changed = false;
+            for i in 0..CHUNK_TEXELS {
+                let d = c.density[i];
+                if d == 0 {
+                    continue;
                 }
+                let age = now.wrapping_sub(c.born[i]);
+                let new = if age >= life {
+                    0
+                } else if fade > 0 && age + fade > life {
+                    let left = (life - age) as f32 / fade as f32;
+                    d.min((255.0 * left) as u8)
+                } else {
+                    d
+                };
+                if new != d {
+                    c.density[i] = new;
+                    changed = true;
+                    if new == 0 {
+                        gone += 1;
+                    }
+                }
+            }
+            if changed {
                 c.version = c.version.wrapping_add(1);
+                c.recompute_oldest();
             }
         }
-        self.chunks.retain(|_, c| !c.empty());
+        if gone > 0 {
+            self.live = self.live.saturating_sub(gone);
+            self.chunks.retain(|_, c| !c.empty());
+        }
+    }
+
+    /// `TPollutionLayer::action`'s effects round each of `around` (the players): a random spot
+    /// on goop near the player (`getPollutedPos`, five tries) advances that kind's timer, and
+    /// every [`GoopLook::period`] ticks it gets the kind's effects ([`GoopEvent::Ambient`]).
+    pub fn ambient(&mut self, around: &[Vec3]) {
+        if self.chunks.is_empty() {
+            return;
+        }
+        for (slot, &p) in around.iter().enumerate() {
+            for _ in 0..5 {
+                let area = 2000.0;
+                let q = Vec3::new(
+                    p.x + area * (self.rand() - 0.5),
+                    p.y,
+                    p.z + area * (self.rand() - 0.5),
+                );
+                let (key, i) = chunk_of(q.x, q.z);
+                let Some(c) = self.chunks.get(&key) else { continue };
+                let k = c.kind[i];
+                let look = k.look();
+                let at = Vec3::new(q.x, c.height[i], q.z);
+                let d = (at - p).with_y(0.0).abs().max_element();
+                if c.density[i] <= k.threshold() || d > look.area * 0.5 || at.y > p.y + HEIGHT_BAND {
+                    continue;
+                }
+                let t = self.ambient_timers.entry((slot, k)).or_insert(0);
+                *t += 1;
+                if *t >= look.period {
+                    *t = 0;
+                    self.events.push(GoopEvent::Ambient { pos: at, kind: k });
+                }
+                break;
+            }
+        }
     }
 
     /// Host adaptation of `TMario::checkSink`'s floor damage for anything standing in goop:
-    /// which of `enemies` have their feet on goop now and aren't still cooling down from the
-    /// last time. Each one returned waits `period` ticks (`mSinkDmgTime`) before it can be
-    /// returned again. What the goop does to them is the host's.
-    pub fn contacts(&mut self, enemies: &[Enemy], period: u32) -> Vec<u64> {
+    /// which of `enemies` have their feet on goop now, and its kind, for those not still
+    /// cooling down from the last time. Each one returned waits `period` ticks
+    /// (`mSinkDmgTime`) before it can be returned again. What the goop does to them is the
+    /// host's.
+    pub fn contacts(&mut self, enemies: &[Enemy], period: u32) -> Vec<(u64, GoopKind)> {
         let mut out = Vec::new();
         for e in enemies {
             if self.cooldowns.contains_key(&e.id) {
                 continue;
             }
-            if self.is_polluted(e.pos) {
+            if let Some(k) = self.kind_at(e.pos) {
                 self.cooldowns.insert(e.id, period.max(1));
-                out.push(e.id);
+                out.push((e.id, k));
             }
         }
         out
@@ -498,7 +824,7 @@ impl GoopField {
             }
             // Every fourth texel each way is plenty to choose from.
             for i in (0..CHUNK_TEXELS).filter(|i| (i % CHUNK) % 4 == 2 && (i / CHUNK) % 4 == 2) {
-                if c.density[i] <= c.kind.threshold() {
+                if c.density[i] <= c.kind[i].threshold() {
                     continue;
                 }
                 let (x, z) = texel_center(*key, i);
@@ -628,12 +954,12 @@ mod tests {
         let mut g = GoopField::new();
         g.stamp(&FlatHost::default(), Vec3::ZERO, 300.0, GoopKind::Sink);
         let e = [Enemy { id: 7, pos: Vec3::ZERO, radius: 30.0, height: 100.0 }];
-        assert_eq!(g.contacts(&e, 90), vec![7]);
+        assert_eq!(g.contacts(&e, 90), vec![(7, GoopKind::Sink)]);
         assert!(g.contacts(&e, 90).is_empty());
         for _ in 0..90 {
             g.step();
         }
-        assert_eq!(g.contacts(&e, 90), vec![7]);
+        assert_eq!(g.contacts(&e, 90), vec![(7, GoopKind::Sink)]);
     }
 
     #[test]
@@ -651,18 +977,89 @@ mod tests {
     }
 
     #[test]
-    fn drying_is_off_unless_asked() {
+    fn goop_fades_and_expires_after_its_lifetime() {
         let mut g = GoopField::new();
+        g.lifetime = 600;
+        g.fade = 120;
         g.stamp(&FlatHost::default(), Vec3::ZERO, 200.0, GoopKind::Sink);
-        for _ in 0..1000 {
+        let full = g.density(Vec3::ZERO);
+        for _ in 0..540 {
             g.step();
         }
-        assert!(g.is_polluted(Vec3::ZERO));
-        g.dry_ticks = 1;
-        for _ in 0..300 {
+        let thin = g.density(Vec3::ZERO);
+        assert!(thin > 0 && thin < full, "fading: {full} -> {thin}");
+        for _ in 0..90 {
             g.step();
         }
         assert_eq!(g.chunk_count(), 0);
+        assert_eq!(g.texel_count(), 0);
+        // Lifetime 0 keeps it, as in the game.
+        g.lifetime = 0;
+        g.stamp(&FlatHost::default(), Vec3::ZERO, 200.0, GoopKind::Sink);
+        for _ in 0..20_000 {
+            g.step();
+        }
+        assert!(g.is_polluted(Vec3::ZERO));
+    }
+
+    #[test]
+    fn repainting_renews_the_lifetime() {
+        let mut g = GoopField::new();
+        g.lifetime = 600;
+        g.fade = 0;
+        let host = FlatHost::default();
+        g.stamp(&host, Vec3::ZERO, 200.0, GoopKind::Sink);
+        for _ in 0..500 {
+            g.step();
+        }
+        g.stamp(&host, Vec3::ZERO, 200.0, GoopKind::Sink);
+        for _ in 0..500 {
+            g.step();
+        }
+        assert!(g.is_polluted(Vec3::ZERO));
+    }
+
+    #[test]
+    fn over_the_cap_the_oldest_goop_makes_way() {
+        let mut g = GoopField::new();
+        let host = FlatHost::default();
+        g.stamp(&host, Vec3::ZERO, 200.0, GoopKind::Sink);
+        let one = g.texel_count();
+        g.max_texels = one;
+        g.step();
+        g.stamp(&host, Vec3::new(3000.0, 0.0, 0.0), 200.0, GoopKind::Fire);
+        assert!(g.texel_count() <= g.max_texels);
+        assert!(!g.is_polluted(Vec3::ZERO), "the first stamp went");
+        assert_eq!(g.kind_at(Vec3::new(3000.0, 0.0, 0.0)), Some(GoopKind::Fire));
+    }
+
+    #[test]
+    fn each_texel_keeps_its_own_kind() {
+        let mut g = GoopField::new();
+        let host = FlatHost::default();
+        g.stamp(&host, Vec3::ZERO, 300.0, GoopKind::Sink);
+        g.stamp(&host, Vec3::new(64.0, 0.0, 0.0), 100.0, GoopKind::Electric);
+        assert_eq!(g.kind_at(Vec3::new(64.0, 0.0, 0.0)), Some(GoopKind::Electric));
+        assert_eq!(g.kind_at(Vec3::new(-200.0, 0.0, 0.0)), Some(GoopKind::Sink));
+        for k in GoopKind::ALL {
+            assert_eq!(GoopKind::from_u8(k as u8), k);
+        }
+        // Fire's threshold is higher: a thin coat isn't burning goop yet.
+        assert!(GoopKind::Scorch.threshold() > GoopKind::Fire.threshold());
+    }
+
+    #[test]
+    fn burning_and_electric_goop_crackle_near_a_player() {
+        let mut g = GoopField::new();
+        let host = FlatHost::default();
+        g.stamp(&host, Vec3::ZERO, 900.0, GoopKind::Fire);
+        g.stamp(&host, Vec3::new(4000.0, 0.0, 0.0), 900.0, GoopKind::Electric);
+        for _ in 0..400 {
+            g.ambient(&[Vec3::ZERO, Vec3::new(4000.0, 0.0, 0.0)]);
+        }
+        let n = |k| g.events.iter().filter(|e| matches!(e, GoopEvent::Ambient { kind, .. } if *kind == k)).count();
+        assert!(n(GoopKind::Fire) >= 5 && n(GoopKind::Electric) >= 5);
+        assert_eq!(GoopKind::Fire.look().sound, Some("MSD_SE_EF_FIRE"));
     }
 
     #[test]

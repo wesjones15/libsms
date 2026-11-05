@@ -172,6 +172,8 @@ params! {
         was_on_water_slip: f32 = 0.97, "mWasOnWaterSlip";
         in_water_slip: f32 = 0.9, "mInWaterSlip";
         force_slip_angle: f32 = 0.5, "mForceSlipAngle";
+        /// Ticks on electric goop before it shocks (`checkGraffitoElec`).
+        graffito_no_dmg_time: u8 = 10, "mGraffitoNoDmgTime";
         clash_speed: f32 = 50.0, "mClashSpeed";
         damage_fall_height: f32 = 1000.0, "mDamageFallHeight";
         feel_deep: f32 = 500.0, "mFeelDeep";
@@ -222,6 +224,13 @@ params! {
         slope_angle: f32 = 0.99, "mSlopeAngle";
         /// The most goop Mario carries; also the TEV konst alpha his materials show it through.
         dirty_max: f32 = 200.0, "mDirtyMax";
+        slip_anm_speed: f32 = 3.0, "mSlipAnmSpeed";
+        slip_run_sp: f32 = 0.01, "mSlipRunSp";
+        slip_catch_sp: f32 = 0.01, "mSlipCatchSp";
+        slip_rotate: i16 = 0x100, "mSlipRotate";
+        slip_catch_rotate: i16 = 0x100, "mSlipCatchRotate";
+        brake_slip_no_pollute: f32 = 0.98, "mBrakeSlipNoPollute";
+        /// Oil: a floor hit every `fog_time_yellow + fog_time_red` ticks on it.
         fog_time_yellow: i16 = 240, "mFogTimeYellow";
         fog_time_red: i16 = 600, "mFogTimeRed";
     }
@@ -245,7 +254,9 @@ params! {
         sink_pump_limit: f32 = 0.25, "mSinkPumpLimit";
         /// While Mario has health he stops sinking at this share of `sink_time`.
         sink_dmg_depth: f32 = 0.25, "mSinkDmgDepth";
-        fire_invincible_time: i16 = 50, "mFireInvincibleTime";
+        /// Burning goop catches him only this close over the floor.
+        fire_height: f32 = 1000.0, "mFireHeight";
+        fire_invincible_time: i16 = 0x96, "mFireInvincibleTime";
     }
 }
 
@@ -548,7 +559,7 @@ mod files {
         "watergun/nozzletrgturbo.prm",
     ];
     /// Indexed by `DamageKind` (`TMario::TMario`'s `mDmgParams*`).
-    pub const DAMAGE: [&str; 13] = [
+    pub const DAMAGE: [&str; 17] = [
         "dmgenemycommon.prm",
         "dmghamukuri.prm",
         "dmgnamekuri.prm",
@@ -562,6 +573,10 @@ mod files {
         "dmglamptrapiron.prm",
         "dmglamptrapspike.prm",
         "dmgenemymario.prm",
+        "dmggraffitofire.prm",
+        "dmggraffitoelec.prm",
+        "dmggraffitopoison.prm",
+        "dmggraffitolava.prm",
     ];
     pub const WATER_PARTICLES: [&str; 17] = [
         "wtp00_normal.prm",

@@ -132,6 +132,18 @@ pub enum Status {
     /// Held by another Mario by the seat of his pants (host extension, [`Mario::set_carried`]): the
     /// fire hop's flailing clip, looped, with no voice, flames or damage; the host moves him.
     Carried,
+    // Goop (MarioRun.cpp `oilRun` / `oilSlip` / `oilSlope`, MarioAutodemo.cpp `electricDamage`,
+    // `sinkLoser`; entered from `checkGraffito*`, dirty.rs).
+    /// Running on oil: steered a little, coasting (`OIL_RUN`).
+    OilRun,
+    /// Belly-sliding on oil (`OIL_SLIP`).
+    OilSlip,
+    /// Sliding down an oily slope (`OIL_SLOPE`).
+    OilSlope,
+    /// Shocked by electric goop (`ELECTRIC_DAMAGE`).
+    ElectricDamage,
+    /// Swallowed by goop (`SINK_LOSER`): down for good, sinking out of sight.
+    SinkLoser,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -154,9 +166,11 @@ impl Status {
             Run | RotateL | RotateR | Turn | TurnEnd | Brake | WalkEnd | Slip | SlipFore
             | SlipBack | Catch | JumpSlip | LandSlip | SecJumpSlip | UTurnJumpSlip
             | UltraJumpSlip | BroadJumpSlip | BackDown | ForeDown | ShortBackDown
-            | ShortForeDown | SafeBackDown | SafeForeDown | CatchDown | FireDash => Kind::Running,
+            | ShortForeDown | SafeBackDown | SafeForeDown | CatchDown | FireDash | OilRun
+            | OilSlip | OilSlope => Kind::Running,
             CatchLost | Take | TakePose | Putting | Pitching => Kind::Action,
-            Hanging | Ascend | Descend | HangJumping | DownLoser | WinDemo | Carried => Kind::Special,
+            Hanging | Ascend | Descend | HangJumping | DownLoser | WinDemo | Carried
+            | ElectricDamage | SinkLoser => Kind::Special,
             _ => Kind::Jumping,
         }
     }
