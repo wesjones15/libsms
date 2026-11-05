@@ -64,4 +64,32 @@ pakkun.prm. Code defaults stand in where a file is absent.
   `pollute.bti`/`clean.bti` and the `stamp_koopa_sign` silhouette (discs stand in).
 - The RoR2 survivor (plugin, skills, skin, multiplayer).
 - Layer spreading (`FLAG_CAN_SPREAD`), footprints, `OIL_PULLING`, rumble.
-- Petey Piranha (`bosspakkun` assets are extracted; no code).
+- Petey: no C ABI yet, no model in the view, no `.bas` playback wired (events name the clips).
+
+## Petey Piranha, the sidekick (`petey.rs`, 2026-11-05)
+`TBossPakkun` (Enemy/bosspakkun.cpp, `bosspakkun.prm`) as a core: `Petey::from_dir(assets, pos)`,
+then `Petey::step(host, goop, owner, targets)` each tick after Bowser Jr. Headless only, no FFI
+yet, never played.
+- The nerve chain as `TSpine` runs it (stack, `pushNerve`, `reset`+`setNext`). Wait → head swing
+  (target within `mSLSwingLength` and 60°, thrown sideways and up at 100) or pivot
+  (`mSLPivotSpeed`/`Aware`) → vomit (`pollut_start` at `mSLVomitAnmRate`/2 speed, mouth open at
+  frames 25-165, then the goop pours out and the wind blows), goop ball (`SMSCalcJumpVelocityXZ`
+  at `mSLPollBallSpeed`, 0.1 gravity, stamp 300 x `mSLPollBallStampScale`) or tornado (circles
+  600+ out from a centre heading for the target at `mSLTornadoSpeed`, 721 ticks, throws up at 100).
+- Water into the open mouth from within `mSLDamageAngle` fills the mark (limit 250 on the disc)
+  → swallow, then tumble with the navel up for `mSLTumbleTime` (1000) → `stomp()` costs one of 3
+  HP → stomp react, get up; 0 HP → `bosspaku_end`, `Defeated`. `trample()` = standing on the
+  navel. `belly()`/`belly_scale(4|36)` and `head_yaw` for the view.
+- Flying: take off (5 a tick), fly to the owner, touch down; `flying_form` hovers instead (the
+  `Fly` weak point: `water_hit`/`knock` drops him, `fall_*`), shooting balls at tick 168.
+- Events (`PeteyEvent`): clips with blend ticks, `MSD_SE_BS_BSPAKU_*` sounds, `ms_bopa_*` effects
+  on joint indices (`held` = bound emitters), hits, splats, shakes, the water spout, coins.
+
+Host choices: the owner leash (1500), follow distance (500), fly height (800), attack range
+(2500), Marios only within 400, the attack pick (tornado one time in `mSLTornadoProp`, the ball
+past the vomit's reach, else the vomit), sleep after 7200 idle ticks, `respawn`. Reconstructed:
+joint positions (offsets unless the host sets `joints`), the vomit footprint (discs marching to
+1800 out), the ball stamp's base radius, fall gravity, fly speed as a per-tick speed with a
+catch-up multiplier, the tornado fade (60), one hit per target per vomit/swing, the ball
+checking the ground from tick 0 (the second fight's rule). A tornado never touches a target
+standing still at its goal (it circles 600 out), as in the game.
