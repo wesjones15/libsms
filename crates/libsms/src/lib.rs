@@ -26,6 +26,7 @@ pub mod limits;
 pub mod mario;
 pub mod math;
 pub mod params;
+pub mod petey;
 pub mod prm;
 pub mod skeleton;
 pub mod tongue;
