@@ -14,6 +14,7 @@
 
 pub mod assets;
 pub mod flowers;
+pub mod goop;
 pub mod heat_haze;
 pub mod view;
 
@@ -30,7 +31,7 @@ use libsms::{
 use view::SmsView;
 
 /// ABI version, bumped when the C interface changes.
-pub const SMS_ABI_VERSION: u32 = 45;
+pub const SMS_ABI_VERSION: u32 = 46;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sms_abi_version() -> u32 {
@@ -482,6 +483,11 @@ pub struct SmsSim {
     /// The host's sambo flower world, if it set one ([`flowers::sms_sim_set_flowers`]): this
     /// sim's water and stomps hit its things and report them there. Not owned.
     pub(crate) flower_world: *mut flowers::SmsFlowers,
+    /// The host's goop world, if it set one ([`goop::sms_sim_set_goop`]): Mario stands in its
+    /// goop, his water cleans it and hits its critters. Not owned.
+    pub(crate) goop_world: *mut goop::SmsGoop,
+    /// Bowser Jr., when this sim is him ([`goop::sms_sim_set_koopajr`]).
+    pub(crate) jr: Option<libsms::koopajr::KoopaJr>,
     status: CString,
     clip: CString,
     pub(crate) poisoned: bool,
@@ -507,8 +513,14 @@ pub struct SmsSpray {
     pub emits: u32,
 }
 
-/// The host's callbacks, plus this tick's events for the view's sounds.
-struct FfiHost<'a>(&'a SmsHost, Vec<Event>, Vec<libsms::flower::Target>);
+/// The host's callbacks, plus this tick's events for the view's sounds, the flower world's and
+/// critters' targets, and the goop world's field (null for none).
+struct FfiHost<'a>(
+    &'a SmsHost,
+    Vec<Event>,
+    Vec<libsms::flower::Target>,
+    *const libsms::goop::GoopField,
+);
 
 impl Host for FfiHost<'_> {
     fn ground(&self, pos: Vec3) -> Option<GroundHit> {
@@ -562,6 +574,11 @@ impl Host for FfiHost<'_> {
             }
         }
         Vec3::new(moved.x, center.y, moved.z)
+    }
+
+    fn goop(&self, pos: Vec3) -> Option<libsms::goop::GoopKind> {
+        // SAFETY: the goop world outlives the step it was handed to (`sms_sim_set_goop`).
+        unsafe { self.3.as_ref() }.and_then(|f| f.kind_at(pos))
     }
 
     fn enemies(&self, pos: Vec3, radius: f32, out: &mut Vec<Enemy>) {
@@ -642,7 +659,9 @@ impl Host for FfiHost<'_> {
         self.1.push(event);
         // The sambo flowers' own stomps never reach the host's enemy table.
         if let Event::EnemyHit { id, .. } = event {
-            if libsms::flower::FlowerWorld::owns(id) {
+            if libsms::flower::FlowerWorld::owns(id)
+                || libsms::goop_critters::Critters::owns_id(id)
+            {
                 return;
             }
         }
@@ -789,7 +808,7 @@ fn water_hits(host: &SmsHost, events: &[WaterEvent]) {
             };
             // The owner records this for remote puppets, which do not query enemies.
             unsafe { f(host.user, &impact) };
-            if libsms::flower::FlowerWorld::owns(id) {
+            if libsms::flower::FlowerWorld::owns(id) || libsms::goop_critters::Critters::owns_id(id) {
                 continue;
             }
             let kind = if burst {
@@ -883,6 +902,8 @@ pub unsafe extern "C" fn sms_sim_new(
             foreign_wet: false,
             sim,
             flower_world: std::ptr::null_mut(),
+            goop_world: std::ptr::null_mut(),
+            jr: None,
             status: CString::default(),
             clip: CString::default(),
             poisoned: false,
@@ -938,7 +959,21 @@ pub unsafe extern "C" fn sms_sim_step(
         if let Some(f) = fw.as_deref() {
             f.world.targets(&mut targets);
         }
-        let mut h = FfiHost(host, Vec::new(), targets);
+        // SAFETY: the host keeps a world it set alive until it clears it (`sms_sim_set_goop`).
+        let gw: *mut goop::SmsGoop = s.goop_world;
+        if let Some(g) = unsafe { gw.as_ref() } {
+            targets.extend(g.critters.enemies().into_iter().map(|e| libsms::flower::Target {
+                id: e.id,
+                pos: e.pos,
+                radius: e.radius,
+                height: e.height,
+            }));
+        }
+        let field: *const libsms::goop::GoopField =
+            unsafe { gw.as_ref() }.map_or(std::ptr::null(), |g| &g.field as *const _);
+        let mut h = FfiHost(host, Vec::new(), targets, field);
+        let brush = pad.r;
+        let mut jr = s.jr.take();
         // Water on the ground under Mario makes a belly slide glide.
         s.sim.mario.water_underfoot = s.foreign_wet || s.water.on_ground_near(s.sim.mario.pos);
         wet_from_own_spray(s);
@@ -946,8 +981,28 @@ pub unsafe extern "C" fn sms_sim_step(
         let mut drips = Vec::new();
         let n = s
             .sim
-            .advance_observed(&mut h, &pad, camera_yaw, dt, |mario, h| {
+            .advance_observed_mut(&mut h, &pad, camera_yaw, dt, |mario, h| {
                 let events = std::mem::take(&mut h.1);
+                // SAFETY: as above; nothing else holds the world during the step.
+                if let Some(g) = unsafe { gw.as_mut() } {
+                    for e in &events {
+                        match *e {
+                            Event::GoopPaint { pos, radius, kind } => g.field.stamp(&*h, pos, radius, kind),
+                            Event::EnemyHit { id, .. } if libsms::goop_critters::Critters::owns_id(id) => {
+                                g.critters.stomp(id);
+                            }
+                            _ => {}
+                        }
+                    }
+                    if let Some(j) = jr.as_mut() {
+                        j.step(mario, &*h, &mut g.field, brush);
+                        g.take_jr_events(j);
+                    }
+                    g.drain_field_events();
+                } else if let Some(j) = jr.as_mut() {
+                    j.events.clear();
+                }
+                let mario: &libsms::Mario = mario;
                 // A stomp or pound on one of the flower world's things: reported, not applied.
                 if let Some(f) = fw.as_deref_mut() {
                     for e in &events {
@@ -977,6 +1032,7 @@ pub unsafe extern "C" fn sms_sim_step(
                     });
                 }
             });
+        s.jr = jr;
         // `TModelWaterManager`: emitted every tick, moved once a 30 Hz frame.
         for e in &emits {
             if s.sim.mario.juice_mouth && e.nozzle == libsms::NozzleKind::Spray {
@@ -1011,6 +1067,22 @@ pub unsafe extern "C" fn sms_sim_step(
                         }
                     }
                 }
+            }
+            // SAFETY: as above.
+            if let Some(g) = unsafe { gw.as_mut() } {
+                for (pos, r) in s.water.cleans.drain(..) {
+                    g.field.clean(pos, r);
+                }
+                for ev in &s.water.events {
+                    if let WaterEvent::Hit { id, pos, attack, .. } = *ev {
+                        if libsms::goop_critters::Critters::owns_id(id) {
+                            g.critters.water_hit(id, pos, attack);
+                        }
+                    }
+                }
+                g.drain_field_events();
+            } else {
+                s.water.cleans.clear();
             }
             water_hits(host, &s.water.events);
             // SAFETY: as above.
@@ -1618,6 +1690,10 @@ pub unsafe extern "C" fn sms_struct_sizes(out: *mut u32, max: u32) -> u32 {
         size_of::<view::SmsShineFrame>(),
         size_of::<view::SmsShineInfo>(),
         size_of::<view::SmsCameraShot>(),
+        size_of::<goop::SmsGoopEvent>(),
+        size_of::<goop::SmsGoopTarget>(),
+        size_of::<goop::SmsCritter>(),
+        size_of::<goop::SmsJrState>(),
     ];
     if !out.is_null() {
         for (i, s) in sizes.iter().take(max as usize).enumerate() {
@@ -1683,7 +1759,7 @@ mod tests {
             takeables: None,
             take: None,
         };
-        let mut adapter = FfiHost(&host, Vec::new(), Vec::new());
+        let mut adapter = FfiHost(&host, Vec::new(), Vec::new(), std::ptr::null());
         for flags in 0..8 {
             adapter.event(Event::FallImpact {
                 drop: 16000.0,
@@ -1992,15 +2068,70 @@ mod tests {
     }
 
     #[test]
+    fn bowser_jr_paints_goop_and_the_world_grows_critters_through_the_c_abi() {
+        let Some(dir) = libsms::assets::find(None) else {
+            eprintln!("skipping: no assets/");
+            return;
+        };
+        let dir = CString::new(dir.to_string_lossy().as_bytes()).unwrap();
+        let mut c = [0u32, 0, 0];
+        let host = SmsHost {
+            user: &mut c as *mut [u32; 3] as *mut c_void,
+            ground: Some(flat),
+            roof: None,
+            walls: None,
+            event: None,
+            enemies: None,
+            water: None,
+            takeables: None,
+            take: None,
+        };
+        unsafe {
+            let g = goop::sms_goop_new();
+            goop::sms_goop_setup(g, dir.as_ptr());
+            goop::sms_goop_critter_tune(g, 4, 2, 30, 400.0, 8.0, 0);
+            let sim = sms_sim_new(dir.as_ptr(), &SmsVec3::default(), 0);
+            goop::sms_sim_set_goop(sim, g);
+            goop::sms_sim_set_koopajr(sim, 1, 7);
+            let brush = SmsPad { stick_y: 1.0, r: 1, r_analog: 255, ..SmsPad::default() };
+            for _ in 0..120 {
+                sms_sim_step(sim, &host, &brush, 0, 1.0 / 60.0, std::ptr::null_mut());
+            }
+            let mut st = goop::SmsJrState::default();
+            assert_eq!(goop::sms_jr_state(sim, &mut st), 1);
+            assert_eq!(st.form, 0);
+            let mut keys = [0i32; 64];
+            assert!(goop::sms_goop_chunk_list(g, keys.as_mut_ptr(), std::ptr::null_mut(), 32) > 0, "the brush painted");
+            assert!(goop::sms_goop_kind_at(g, SmsVec3::default()) >= 0);
+            // The goop grows Stus near its owner.
+            let owner = SmsVec3::default();
+            for _ in 0..120 {
+                goop::sms_goop_step(g, &host, &owner, std::ptr::null(), 0, &owner, 1, 1.0 / 60.0);
+            }
+            assert!(goop::sms_goop_critters(g, std::ptr::null_mut(), 0) > 0);
+            // Bowser Jr. shoots.
+            assert_eq!(goop::sms_jr_action(sim, &host, 0), 1);
+            assert_eq!(goop::sms_jr_action(sim, &host, 4), 1);
+            let mut evs = vec![std::mem::zeroed::<goop::SmsGoopEvent>(); 256];
+            let n = goop::sms_goop_events(g, evs.as_mut_ptr(), 256) as usize;
+            assert!(evs[..n].iter().any(|e| e.kind == goop::ev::JR_FORM));
+            assert!(evs[..n].iter().any(|e| e.kind == goop::ev::SHOT));
+            goop::sms_sim_set_goop(sim, std::ptr::null_mut());
+            sms_sim_free(sim);
+            goop::sms_goop_free(g);
+        }
+    }
+
+    #[test]
     fn struct_sizes_are_what_hosts_mirror() {
-        let mut sizes = [0u32; 27];
-        let n = unsafe { sms_struct_sizes(sizes.as_mut_ptr(), 27) } as usize;
+        let mut sizes = [0u32; 31];
+        let n = unsafe { sms_struct_sizes(sizes.as_mut_ptr(), 31) } as usize;
         // ror2-mario's Native.cs and ror2-common's view structs check these at load.
         assert_eq!(
             &sizes[..n],
             &[
                 12, 20, 8, 16, 32, 72, 24, 52, 40, 24, 12, 64, 48, 60, 24, 28, 24, 36, 16, 12, 32,
-                36, 72, 40, 52, 16, 40
+                36, 72, 40, 52, 16, 40, 48, 40, 56, 20
             ]
         );
     }

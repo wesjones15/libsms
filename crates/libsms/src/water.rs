@@ -174,6 +174,10 @@ pub struct WaterManager {
     pub wet_patches: Vec<WetPatch>,
     pub types: [WaterParticle; 17],
     pub events: Vec<WaterEvent>,
+    /// Where the water washed goop off since the host last took them: `(pos, radius)`, a
+    /// ground impact's `mCleanSize * 10` (`splashGround`) or a wall's `mCleanSize * 32`
+    /// (`splashWall`). The host cleans its [`crate::goop::GoopField`] there and clears this.
+    pub cleans: Vec<(Vec3, f32)>,
     /// Host tuning: the Spray nozzle's water leaves at this times its speed, and its
     /// horizontal speed cap is this times its size, so a spray lands about this many times
     /// further. 1: the game's. The other nozzles' water is the game's.
@@ -208,6 +212,7 @@ impl WaterManager {
             wet_patches: Vec::with_capacity(SLOTS),
             types: params.water_particles.clone(),
             events: Vec::new(),
+            cleans: Vec::new(),
             reach: 1.0,
             spray_speed: 1.0,
             water_speed: 1.0,
@@ -389,6 +394,9 @@ impl WaterManager {
     /// As [`Self::wet_ground`], at `scale` times a drop's coverage.
     fn wet_ground_sized(&mut self, host: &dyn Host, pos: Vec3, normal: Vec3, kind: usize, scale: f32) {
         let radius = (self.types[kind].clean_size * 10.0 * scale).clamp(20.0, 400.0);
+        if self.cleans.len() < 256 {
+            self.cleans.push((pos, radius));
+        }
         let duration = self.types[kind].alive.clamp(30.0, k::STUCK_LIFE);
         let normal = normal.normalize_or(Vec3::Y);
         // Refresh nearby marks without building an opaque stack of overlapping decals.
@@ -590,6 +598,9 @@ impl WaterManager {
                 self.particles[i].pos.z = moved.z - w.normal.z * p.size;
                 if p.state == State::Flying {
                     let at = self.particles[i].pos + w.normal * p.size;
+                    if self.cleans.len() < 256 {
+                        self.cleans.push((at, self.types[p.kind].clean_size * 32.0));
+                    }
                     if self.rand() < k::WALL_SPLASH {
                         self.events.push(WaterEvent::Splash(at));
                     }

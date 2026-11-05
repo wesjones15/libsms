@@ -100,10 +100,23 @@ impl Sim {
         dt: f32,
         mut after_tick: impl FnMut(&Mario, &mut H),
     ) -> u32 {
+        self.advance_observed_mut(host, pad, camera_yaw, dt, |m, h| after_tick(m, h))
+    }
+
+    /// As [`Self::advance_observed`], with Mario mutable in the callback (a host extension that
+    /// steps with him, like [`koopajr::KoopaJr::step`]).
+    pub fn advance_observed_mut<H: Host>(
+        &mut self,
+        host: &mut H,
+        pad: &Pad,
+        camera_yaw: math::Angle,
+        dt: f32,
+        mut after_tick: impl FnMut(&mut Mario, &mut H),
+    ) -> u32 {
         let n = self.clock.accumulate(dt);
         for _ in 0..n {
             self.mario.tick(host, pad, camera_yaw);
-            after_tick(&self.mario, host);
+            after_tick(&mut self.mario, host);
         }
         n
     }

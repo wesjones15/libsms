@@ -341,7 +341,7 @@ pub unsafe extern "C" fn sms_fw_step(
             .collect()
     };
     let n = s.clock.accumulate(dt);
-    let h = FfiHost(host, Vec::new(), Vec::new());
+    let h = FfiHost(host, Vec::new(), Vec::new(), std::ptr::null());
     let mut out = Vec::new();
     for _ in 0..n {
         s.world.step(&h, &feet, &mut out);

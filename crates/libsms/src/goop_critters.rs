@@ -546,6 +546,11 @@ impl Critters {
         self.events.push(CritterEvent::Effect { name, pos, scale });
     }
 
+    /// Whether an id is in the critters' range (any world's).
+    pub fn owns_id(id: u64) -> bool {
+        (ID_BASE..ID_BASE + 0x1000_0000).contains(&id)
+    }
+
     /// Whether an id is one of these critters' (or their shots').
     pub fn owns(&self, id: u64) -> bool {
         self.stus.iter().any(|s| s.id == id)
