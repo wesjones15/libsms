@@ -2,9 +2,11 @@
 //! game thread posts animation clocks and events to `libsms-audio` after each 120 Hz tick
 //! (`Sim::advance_observed`). All positions and the listener matrix use decomp units.
 //!
-//! Hosts with their own soundtrack start it without music.
+//! Hosts with their own soundtrack start it without music. The stream follows the default
+//! output device (libcommon's `audio::out`), so a VR headset's audio reconnecting, or another
+//! output picked in Windows, doesn't leave Mario silent.
 
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::traits::DeviceTrait;
 use glam::{Mat4, Vec3};
 use libsms::{Event, JumpKind, Mario, NozzleKind, SoundCue};
 use libsms_assets::sound::{AnimSoundTable, SoundData};
@@ -110,7 +112,8 @@ pub struct Audio {
     volume: Arc<AtomicU32>,
     /// While set the stream outputs silence and the sound system does not advance.
     paused: Arc<AtomicBool>,
-    _stream: cpal::Stream,
+    /// The stream, kept on the default output device (libcommon's `audio::out`).
+    _output: libcommon::audio::out::Output,
     pub rate: u32,
     pub channels: u16,
 }
@@ -431,27 +434,15 @@ impl Audio {
         }
         let sys = Arc::new(Mutex::new(sys));
         let volume = Arc::new(AtomicU32::new(1.0f32.to_bits()));
-        let device = cpal::default_host()
-            .default_output_device()
-            .ok_or("no output device")?;
-        let config = device.default_output_config()?;
-        let (rate, channels) = (config.sample_rate().0, config.channels());
-        let v = volume.clone();
         let paused = Arc::new(AtomicBool::new(false));
-        let p = paused.clone();
-        let stream = match config.sample_format() {
-            cpal::SampleFormat::F32 => output::<f32>(&device, &config.into(), sys.clone(), v, p)?,
-            cpal::SampleFormat::I16 => output::<i16>(&device, &config.into(), sys.clone(), v, p)?,
-            cpal::SampleFormat::U16 => output::<u16>(&device, &config.into(), sys.clone(), v, p)?,
-            format => return Err(format!("unsupported output sample format {format}").into()),
-        };
-        stream.play()?;
+        let output = keep_output("sms-audio", sys.clone(), volume.clone(), paused.clone())?;
+        let (rate, channels) = (output.rate, output.channels);
         Ok(Self {
             scene,
             sys,
             volume,
             paused,
-            _stream: stream,
+            _output: output,
             rate,
             channels,
         })
@@ -609,7 +600,8 @@ pub struct Pikmin2Audio {
     paused: Arc<AtomicBool>,
     /// Seconds not yet run as the sound system's 30 Hz frames.
     owed: f32,
-    _stream: cpal::Stream,
+    /// The stream, kept on the default output device (libcommon's `audio::out`).
+    _output: libcommon::audio::out::Output,
     pub rate: u32,
     pub channels: u16,
 }
@@ -639,18 +631,9 @@ impl Pikmin2Audio {
         let sys = Arc::new(Mutex::new(SoundSystem::new(Arc::new(SoundData::load_pikmin2(dir)?))));
         let volume = Arc::new(AtomicU32::new(1.0f32.to_bits()));
         let paused = Arc::new(AtomicBool::new(false));
-        let device = cpal::default_host().default_output_device().ok_or("no output device")?;
-        let config = device.default_output_config()?;
-        let (rate, channels) = (config.sample_rate().0, config.channels());
-        let (v, p) = (volume.clone(), paused.clone());
-        let stream = match config.sample_format() {
-            cpal::SampleFormat::F32 => output::<f32>(&device, &config.into(), sys.clone(), v, p)?,
-            cpal::SampleFormat::I16 => output::<i16>(&device, &config.into(), sys.clone(), v, p)?,
-            cpal::SampleFormat::U16 => output::<u16>(&device, &config.into(), sys.clone(), v, p)?,
-            format => return Err(format!("unsupported output sample format {format}").into()),
-        };
-        stream.play()?;
-        Ok(Self { sys, volume, paused, owed: 0.0, _stream: stream, rate, channels })
+        let output = keep_output("p2-audio", sys.clone(), volume.clone(), paused.clone())?;
+        let (rate, channels) = (output.rate, output.channels);
+        Ok(Self { sys, volume, paused, owed: 0.0, _output: output, rate, channels })
     }
 
     /// Output gain, 0..1.
@@ -687,12 +670,35 @@ impl Pikmin2Audio {
     }
 }
 
+/// `sys` rendered on the default output device, opened again on the new default when that device
+/// goes away or Windows moves the default (a VR headset's audio reconnecting).
+fn keep_output(
+    name: &str,
+    sys: Arc<Mutex<SoundSystem>>,
+    volume: Arc<AtomicU32>,
+    paused: Arc<AtomicBool>,
+) -> Result<libcommon::audio::out::Output, Box<dyn std::error::Error>> {
+    Ok(libcommon::audio::out::Output::start(name, move |device: &cpal::Device, lost| {
+        let config = device.default_output_config().map_err(|e| format!("output config: {e}"))?;
+        let (rate, channels) = (config.sample_rate().0, config.channels());
+        let (sys, v, p) = (sys.clone(), volume.clone(), paused.clone());
+        let stream = match config.sample_format() {
+            cpal::SampleFormat::F32 => output::<f32>(device, &config.into(), sys, v, p, lost),
+            cpal::SampleFormat::I16 => output::<i16>(device, &config.into(), sys, v, p, lost),
+            cpal::SampleFormat::U16 => output::<u16>(device, &config.into(), sys, v, p, lost),
+            format => return Err(format!("unsupported output sample format {format}")),
+        };
+        Ok((stream.map_err(|e| format!("output stream: {e}"))?, rate, channels))
+    })?)
+}
+
 fn output<T: cpal::SizedSample + cpal::FromSample<f32>>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
     sys: Arc<Mutex<SoundSystem>>,
     volume: Arc<AtomicU32>,
     paused: Arc<AtomicBool>,
+    lost: Arc<AtomicBool>,
 ) -> Result<cpal::Stream, cpal::BuildStreamError> {
     let channels = config.channels as usize;
     let rate = config.sample_rate.0 as f32;
@@ -731,7 +737,10 @@ fn output<T: cpal::SizedSample + cpal::FromSample<f32>>(
                 }
             }
         },
-        |e| eprintln!("sound output: {e}"),
+        move |e| {
+            eprintln!("sound output: {e}");
+            lost.store(true, Ordering::Relaxed);
+        },
         None,
     )
 }

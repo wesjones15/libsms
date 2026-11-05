@@ -5,7 +5,7 @@ edition.workspace = true
 publish.workspace = true
 
 [dependencies]
-libcommon.workspace = true
+libcommon = { workspace = true, features = ["cpal"] }
 libsms.workspace = true
 libsms-assets.workspace = true
 libsms-audio.workspace = true

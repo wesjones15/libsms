@@ -72,6 +72,20 @@ pub struct WaterLook {
     /// drop's tail is drawn behind it, so a stream never seems to start where the nozzle was a
     /// moment ago (running, he leaves the water he threw behind him).
     pub nozzle: Option<Vec3>,
+    /// Each flying drop faces the eye along its own line of sight, and is pulled out along its
+    /// motion as seen from there, instead of along the camera's screen axes. From far behind
+    /// Mario the two are the same; from his own head (a VR host's first person) the stream runs
+    /// away from the eye, and the screen axes stand each drop's streak across the stream.
+    pub per_drop_facing: bool,
+}
+
+/// The camera's `right` and `up` turned to face `eye` from a drop at `c`: the drop's own
+/// billboard axes, perpendicular to its line of sight. Unchanged where that's undefined.
+fn facing_axes(eye: Vec3, c: Vec3, right: Vec3, up: Vec3) -> (Vec3, Vec3) {
+    let Some(d) = (c - eye).try_normalize() else { return (right, up) };
+    let Some(r) = (right - d * right.dot(d)).try_normalize() else { return (right, up) };
+    let u = (up - d * up.dot(d) - r * up.dot(r)).normalize_or(up);
+    (r, u)
 }
 
 fn bti(dir: &Path, rel: &str) -> Option<libsms_assets::texture::Texture> {
@@ -203,6 +217,7 @@ impl WaterLook {
                     if let Some(n) = self.nozzle.filter(|_| !p.body_drip) {
                         came = came.min((c - n).dot(heading).max(0.0));
                     }
+                    let (right, up) = if self.per_drop_facing { facing_axes(eye, c, right, up) } else { (right, up) };
                     let at = |x: f32, y: f32| c + right * x + up * y;
                     let v = velocity * water.extension(p);
                     let (vx, vy) = (v.dot(right), v.dot(up));
@@ -355,6 +370,48 @@ mod tests {
             }
         }
         assert!(drawn, "no drop was ever drawn");
+    }
+
+    #[test]
+    fn per_drop_facing_turns_each_drop_to_the_eye_and_streaks_it_along_the_stream() {
+        // First person from Mario's head: the nozzle is just below and behind the eye and the
+        // stream runs off to the right, ahead and a little up, as a VR player aims it.
+        let mut water = WaterManager::new(&Params::default());
+        let eye = Vec3::new(0.0, 160.0, 0.0);
+        let muzzle = Vec3::new(0.0, 120.0, -20.0);
+        let dir = Vec3::new(0.7, 0.15, 0.7).normalize();
+        let emit = WaterEmit {
+            nozzle: NozzleKind::Spray, pos: muzzle, dir,
+            power: 40.0, count: 3, attack: 1, hit_radius: 50.0, hit_height: 80.0,
+            inherit: Vec3::ZERO, size: 50.0, size_tremble: 0.0, dir_tremble: 0.0,
+            pow_tremble: 0.0, particle_type: 0, burst: false, spin: false,
+        };
+        for _ in 0..8 {
+            water.emit(&emit);
+            water.step(&FlatHost::default(), Vec3::ZERO);
+        }
+        // Looking straight ahead (+z), the stream off to the right of the view.
+        let (right, up) = (Vec3::X, Vec3::Y);
+        let mut look = WaterLook { per_drop_facing: true, ..WaterLook::default() };
+        look.build(&water, 0.0, eye, right, up, 0);
+        assert!(look.drop_quads > 4, "only {} drops", look.drop_quads);
+        let mut along = 0;
+        for quad in look.vertices[..look.drop_quads as usize * 4].chunks_exact(4) {
+            let c = quad.iter().map(|v| v.pos).sum::<Vec3>() / 4.0;
+            let normal = (quad[1].pos - quad[0].pos).cross(quad[3].pos - quad[0].pos).normalize_or_zero();
+            let sight = (c - eye).normalize();
+            assert!(normal.dot(sight).abs() > 0.99, "a drop is not square to its line of sight: {}", normal.dot(sight));
+            // Its long diagonal (head to tail) runs with the stream, not across it.
+            let long = quad[0].pos - quad[2].pos;
+            let short = quad[1].pos - quad[3].pos;
+            if long.length() > short.length() * 1.5 {
+                let streak = long.normalize();
+                let stream = (dir - sight * dir.dot(sight)).normalize();
+                assert!(streak.dot(stream).abs() > 0.9, "a streak stands {:.0} degrees off the stream", streak.dot(stream).abs().acos().to_degrees());
+                along += 1;
+            }
+        }
+        assert!(along > 0, "no drop was streaked");
     }
 
     #[test]

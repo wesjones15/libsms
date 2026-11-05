@@ -510,6 +510,9 @@ pub struct View {
     /// Luigi's under [`LUIGI_CUT`]).
     vr_arms: bool,
     vr_cuts: Vec<(u32, Option<VrCut>)>,
+    /// A VR host's eye height above Mario's feet (decomp units; 0: none): the spin jump's swirl
+    /// ([`VR_EYE_EFFECTS`]) is centred there ([`View::set_vr_eye`]).
+    vr_eye: f32,
 }
 
 /// Host-facing body attachment points shared by every skin (the FFI's `sms_view_anchor`
@@ -609,6 +612,25 @@ pub const MARIO_EFFECTS: &[&str] = &[
     // Enemy water-hit marker, TSmallEnemy/TChuuHana::receiveMessage, cue 0xE7.
     crate::water_hit::EFFECT,
 ];
+
+/// The effects a VR host's eye recentres ([`View::set_vr_eye`]): the spin jump's swirl and its
+/// spark (`TMario::emitBlurSpinJump`, MarioParticle.cpp:564).
+pub const VR_EYE_EFFECTS: &[&str] = &["ms_m_blur2", "ms_m_blur2sp"];
+
+/// The slot's effect is one [`VR_EYE_EFFECTS`] centres: a held slot is its index in
+/// [`MARIO_EFFECTS`], a following one that past `FOLLOW_SLOTS`.
+fn eye_slot(slot: u32) -> bool {
+    let i = if slot >= FOLLOW_SLOTS { slot - FOLLOW_SLOTS } else { slot } as usize;
+    MARIO_EFFECTS.get(i).is_some_and(|n| VR_EYE_EFFECTS.contains(n))
+}
+
+/// `mtx` moved up or down so its origin is `eye` above the feet at `feet` (0: unchanged).
+fn at_eye(mut mtx: Mat4, feet: Vec3, eye: f32) -> Mat4 {
+    if eye > 0.0 {
+        mtx.w_axis.y = feet.y + eye;
+    }
+    mtx
+}
 
 /// Luigi's alt-skin: Mario's effects are his, but the red parts turn green. From
 /// `TMario::emitBlurSpinJump` (MarioParticle.cpp:564: the spin jump's swirl `ms_m_blur2` and
@@ -1262,6 +1284,7 @@ impl View {
             assets_dir: dir.to_path_buf(),
             anchors: [None; ANCHOR_COUNT],
             vr_arms: false,
+            vr_eye: 0.0,
             vr_cuts: Vec::new(),
         })
     }
@@ -1443,6 +1466,7 @@ impl View {
             center: None,
             anchors: [None; ANCHOR_COUNT],
             vr_arms: false,
+            vr_eye: 0.0,
             vr_cuts: Vec::new(),
             fx: Particles::default(),
             movement_effects: false,
@@ -1542,6 +1566,7 @@ impl View {
             center: None,
             anchors: [None; ANCHOR_COUNT],
             vr_arms: false,
+            vr_eye: 0.0,
             vr_cuts: Vec::new(),
             fx,
             movement_effects: true,
@@ -1832,6 +1857,14 @@ impl View {
     /// its arm space, keyed [`VR_ARM_KEY`] + side (0 right, 1 left) under the body's model.
     pub fn set_vr_arms(&mut self, on: bool) {
         self.vr_arms = on;
+    }
+
+    /// A VR host's first person: the eye is `height` above Mario's feet (decomp units; 0 or less
+    /// puts it back). The spin jump's swirl wraps round Mario's middle in the game, which seen
+    /// from his head is a ring at the feet; with an eye it's centred on the eye instead, so the
+    /// player is in the middle of it as Mario is from outside.
+    pub fn set_vr_eye(&mut self, height: f32) {
+        self.vr_eye = if height.is_finite() { height.max(0.0) } else { 0.0 };
     }
 
     /// The model a same-rig skin draws as its body, when that skin is current and loaded.
@@ -2228,8 +2261,10 @@ impl View {
                 tick.pos + yaw_q * (middle - tick_tilt * middle),
             );
             // Let-go emitters still follow their animation matrix, as in MarioParticle.cpp.
+            let eye = self.vr_eye;
             for &(slot, at) in &self.fx_binds {
                 if let Some(mtx) = fx_matrix(at, tick_root, &joints, self.center, &muzzle_mtx) {
+                    let mtx = if eye_slot(slot) { at_eye(mtx, tick.pos, eye) } else { mtx };
                     self.fx.rebind(slot, mtx);
                 }
             }
@@ -2237,6 +2272,7 @@ impl View {
                 let Some(mtx) = fx_matrix(cue.at, tick_root, &joints, self.center, &muzzle_mtx) else {
                     continue;
                 };
+                let mtx = if VR_EYE_EFFECTS.contains(&cue.name) { at_eye(mtx, tick.pos, eye) } else { mtx };
                 if matches!(cue.at, FxAt::Once { .. }) {
                     self.fx.emit(cue.name, mtx, cue.scale);
                 } else if matches!(cue.at, FxAt::MuzzleFollow(_) | FxAt::FeetFollow | FxAt::JointFollow(_)) {
@@ -2584,6 +2620,9 @@ impl View {
 
 /// The low byte of a VR arm draw's key ([`View::set_vr_arms`]): + 0 right, + 1 left.
 pub const VR_ARM_KEY: u64 = 0x10;
+/// The low byte of the VR body draw's key: the body without its head and forearms
+/// (libcommon's `vr_arms::torso_map`), drawn where the body is, for a host's first person.
+pub const VR_BODY_KEY: u64 = VR_ARM_KEY + 2;
 /// [`View::vr_cuts`]' key for Luigi's HSD body (not one of the J3D models).
 const LUIGI_CUT: u32 = u32::MAX;
 
@@ -2591,12 +2630,15 @@ const LUIGI_CUT: u32 = u32::MAX;
 struct VrCut {
     arms: libcommon::vr_arms::Arms,
     maps: Vec<(u8, Vec<u32>)>,
+    /// The VR body's vertex map (no head, no forearms), for a body with a head joint we know.
+    torso: Option<Vec<u32>>,
 }
 
 impl VrCut {
-    fn new(mesh: &libcommon::vr_arms::Mesh, arms: libcommon::vr_arms::Arms) -> VrCut {
+    fn new(mesh: &libcommon::vr_arms::Mesh, arms: libcommon::vr_arms::Arms, head: Option<usize>) -> VrCut {
         let maps = arms.arms.iter().map(|a| (a.side, a.vertex_map(&mesh.triangles, mesh.positions.len()))).collect();
-        VrCut { arms, maps }
+        let torso = head.map(|h| libcommon::vr_arms::torso_map(mesh, &arms, h));
+        VrCut { arms, maps, torso }
     }
 }
 
@@ -2622,13 +2664,15 @@ impl View {
             self.luigi.as_ref().map(|l| {
                 let (mesh, sides) = l.vr_mesh();
                 let (arms, _) = libcommon::vr_arms::Arms::load_or_cut(&self.assets_dir, "sms-luigi", &mesh, sides);
-                VrCut::new(&mesh, arms)
+                VrCut::new(&mesh, arms, None)
             })
         } else {
+            // Mario's head joint; Piantissimo is on his exact rig. Yoshi's isn't, and keeps no body.
+            let head = if self.yoshi.as_ref().is_some_and(|y| y.model == model) { None } else { self.head };
             match (self.vr_cut_name(model), self.models.get(model as usize)) {
                 (Some((name, rig)), Some(mdl)) => {
                     let (mesh, arms, _) = crate::vr_arms::load_or_cut(&self.assets_dir, &name, &mdl.bmd, &mdl.batches, rig);
-                    Some(VrCut::new(&mesh, arms))
+                    Some(VrCut::new(&mesh, arms, head))
                 }
                 _ => None,
             }
@@ -2746,8 +2790,12 @@ impl View {
     /// (BODY_HAND_SHAPES) whichever hands the clip shows.
     fn push_vr_arms(&mut self, model: u32, joints: &[Mat4], flags: u8, hidden: Option<&[usize]>) {
         let body_key = (model as u64) << 56;
-        let Some((body_vertex, body_color)) =
-            self.draws.iter().rev().find(|d| d.key == body_key).map(|d| (d.first_vertex as usize, d.first_color as usize))
+        let Some((body_vertex, body_color, body_pos, body_rot)) = self
+            .draws
+            .iter()
+            .rev()
+            .find(|d| d.key == body_key)
+            .map(|d| (d.first_vertex as usize, d.first_color as usize, d.pos, d.rot))
         else {
             return;
         };
@@ -2767,7 +2815,45 @@ impl View {
             None => (Vec::new(), 0),
         };
         self.push_arm_draws(&cut, model, &skinned, joints, body_vertex, body_color, colors, flags);
+        if let Some(map) = &cut.torso {
+            self.push_vr_body(model, map, body_vertex, body_color, colors, body_pos, body_rot, flags);
+        }
         self.put_vr_cut(model, cut);
+    }
+
+    /// The VR body draw ([`VR_BODY_KEY`]): the body's own posed vertices this frame (its draw at
+    /// `body_vertex`, as it stands, hidden shapes and all), through `map`, placed where the body is.
+    #[allow(clippy::too_many_arguments)]
+    fn push_vr_body(&mut self, model: u32, map: &[u32], body_vertex: usize, body_color: usize, colors: usize,
+        pos: Vec3, rot: Quat, flags: u8) {
+        let first_vertex = self.positions.len() as u32;
+        let first_color = self.colors.len() as u32;
+        for (i, &src) in map.iter().enumerate() {
+            let from = (src != libcommon::vr_arms::COLLAPSED).then_some(body_vertex + src as usize);
+            let p = from.and_then(|f| self.positions.get(f).copied());
+            let n = from.and_then(|f| self.normals.get(f).copied());
+            self.positions.push(p.unwrap_or(Vec3::ZERO));
+            self.normals.push(n.unwrap_or(Vec3::Y));
+            let uv = self.uvs.get(body_vertex + i).copied().unwrap_or([0.0, 0.0]);
+            self.uvs.push(uv);
+        }
+        for c in 0..colors {
+            let tex = self.texture_ids.get(body_color + c).copied().unwrap_or(-1);
+            let color = self.colors.get(body_color + c).copied().unwrap_or([1.0; 4]);
+            self.texture_ids.push(tex);
+            self.colors.push(color);
+        }
+        self.draws.push(Draw {
+            key: ((model as u64) << 56) | VR_BODY_KEY,
+            model,
+            kind: model as u8,
+            flags,
+            pos,
+            rot,
+            first_vertex,
+            first_color,
+            alpha: 1.0,
+        });
     }
 
     /// Luigi's VR arms from his own skinned draw (`first_vertex`, `first_color`), posed by
@@ -3996,9 +4082,20 @@ mod tests {
         assert!(v.draws.iter().all(|d| d.key & 0xFF < VR_ARM_KEY), "no arms until asked");
         v.set_vr_arms(true);
         v.update(&mut sim, 0.0);
-        let arms: Vec<Draw> = v.draws.iter().filter(|d| d.key & 0xFF >= VR_ARM_KEY).copied().collect();
+        let arms: Vec<Draw> = v.draws.iter().filter(|d| d.key & 0xFF >= VR_ARM_KEY && d.key & 0xFF < VR_BODY_KEY).copied().collect();
         assert_eq!(arms.len(), 2);
         let n = (arms[1].first_vertex - arms[0].first_vertex) as usize;
+        // The VR body: where the body is, without its head or forearms, but with the legs.
+        let body = v.draws.iter().find(|d| d.key == (u64::from(models::BODY) << 56)).copied().unwrap();
+        let torso = v.draws.iter().find(|d| d.key & 0xFF == VR_BODY_KEY).copied().expect("no VR body draw");
+        assert_eq!((torso.pos, torso.rot), (body.pos, body.rot));
+        let all: Vec<Vec3> = v.positions[body.first_vertex as usize..][..n].iter().copied().filter(|p| *p != Vec3::ZERO).collect();
+        let kept: Vec<Vec3> = v.positions[torso.first_vertex as usize..][..n].iter().copied().filter(|p| *p != Vec3::ZERO).collect();
+        let top = |ps: &[Vec3]| ps.iter().fold(f32::MIN, |a, p| a.max(p.y));
+        let bottom = |ps: &[Vec3]| ps.iter().fold(f32::MAX, |a, p| a.min(p.y));
+        assert!(kept.len() > all.len() / 3 && kept.len() < all.len(), "{} of {} body vertices kept", kept.len(), all.len());
+        assert!(top(&kept) < top(&all) - 20.0, "the head is still there: top {} of {}", top(&kept), top(&all));
+        assert!(bottom(&kept) < bottom(&all) + 5.0, "the feet are gone: {} of {}", bottom(&kept), bottom(&all));
         for arm in &arms {
             let kept: Vec<Vec3> = v.positions[arm.first_vertex as usize..][..n].iter().copied().filter(|p| *p != Vec3::ZERO).collect();
             assert!(kept.len() > 200 && kept.len() < n / 4, "{} of {n} vertices kept", kept.len());

@@ -783,6 +783,25 @@ pub unsafe extern "C" fn sms_view_set_vr_arms(view: *mut SmsView, on: u8) {
     unsafe { with_view(view, (), |v| v.view.set_vr_arms(on != 0)) }
 }
 
+/// A VR host's first person from Mario's head: `eye` is the eye's height above his feet in sim
+/// units (0 off). With it the spin jump's swirl is centred on the eye
+/// ([`libsms_present::View::set_vr_eye`]) and each flying drop of FLUDD's water faces the eye
+/// along its own line of sight (`WaterLook::per_drop_facing`), so the stream streaks along its
+/// length seen from just above the nozzle. Optional: a host probes for it.
+///
+/// # Safety
+/// `view` from [`sms_view_new`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_set_vr_eye(view: *mut SmsView, eye: f32) {
+    // SAFETY: as documented.
+    unsafe {
+        with_view(view, (), |v| {
+            v.view.set_vr_eye(eye);
+            v.water.per_drop_facing = eye.is_finite() && eye > 0.0;
+        })
+    }
+}
+
 /// # Safety
 /// `view` from [`sms_view_new`] and not used afterwards. Null is ignored.
 #[unsafe(no_mangle)]

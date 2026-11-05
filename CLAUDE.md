@@ -54,8 +54,10 @@ Workspace:
   disc's body, hands, cap, FLUDD and nozzles posed from the sim like the viewer's
   `mario_model.rs`, CPU-skinned into one vertex buffer in Mario's model space; `set_vr_arms`
   adds each forearm and glove cut from the body by skin weight, keyed `VR_ARM_KEY` + side and
-  posed in its own arm space for a VR host's controllers, `examples/vr_arms.rs` in the viewer
-  captures them), `tev` (each
+  posed in its own arm space for a VR host's controllers, plus the VR body (`VR_BODY_KEY`: the
+  body without head or forearms, `vr_arms::torso_map`, where the body is); `examples/vr_arms.rs` in the viewer
+  captures them; `set_vr_eye` / `sms_view_set_vr_eye` centres the spin swirl on a VR eye and turns the
+  flying water to face it drop by drop (`WaterLook::per_drop_facing`)), `tev` (each
   material's TEV run on the CPU per texel and baked into one RGBA texture, at full diffuse
   light with no specular: Mario's materials light themselves in TEV with a toon ramp read at
   the lit colour (`GX_TG_SRTG`) plus a highlight; env-only materials bake over the env map's
