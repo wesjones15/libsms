@@ -492,6 +492,8 @@ pub struct Mario {
     pub invincible: i16,
     /// Gold coins picked up.
     pub coins: u32,
+    /// Goop on Mario and his sinking into it ([`crate::dirty`]).
+    pub goop: crate::dirty::GoopState,
 
     pub ticks: u64,
 
@@ -618,6 +620,7 @@ impl Mario {
             health,
             invincible: 0,
             coins: 0,
+            goop: crate::dirty::GoopState::default(),
             ticks: 0,
             jump_buffer: 0,
             chain_grace: None,
@@ -996,6 +999,7 @@ impl Mario {
         self.think_water_surface(host);
         self.think_height(host);
         self.think_params();
+        self.think_goop(host);
         self.check_wet(host);
         self.gun_exec(host, pad);
         self.yoshi_movement(host);
@@ -1096,8 +1100,9 @@ impl Mario {
 
     /// `checkController` (the part that fills `mInput`).
     fn check_controller(&mut self, pad: &Pad) {
+        // `checkController`: sinking in goop scales the stick itself.
         let (mag, yaw) = stick_intent(
-            pad.stick,
+            pad.stick * self.sink_move_scale(),
             self.camera_yaw,
             self.face_yaw,
             &self.params.controller,
@@ -1613,6 +1618,7 @@ impl Mario {
             let v = (8.0 * self.params.jump.gravity * h).sqrt();
             self.vel.y = self.vel.y.max(v);
         }
+        self.sink_jump();
         if self.on_yoshi() || self.options.yoshi_skin {
             if self.on_yoshi() {
                 self.vel.y *= self.params.yoshi.jump_yoshi_mult;

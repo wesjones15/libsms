@@ -174,6 +174,13 @@ pub trait Host {
     fn water_level(&self, _pos: Vec3) -> Option<f32> {
         None
     }
+
+    /// The goop at `pos` (`TPollutionManager::getPollutionType` for a point that
+    /// `isPolluted`), if any. Hosts with a [`crate::goop::GoopField`] answer from it; Mario
+    /// tests nine points around his feet (`checkGraffito`).
+    fn goop(&self, _pos: Vec3) -> Option<crate::goop::GoopKind> {
+        None
+    }
 }
 
 /// Infinite flat floor at y = 0, no ceiling, optionally one infinite wall plane. For tests.

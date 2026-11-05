@@ -202,6 +202,54 @@ params! {
 }
 
 params! {
+    /// `/Mario/Dirty.prm` (`TMario::TDirtyParams`, MarioInit.cpp): how goop builds up on Mario
+    /// (`thinkDirty`) and washes off.
+    Dirty {
+        inc_running: f32 = 0.1, "mIncRunning";
+        inc_catching: f32 = 0.3, "mIncCatching";
+        inc_slipping: f32 = 0.2, "mIncSlipping";
+        dec_swimming: f32 = 0.5, "mDecSwimming";
+        dec_water_hit: f32 = 0.2, "mDecWaterHit";
+        dec_rot_jump: f32 = 0.1, "mDecRotJump";
+        brake_start_val_slip: f32 = 0.99, "mBrakeStartValSlip";
+        brake_start_val_run: f32 = 0.98, "mBrakeStartValRun";
+        dirty_time_slip: i16 = 600, "mDirtyTimeSlip";
+        dirty_time_run: i16 = 600, "mDirtyTimeRun";
+        pol_size_slip: f32 = 200.0, "mPolSizeSlip";
+        pol_size_run: f32 = 80.0, "mPolSizeRun";
+        pol_size_foot_print: f32 = 200.0, "mPolSizeFootPrint";
+        pol_size_jump: f32 = 200.0, "mPolSizeJump";
+        slope_angle: f32 = 0.99, "mSlopeAngle";
+        /// The most goop Mario carries; also the TEV konst alpha his materials show it through.
+        dirty_max: f32 = 200.0, "mDirtyMax";
+        fog_time_yellow: i16 = 240, "mFogTimeYellow";
+        fog_time_red: i16 = 600, "mFogTimeRed";
+    }
+}
+
+params! {
+    /// `/Mario/Graffito.prm` (`TMario::TGraffitoParams`, MarioInit.cpp): what goop of each kind
+    /// does to Mario; the sink fields drive `checkSink`.
+    Graffito {
+        /// Ticks of standing in brown goop to sink all the way.
+        sink_time: i16 = 240, "mSinkTime";
+        /// Floor damage every this many ticks while sinking.
+        sink_dmg_time: i16 = 240, "mSinkDmgTime";
+        /// How far the body is drawn down when fully sunk.
+        sink_height: f32 = 150.0, "mSinkHeight";
+        sink_move_min: f32 = 0.3, "mSinkMoveMin";
+        sink_move_max: f32 = 0.5, "mSinkMoveMax";
+        sink_recover: f32 = 0.05, "mSinkRecover";
+        sink_jump_rate_min: f32 = 0.1, "mSinkJumpRateMin";
+        sink_jump_rate_max: f32 = 0.3, "mSinkJumpRateMax";
+        sink_pump_limit: f32 = 0.25, "mSinkPumpLimit";
+        /// While Mario has health he stops sinking at this share of `sink_time`.
+        sink_dmg_depth: f32 = 0.25, "mSinkDmgDepth";
+        fire_invincible_time: i16 = 50, "mFireInvincibleTime";
+    }
+}
+
+params! {
     /// One of the `/Mario/SlipParam*.prm` sets (TSlipParams).
     Slip {
         slip_friction: f32 = 0.9, "mSlipFriction";
@@ -431,6 +479,8 @@ pub struct Params {
     pub water_particles: [WaterParticle; 17],
     /// By [`crate::DamageKind`].
     pub damage: [Damage; crate::damage::DamageKind::ALL.len()],
+    pub dirty: Dirty,
+    pub graffito: Graffito,
 }
 
 impl Default for Params {
@@ -462,6 +512,8 @@ impl Default for Params {
             nozzles: Default::default(),
             water_particles: Default::default(),
             damage: Default::default(),
+            dirty: Dirty::default(),
+            graffito: Graffito::default(),
         }
     }
 }
@@ -623,6 +675,12 @@ impl Params {
             if let Some(prm) = get(path) {
                 p.damage[i].apply(&prm);
             }
+        }
+        if let Some(prm) = get("dirty.prm") {
+            p.dirty.apply(&prm);
+        }
+        if let Some(prm) = get("graffito.prm") {
+            p.graffito.apply(&prm);
         }
         (p, loaded)
     }

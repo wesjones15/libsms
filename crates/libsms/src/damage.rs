@@ -299,6 +299,8 @@ impl Mario {
         if hp {
             self.dec_hp(p.damage as i16);
         }
+        // `mDirty += pollutionAmount`: a goop enemy's hit leaves goop on him.
+        self.add_dirty(p.dirty);
         let lost = p.water_emit as i32;
         let params = self.params.clone();
         if let Some(f) = self.fludd.as_mut() {

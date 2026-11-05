@@ -10,6 +10,7 @@ pub mod assets;
 pub mod clock;
 mod collide;
 pub mod damage;
+pub mod dirty;
 pub mod egg;
 pub mod flower;
 pub mod event;

@@ -32,6 +32,9 @@ pub enum Event {
     WaterEmit(WaterEmit),
     /// `checkWet`: real model-water droplets after leaving water, from WetWaterEmit.prm.
     BodyDrip { pos: Vec3, velocity: Vec3 },
+    /// Sinking in brown goop this tick (`checkSink`): `SMS_EmitSinkInPollutionEffect` at his
+    /// feet (the `ms_m_ashios` goop around them).
+    GoopSink { pos: Vec3 },
     /// FLUDD nozzle changed.
     NozzleChanged(NozzleKind),
     /// The hover/rocket trigger finished charging and fired (`TNozzleTrigger::movement`).
