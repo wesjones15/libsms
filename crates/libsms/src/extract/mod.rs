@@ -108,7 +108,7 @@ pub const EXTRACTS: [(&str, &str, &str); 8] = [
 /// the paths in them are alternatives in the same order (`|`): a USA disc keeps them in
 /// `common.szs` and `subtitle.szs`, a European one in a pair per language (`cmn2d_en.szs`,
 /// `subtitle_en.szs`).
-pub const OPTIONAL_EXTRACTS: [(&str, &str, &str); 26] = [
+pub const OPTIONAL_EXTRACTS: [(&str, &str, &str); 29] = [
     // Map/Shimmer.cpp::TShimmer; dolpic1's scene record names ShimmerLow.
     ("scene/dolpic1.szs", "mapobj/shimmerlow.bmd", "heat_haze/shimmerlow.bmd"),
     ("scene/dolpic1.szs", "mapobj/shimmerlow.btk", "heat_haze/shimmerlow.btk"),
@@ -233,6 +233,16 @@ pub const OPTIONAL_EXTRACTS: [(&str, &str, &str); 26] = [
         "mapobj/palmnormal.bmd",
         "portal/palmnormal.bmd",
     ),
+    // The goop's stamps (`TPollutionManager::load`): `pollute.bti` is the disc a pollute stamp
+    // lays down, `clean.bti` the one water wipes off with. The Bowser Jr. sign Shadow Mario
+    // paints is `mapobj/koopa_jr_sign.bmd` (the graffiti left on the map; every stage has it).
+    ("common.szs", "map/pollute.bti", "scene/map/pollute.bti"),
+    ("common.szs", "map/clean.bti", "scene/map/clean.bti"),
+    (
+        "scene/airport0.szs",
+        "mapobj/koopa_jr_sign.bmd",
+        "scene/mapobj/koopa_jr_sign.bmd",
+    ),
 ];
 
 /// Folders gathered from every stage archive (`data/scene/*.szs`) into one folder under `out`:
@@ -252,7 +262,16 @@ pub const OPTIONAL_EXTRACTS: [(&str, &str, &str); 26] = [
 /// `sambo*` is the flower tower and the flowers (hanasambo.cpp): `sambo/` the tower's body,
 /// `sambohead/` its flower head and the seed it shoots, `samboflower/` the plain flower you spray
 /// into bloom and its leaf; models, clips and `bas/` sound keys, all in the Bianco and Monte stages.
-pub const SCENE_FOLDERS: [(&str, &str); 7] = [
+/// `koopajr*` is Bowser Jr. (`TLimitKoopaJr`, limitkoopajr.cpp: `koopajr_model.bmd`, his four
+/// clips `damage`/`shoot`/`wait`/`yahoo`, their `bas/` keys and `jpa/ms_koopajr_killer.jpa`; only
+/// Corona Mountain's boss stage has him) and his submarine. `namekuri2/` is the Swoopin' Stu
+/// (`TNameKuri`, namekuri.cpp: `name.bmd`, the `brain.bmd` it wears and its clips), `pakkun/` the
+/// goop-spitting Piranha Plant (`TPakkun`, pakkun.cpp: `pakun.bmd`, its `seed.bmd` goop ball and
+/// clips) and `bosspakkun/` Petey Piranha (`TBossPakkun`, bosspakkun.cpp). `map/pollution/` is
+/// the goop (`TPollutionManager`): the stage layers' models and textures, `h_ma_rak.bti` (the
+/// mask Mario and the goop enemies show goop through, `cDirtyFileName` in enemyMario.cpp) and the
+/// goop effects Mario makes (`ms_m_ashios` feet, `ms_m_spinos` spin, `ms_m_tokeos` melting).
+pub const SCENE_FOLDERS: [(&str, &str); 12] = [
     ("monte", "npc"),
     ("mapobj/fruit", "scene"),
     ("mapobj/eggyoshi", "scene"),
@@ -260,6 +279,11 @@ pub const SCENE_FOLDERS: [(&str, &str); 7] = [
     ("mapobj/coin", "scene"),
     ("kagemario", "enemy"),
     ("sambo", "enemy"),
+    ("koopajr", "enemy"),
+    ("namekuri2", "enemy"),
+    ("pakkun", "enemy"),
+    ("bosspakkun", "enemy"),
+    ("map/pollution", "scene"),
 ];
 
 /// Disc folders copied as they are: `AudioRes/` holds the wave archives (`Banks/*.aw`), the
@@ -269,7 +293,7 @@ pub const DISC_FOLDERS: [&str; 1] = ["AudioRes/"];
 
 /// Files that must exist for the library and viewer to work. Adding one here makes an older
 /// `assets/` incomplete, so hosts re-extract it on the next run.
-pub const REQUIRED: [&str; 39] = [
+pub const REQUIRED: [&str; 43] = [
     "particle/ms_enm_wathit.jpa",
     "params_mario/run.prm",
     "params_mario/jump.prm",
@@ -309,6 +333,10 @@ pub const REQUIRED: [&str; 39] = [
     "enemy/sambo/sambo.bmd",
     "enemy/sambohead/sambohead.bmd",
     "enemy/samboflower/flower.bmd",
+    "enemy/koopajr/koopajr_model.bmd",
+    "enemy/namekuri2/name.bmd",
+    "enemy/pakkun/pakun.bmd",
+    "scene/map/pollution/h_ma_rak.bti",
 ];
 
 pub const GAME_IDS: [(&str, &str); 3] = [
