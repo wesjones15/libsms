@@ -57,7 +57,11 @@ impl Mario {
             && self.vel.y > 0.0
             && e.pos.y + e.height * 0.5 > self.pos.y + crate::mario::HEIGHT * 0.5
         {
-            self.report_hit(host, e.id, EnemyHitKind::RocketSpin);
+            // Once per enemy per climb, however often a clash knock-back re-arms `enemies_hit`.
+            if !self.spin_hit.contains(&e.id) {
+                self.spin_hit.push(e.id);
+                self.report_hit(host, e.id, EnemyHitKind::RocketSpin);
+            }
             return false;
         }
         // `MARIO_STATUS_CATCH` / `OIL_SLIP` / `JUMP_CATCH`: PUNCH, then TRAMPLE.

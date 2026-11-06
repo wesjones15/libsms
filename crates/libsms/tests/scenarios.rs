@@ -4174,6 +4174,12 @@ fn a_spin_out_of_the_rockets_climb_doubles_it_and_hits_what_is_above() {
     // An enemy overhead.
     let (s, _, _) = rocket_climb(true, vec![(Vec3::new(0.0, 2500.0, 0.0), 400.0, 300.0)]);
     assert_eq!(enemy_hits(&s, libsms::EnemyHitKind::RocketSpin), 1, "the enemy above wasn't hit");
+    // A huge one around the whole climb (a boss he can sit inside): still one hit, not one per knock-back.
+    let (s, _, _) = rocket_climb(true, vec![(Vec3::new(0.0, 100.0, 0.0), 3000.0, 6000.0)]);
+    assert!(
+        enemy_hits(&s, libsms::EnemyHitKind::RocketSpin) <= 1,
+        "a spin inside a big enemy hit it more than once"
+    );
 }
 
 /// A burning corkscrew lands in a slide that keeps its speed and its fire for two seconds, then is a plain wet slide.

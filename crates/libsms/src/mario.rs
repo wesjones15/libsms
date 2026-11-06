@@ -520,6 +520,10 @@ pub struct Mario {
     /// first message (and die or flinch); hosts' enemies may outlast it, so a pound or a
     /// slide through one reports it once, not every tick it overlaps.
     pub(crate) enemies_hit: Vec<u64>,
+    /// Host extension: enemies the Rocket spin has already hit. Unlike `enemies_hit` it survives
+    /// status changes (a clash knock-back inside a big enemy would re-arm the hit every tick); it
+    /// is cleared when a new Rocket climb starts or Mario leaves the air.
+    pub(crate) spin_hit: Vec<u64>,
 }
 
 impl Mario {
@@ -639,6 +643,7 @@ impl Mario {
             jump_buffer: 0,
             chain_grace: None,
             enemies_hit: Vec::new(),
+            spin_hit: Vec::new(),
         }
     }
 
@@ -1408,8 +1413,10 @@ impl Mario {
         // Standing, running, swimming...: the next jump has its rocket again. Starting one uses it.
         if !to.is_jumping() {
             self.air_rocket_used = false;
+            self.spin_hit.clear();
         }
         if to == Status::Rocket {
+            self.spin_hit.clear();
             if !self.status.is_jumping() {
                 self.limit_ground_rocket();
             }
