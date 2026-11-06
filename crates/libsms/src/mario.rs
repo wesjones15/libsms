@@ -527,6 +527,9 @@ pub struct Mario {
     /// Host extension: this ground pound is spinning (a stick circle during it), and its ticks.
     pub(crate) pound_spin: bool,
     pub(crate) pound_spin_age: u16,
+    /// Host extension: the disc's `mGravity` / `mSpinJumpGravity`, kept while a host scales them
+    /// ([`Mario::set_gravity_scale`]).
+    gravity_base: Option<(f32, f32)>,
 }
 
 impl Mario {
@@ -649,6 +652,7 @@ impl Mario {
             spin_hit: Vec::new(),
             pound_spin: false,
             pound_spin_age: 0,
+            gravity_base: None,
         }
     }
 
@@ -795,6 +799,18 @@ impl Mario {
         let shift = pos - self.pos;
         self.pos = pos;
         self.prev_pos += shift;
+    }
+
+    /// Host extension: the world's gravity as a multiple of the usual (a low-gravity stage is below 1).
+    /// Every fall, spin-jump fall and the jump-height maths use the disc's gravity times this, so with
+    /// the same take-off speed a jump goes higher and comes down slower. 1 is the game's own.
+    pub fn set_gravity_scale(&mut self, scale: f32) {
+        let scale = if scale.is_finite() { scale.clamp(0.05, 4.0) } else { 1.0 };
+        let (g, spin) = *self
+            .gravity_base
+            .get_or_insert((self.params.jump.gravity, self.params.jump.spin_jump_gravity));
+        self.params.jump.gravity = g * scale;
+        self.params.jump.spin_jump_gravity = spin * scale;
     }
 
     /// The host's world throws Mario: his velocity becomes `vel` (units per 30 Hz frame,

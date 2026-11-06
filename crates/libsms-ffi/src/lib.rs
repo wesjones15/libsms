@@ -31,7 +31,7 @@ use libsms::{
 use view::SmsView;
 
 /// ABI version, bumped when the C interface changes.
-pub const SMS_ABI_VERSION: u32 = 47;
+pub const SMS_ABI_VERSION: u32 = 48;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sms_abi_version() -> u32 {
@@ -1562,6 +1562,21 @@ fn wet_from_own_spray(s: &mut SmsSim) {
     if s.water.touches_segment(p + Vec3::Y * 35.0, p + Vec3::Y * 125.0, 35.0) {
         s.sim.mario.wet();
     }
+}
+
+/// The world's gravity as a multiple of the game's (a low-gravity stage is below 1; clamped to
+/// 0.05..4): Mario's jumps go higher and his falls slower. 1 is the game's own. Cheap to call every frame.
+///
+/// # Safety
+/// `sim` from [`sms_sim_new`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_sim_set_gravity_scale(sim: *mut SmsSim, scale: f32) {
+    libcommon::ffi::guard("sms_sim_set_gravity_scale", (), || {
+        // SAFETY: the caller promised a valid pointer.
+        if let Some(s) = unsafe { sim.as_mut() } {
+            s.sim.mario.set_gravity_scale(scale);
+        }
+    })
 }
 
 /// Boosts the jump Mario is in: horizontal travel times `factor` until he lands (a host's

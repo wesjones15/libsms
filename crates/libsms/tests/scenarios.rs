@@ -1453,6 +1453,35 @@ fn mario_picks_up_fruit_carries_puts_and_throws_it() {
     assert!(s.event_count(|e| matches!(e, Event::Throw { id: 7, .. })) == 1);
 }
 
+/// Low gravity (a host's moon): the same jump goes higher and comes down slower; 1 is the game's own.
+#[test]
+fn a_gravity_scale_makes_jumps_higher_and_falls_slower() {
+    let jump = |scale: f32| -> (f32, usize) {
+        let mut s: Scene<FlatHost> = Scene::flat();
+        s.sim.mario.set_gravity_scale(scale);
+        s.step(2);
+        s.press_a();
+        let y0 = s.mario().pos.y;
+        let (mut apex, mut ticks) = (y0, 0);
+        for _ in 0..3000 {
+            s.step(1);
+            apex = apex.max(s.mario().pos.y);
+            ticks += 1;
+            if s.mario().on_ground() && ticks > 10 {
+                break;
+            }
+        }
+        (apex - y0, ticks)
+    };
+    let (normal_h, normal_t) = jump(1.0);
+    let (moon_h, moon_t) = jump(1.0 / 6.0);
+    assert!(moon_h > normal_h * 3.0, "moon jump {moon_h}, normal {normal_h}");
+    assert!(moon_t > normal_t * 2, "moon airtime {moon_t} ticks, normal {normal_t}");
+    // Back to 1 restores the game's own jump exactly.
+    let (again_h, again_t) = jump(1.0);
+    assert_eq!((again_h, again_t), (normal_h, normal_t));
+}
+
 /// The stick nudges a ground pound's fall sideways, only a little; with no stick it falls straight.
 #[test]
 fn the_stick_slightly_aims_a_ground_pound_in_its_fall() {
