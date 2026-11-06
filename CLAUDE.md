@@ -141,5 +141,7 @@ Yoshi's egg, riding, flutter, tongue and juice, damage, health and coins, stompi
 pounding enemies, water hitting enemies, catching fire (`FIRE_DOWN` bounce, `FIRE_DASH` panic run, `Mario::ignite`; the decomp never enters the run, so `Options::fire_panic_run` is the host way in), the Shine Get pose (`shine.rs`: `Mario::get_shine`, the `WinDemo` status, `Event::ShineTouch` / `ShineDemo`). Not yet: swimming, bars, wires, poles, fences,
 the Spray "bomb". See the spec.
 Goop (every pollution type, Mario's reactions, lifetime and cap), the goop critters and Bowser Jr./Shadow Mario
-as a player core with its C ABI (ABI 46): headless only, never played, no RoR2 survivor yet; see
+as a player core with its C ABI (ABI 46), and their presentation (the Shadow Mario skin with its
+swirl and brush, Mario's goop, Jr/Stu/Piranha/seed/sign props, the goop surface from the disc's
+layers, the disc's stamps): headless only, never played, no RoR2 survivor yet; see
 docs/goop-and-bowser-jr.md.

@@ -56,12 +56,43 @@ dirty.prm, graffito.prm (FireHeight 5, FireInvincibleTime 50, SinkTime 240, Sink
 SinkDmgDepth 0.6), dmggraffitofire/elec/poison/lava.prm, dmgnamekuri.prm, namekuri.prm,
 pakkun.prm. Code defaults stand in where a file is absent.
 
+## Presentation (libsms-present, 2026-11-05)
+Headless tests only; nothing has been drawn in RoR2 or played.
+- **Shadow Mario skin** (`Skin::Shadow`, `sms_view_skin` 4 after `sms_view_load_skin` 4;
+  `shadow_skin.rs`): `kagemario/default.bmd` on Mario's 29 joints (same rig, so Mario's pose
+  drives it) with the paintbrush (`kagemario_brush.bmd`) on `jnt_hand_L` (`TEnemyMario`). The
+  game's material warps the *screen* behind him (`gpScreenTexture` into `H_kagemario_dummy`,
+  an indirect warp by `indwp4n` read through an env-mapped matrix that `kagemario_scroll.btk`
+  scrolls) through the REG0→REG1 ramp, masked by `H_kagemario_main_i8` into REG2's navy. Hosts
+  can't read the screen through the view, so every batch shares one texture rebaked each game
+  frame (30 Hz, a new `sms_view_texture_version`): the same two stages with the warp read twice
+  (the second pushed by the first, both scrolled by the btk) standing in for the screen.
+  `ShadowSwirl::params` holds the real inputs for a host shader that can grab its screen.
+- **Mario's goop** (`TMario::addDirty`): `H_ma_rak.bti` replaces every `H_ma_rak_dummy` on the body,
+  cap, hands and same-rig bodies, and konst 0's alpha is `Mario::dirt_share` in 5 steps
+  (`DIRT_LEVELS`; each step is one more bake per material). The goop enemies' and the brush's
+  dummies get the mask too, at their own konst alpha.
+- **Props** (`sms_view_new_look` 9-14, posed by `sms_view_prop_update`): Bowser Jr., the Stu,
+  its brain (rides `sms_view_prop_joint` 2 of the Stu's pose, `TSharedParts`), the goop Piranha,
+  its seed/goop ball, and Bowser Jr.'s sign with its draw clip.
+- **Goop surface** (`goop_surface.rs`; `sms_goop_chunk_image`, `sms_goop_tile`): each kind's
+  layer model (`GoopKind::surface`) baked through its TEV with the density map read as full and
+  the matrices left out, so it tiles seamlessly; a chunk's picture lays that tile in world
+  space (400 units a repeat) with the density, bilinear across texels and chunks, eased around
+  the kind's threshold as alpha. The layer files are per stage on the disc and the extractor
+  keeps the first copy of each name (from a test stage), so the looks are: brown chocolate
+  (`TestChoco2`) for sink/instakill/electric, the pink-to-yellow paint (`B_RAKenogu_pink`) for the
+  fire kinds, glass and poison, see-through slick for oil and safe. No scroll (the layers' btk
+  scroll slowly; a host may scroll the tile).
+- **Stamps**: `sms_goop_setup` reads `pollute.bti` and `clean.bti` into the field's stamps (the
+  channel that varies, stretched to full strength) and projects Bowser Jr.'s sign from above as
+  `stampModel` paints it: the three pens of `stamp_koopa_sign_model1` everywhere the draw clip
+  takes them, turned half round, at `mBrushScaleupDuringDrawing` (3) — his graffiti mark. A
+  Bowser Jr. sim standing in that world takes it.
+
 ## Not done
-- Presentation: the real swirling Shadow Mario skin (`H_kagemario_main_i8`, the screen-texture
-  dummy, the `indwp4n` warp scrolled by `kagemario_scroll.btk`), Mario's dirt material
-  (`H_ma_rak.bti` at konst alpha = `dirt_share`), the goop surface (the `pollution0N` layer
-  models), Bowser Jr./Stu/Piranha/seed models in the view, the stamp masks from
-  `pollute.bti`/`clean.bti` and the `stamp_koopa_sign` silhouette (discs stand in).
+- Drawing it in RoR2: the survivor's views, the goop chunk quads, a screen-grab shader for the
+  real swirl.
 - The RoR2 survivor (plugin, skills, skin, multiplayer).
 - Layer spreading (`FLAG_CAN_SPREAD`), footprints, `OIL_PULLING`, rumble.
 - Petey: no C ABI yet, no model in the view, no `.bas` playback wired (events name the clips).

@@ -995,6 +995,13 @@ pub unsafe extern "C" fn sms_sim_step(
                         }
                     }
                     if let Some(j) = jr.as_mut() {
+                        // The disc's sign, once the world has read it.
+                        if let Some((mask, half)) = &g.sign
+                            && j.sign_mask != *mask
+                        {
+                            j.sign_mask = mask.clone();
+                            j.params.sign_half = *half;
+                        }
                         j.step(mario, &*h, &mut g.field, brush);
                         g.take_jr_events(j);
                     }
@@ -2115,6 +2122,12 @@ mod tests {
             assert_eq!(st.form, 0);
             let mut keys = [0i32; 64];
             assert!(goop::sms_goop_chunk_list(g, keys.as_mut_ptr(), std::ptr::null_mut(), 32) > 0, "the brush painted");
+            // The painted chunk draws: some of it goop, in the kind's look from the disc.
+            let mut img = vec![0u8; 32 * 32 * 4];
+            assert_eq!(goop::sms_goop_chunk_image(g, keys[0], keys[1], 32, img.as_mut_ptr()), 1);
+            assert!(img.chunks_exact(4).any(|p| p[3] > 128), "the chunk image shows goop");
+            let side = goop::sms_goop_tile(g, st.paint_kind, std::ptr::null_mut(), 0);
+            assert!(side >= 8, "the kind has a tile: {side}");
             assert!(goop::sms_goop_kind_at(g, SmsVec3::default()) >= 0);
             // The goop grows Stus near its owner.
             let owner = SmsVec3::default();

@@ -155,8 +155,11 @@ impl GoopKind {
     /// this pairing is a host default.
     pub fn surface(self) -> &'static str {
         match self {
-            GoopKind::Sink | GoopKind::Instakill => "pollution00",
-            GoopKind::Fire | GoopKind::Scorch | GoopKind::Lava => "pollution03",
+            // The brown "chocolate" paint (`TestChoco2`) and the hot pink-to-yellow one
+            // (`B_RAKenogu_pink`), as the extracted layers look (the files are per stage; the
+            // extractor keeps the first copy of each name).
+            GoopKind::Sink | GoopKind::Instakill => "pollution03",
+            GoopKind::Fire | GoopKind::Scorch | GoopKind::Lava => "pollution00",
             GoopKind::Slip => "pollution02",
             GoopKind::Electric => "pollution04",
             GoopKind::GlassWall => "pollution05",
@@ -455,6 +458,13 @@ impl GoopField {
         let c = self.chunks.get(&key)?;
         let k = c.kind[i];
         (c.density[i] > k.threshold() && (pos.y - c.height[i]).abs() < HEIGHT_BAND).then_some(k)
+    }
+
+    /// The kind painted at `pos`'s texel whatever its density or height (for drawing).
+    pub fn kind_ignoring_height(&self, pos: Vec3) -> Option<GoopKind> {
+        let (key, i) = chunk_of(pos.x, pos.z);
+        let c = self.chunks.get(&key)?;
+        (c.density[i] > 0).then_some(c.kind[i])
     }
 
     /// `TMario::checkGraffito`'s test for ordinary goop: the point and the eight around it a

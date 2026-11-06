@@ -123,6 +123,11 @@ pub struct SmsGoop {
     clock: FixedClock,
     events: Vec<SmsGoopEvent>,
     names: HashMap<&'static str, CString>,
+    /// Bowser Jr.'s sign from the disc ([`libsms_present::goop_surface::sign_mask`]) and its
+    /// half-side, handed to a Bowser Jr. sim standing in this world.
+    pub(crate) sign: Option<(libsms::goop::Mask, f32)>,
+    /// Each kind's look for drawing, read by [`sms_goop_setup`].
+    surface: Option<libsms_present::goop_surface::GoopSurface>,
 }
 
 impl SmsGoop {
@@ -214,6 +219,8 @@ pub extern "C" fn sms_goop_new() -> *mut SmsGoop {
         clock: FixedClock::default(),
         events: Vec::new(),
         names: HashMap::new(),
+        sign: None,
+        surface: None,
     }))
 }
 
@@ -240,8 +247,10 @@ pub unsafe extern "C" fn sms_sim_set_goop(sim: *mut SmsSim, g: *mut SmsGoop) {
 }
 
 /// Empties the world and reads the critters' tuning and clips from `assets_dir`
-/// (`params_enemy/namekuri.prm`, `pakkun.prm`, `enemy/namekuri2/*.bck`, `enemy/pakkun/*.bck`).
-/// Null keeps the defaults.
+/// (`params_enemy/namekuri.prm`, `pakkun.prm`, `enemy/namekuri2/*.bck`, `enemy/pakkun/*.bck`),
+/// the stamps' shapes (`scene/map/pollute.bti`, `clean.bti`), Bowser Jr.'s sign and each kind's
+/// look for [`sms_goop_chunk_image`] (the `scene/map/pollution/` layers). Null keeps the
+/// defaults (soft discs, the kinds' tints).
 ///
 /// # Safety
 /// `g` from [`sms_goop_new`]; `assets_dir` nul-terminated or null.
@@ -257,7 +266,14 @@ pub unsafe extern "C" fn sms_goop_setup(g: *mut SmsGoop, assets_dir: *const c_ch
     } else {
         // SAFETY: as documented.
         let dir = unsafe { CStr::from_ptr(assets_dir) }.to_string_lossy().into_owned();
-        Critters::from_dir(Path::new(&dir))
+        let dir = Path::new(&dir);
+        if let Some((pollute, clean)) = libsms_present::goop_surface::stamp_masks(dir) {
+            s.field.pollute = pollute;
+            s.field.clean = clean;
+        }
+        s.sign = libsms_present::goop_surface::sign_mask(dir, 64);
+        s.surface = Some(libsms_present::goop_surface::GoopSurface::load(dir));
+        Critters::from_dir(dir)
     };
     (s.critters.max_stus, s.critters.max_piranhas, s.critters.spawn_interval, s.critters.mario_range) = keep;
 }
@@ -587,6 +603,49 @@ pub unsafe extern "C" fn sms_goop_chunk(
         }
     }
     1
+}
+
+/// Chunk `(kx, kz)`'s goop as a `res` x `res` RGBA8 picture (rows from -Z, columns from -X, as
+/// the chunk's texels; `res` at most 128) into `rgba` (`res * res * 4` bytes): each kind's look
+/// from the disc laid in world space (one repeat every 400 units), alpha from the density, soft
+/// round the kind's threshold. The host lays it over the chunk (512 units a side from
+/// `(kx, kz) * 512`) at its texels' heights and redraws when the chunk's version changes.
+/// Returns 0 if there's no such chunk.
+///
+/// # Safety
+/// `g` from [`sms_goop_new`]; `rgba` has room for `res * res * 4` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_goop_chunk_image(g: *mut SmsGoop, kx: i32, kz: i32, res: u32, rgba: *mut u8) -> u8 {
+    // SAFETY: as documented.
+    let Some(s) = (unsafe { g.as_mut() }) else { return 0 };
+    if rgba.is_null() || !s.field.chunks().any(|(k, _)| k == (kx, kz)) {
+        return 0;
+    }
+    let res = res.clamp(1, libsms_present::goop_surface::MAX_CHUNK_IMAGE);
+    let surface = s.surface.get_or_insert_with(Default::default);
+    let img = surface.chunk_image(&s.field, (kx, kz), res);
+    // SAFETY: as documented.
+    unsafe { std::ptr::copy_nonoverlapping(img.as_ptr(), rgba, img.len()) };
+    1
+}
+
+/// A goop kind's look at full density (the tile [`sms_goop_chunk_image`] repeats), RGBA8 into
+/// `rgba` when it has room for `cap` bytes; returns the side length (tiles are square), 0
+/// without one (no [`sms_goop_setup`] with assets).
+///
+/// # Safety
+/// `g` from [`sms_goop_new`]; `rgba` null or writable for `cap` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_goop_tile(g: *const SmsGoop, kind: u8, rgba: *mut u8, cap: u32) -> u32 {
+    // SAFETY: as documented.
+    let Some(s) = (unsafe { g.as_ref() }) else { return 0 };
+    let Some(t) = s.surface.as_ref().and_then(|sf| sf.tile(GoopKind::from_u8(kind))) else { return 0 };
+    let b = &t.image;
+    if !rgba.is_null() && b.rgba.len() <= cap as usize {
+        // SAFETY: as documented.
+        unsafe { std::ptr::copy_nonoverlapping(b.rgba.as_ptr(), rgba, b.rgba.len()) };
+    }
+    b.width
 }
 
 /// A goop kind's ambient look: tint (3 floats into `tint`) and its layer model's name.

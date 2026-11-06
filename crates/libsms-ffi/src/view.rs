@@ -353,7 +353,11 @@ pub unsafe extern "C" fn sms_view_new(assets_dir: *const c_char, sound: u8) -> *
 /// same readers, with the model posed by [`sms_view_shine_update`] (never `sms_view_update`),
 /// its glow in the `sms_view_fx_*` readers and the Shine Get camera in [`sms_view_camera_shot`].
 /// `look` 5, 6 and 7 are the sambo flower, tower and head: one instance posed by
-/// [`sms_view_prop_update`] from a clip found with [`sms_view_prop_clip`].
+/// [`sms_view_prop_update`] from a clip found with [`sms_view_prop_clip`]. Looks 9-14 are posed
+/// the same way: 9 Bowser Jr. (`koopajr_damage/shoot/wait/yahoo`), 10 the Swoopin' Stu
+/// (`name_*`), 11 the brain it wears (on [`sms_view_prop_joint`] 2 of the Stu's pose), 12 the goop
+/// Piranha (`pakun_*`), 13 its goop ball / seed (no clips), 14 Bowser Jr.'s painted sign
+/// (`stamp_koopa_sign_draw1`).
 ///
 /// # Safety
 /// `assets_dir` a nul-terminated UTF-8 path.
@@ -381,6 +385,12 @@ pub unsafe extern "C" fn sms_view_new_look(
             6 => libsms_present::Look::Sambo,
             7 => libsms_present::Look::SamboHead,
             8 => libsms_present::Look::Effects,
+            9 => libsms_present::Look::KoopaJr,
+            10 => libsms_present::Look::NameKuri,
+            11 => libsms_present::Look::NameKuriBrain,
+            12 => libsms_present::Look::Pakkun,
+            13 => libsms_present::Look::PakkunSeed,
+            14 => libsms_present::Look::KoopaSign,
             _ => libsms_present::Look::Mario,
         };
         let view = View::load_look(&dir, look).ok()?;
@@ -1216,6 +1226,31 @@ pub unsafe extern "C" fn sms_view_anchor(view: *const SmsView, id: u32, out: *mu
     }
     // SAFETY: as documented.
     let Some(m) = (unsafe { &*view }).view.anchor(id as usize) else {
+        return 0;
+    };
+    unsafe { std::ptr::copy_nonoverlapping(m.to_cols_array().as_ptr(), out, 16) };
+    1
+}
+
+/// A prop view's joint `joint` (one 4x4, column-major, model space before the instance's turn)
+/// in clip `clip` (-1: the bind pose) at `frame`: 1, or 0 for no such view or joint. The Stu's
+/// brain (look 11) rides on joint 2 of the Stu's (look 10) pose.
+///
+/// # Safety
+/// `view` from [`sms_view_new_look`]; `out` 16 writable floats.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_prop_joint(
+    view: *const SmsView,
+    clip: i32,
+    frame: f32,
+    joint: u32,
+    out: *mut f32,
+) -> u32 {
+    if view.is_null() || out.is_null() {
+        return 0;
+    }
+    // SAFETY: as documented.
+    let Some(m) = (unsafe { &*view }).view.prop_joint(clip, frame, joint as usize) else {
         return 0;
     };
     unsafe { std::ptr::copy_nonoverlapping(m.to_cols_array().as_ptr(), out, 16) };

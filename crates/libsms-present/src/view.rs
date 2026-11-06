@@ -181,6 +181,22 @@ pub enum Look {
     /// vanishing puffs), emitted by name with [`View::emit_effect`] and stepped by
     /// [`View::step_effects`]; the quads come from the usual `fx` readers.
     Effects,
+    /// Bowser Jr. (`TLimitKoopaJr`, limitkoopajr.cpp): `koopajr/koopajr_model.bmd` and his four
+    /// clips (`damage`, `shoot`, `wait`, `yahoo`), posed like the flowers ([`View::update_prop`]);
+    /// [`libsms::koopajr::KoopaJr::jr_clip`] says which.
+    KoopaJr,
+    /// The Swoopin' Stu (`TNameKuri`, namekuri.cpp): `namekuri2/name.bmd` and its clips. Its
+    /// body shows goop through the dirt mask at its own konst alpha.
+    NameKuri,
+    /// The brain a Stu wears (`namekuri2/brain.bmd`), drawn on the Stu's top joint by the host.
+    NameKuriBrain,
+    /// The goop Piranha (`TPakkun`, pakkun.cpp): `pakkun/pakun.bmd` and its clips.
+    Pakkun,
+    /// The Piranha's goop ball / seed (`pakkun/seed.bmd`), static: the shot and the seed.
+    PakkunSeed,
+    /// Bowser Jr.'s sign that Shadow Mario paints (`stamp_koopa_sign_model1.bmd` with its
+    /// `_draw1` clip; enemyMario.cpp draws it at three times his scale, turned half round).
+    KoopaSign,
 }
 
 /// [`Look::Shadow`]'s ramp: dark where Mario's colours are dark, light where they're light.
@@ -361,6 +377,10 @@ pub enum Skin {
     /// wait/walk/run and flutter clips on his own rig, Mario's air clips retargeted onto it,
     /// with FLUDD. The skin's flutter is [`libsms::Options::yoshi_skin`].
     Yoshi,
+    /// Shadow Mario (`TEMario`, emario.cpp): `kagemario/default.bmd` on Mario's 29 joints, its
+    /// swirling material baked each game frame ([`crate::shadow_skin`]) and the paintbrush in
+    /// his left hand. Bowser Jr.'s Shadow form (`libsms::koopajr`); he has no FLUDD.
+    Shadow,
 }
 
 pub use libsms_audio::VoiceSet;
@@ -382,7 +402,7 @@ pub enum SkinBody {
 
 impl Skin {
     /// Every skin, in ABI order.
-    pub const ALL: [Skin; 4] = [Skin::Mario, Skin::Luigi, Skin::Piantissimo, Skin::Yoshi];
+    pub const ALL: [Skin; 5] = [Skin::Mario, Skin::Luigi, Skin::Piantissimo, Skin::Yoshi, Skin::Shadow];
 
     pub const fn id(self) -> u32 {
         self as u32
@@ -409,6 +429,7 @@ impl Skin {
             // `OPTIONAL_EXTRACTS`: mamma4.szs:map/map/pad/monteman_model.bmd.
             Skin::Piantissimo => SkinBody::SameRig("npc/monteman/monteman_model.bmd"),
             Skin::Yoshi => SkinBody::Yoshi,
+            Skin::Shadow => SkinBody::SameRig(crate::shadow_skin::MODEL),
         }
     }
 }
@@ -417,6 +438,33 @@ impl Skin {
 pub(crate) const RIG_KEY_BASE: u32 = 0x1000;
 /// Model key of the diving helmet (not a rig body: its konst 0 alpha is the glass's, not dirt).
 const HELMET_KEY: u32 = 0x2000;
+/// Model key of Shadow Mario's brush (its konst 0 alpha is its own, not Mario's dirt).
+const BRUSH_KEY: u32 = 0x2001;
+/// Mario's dirt mask (`cDirtyFileName`, `/scene/map/pollution/H_ma_rak.bti`): the game puts it
+/// in place of every `H_ma_rak_dummy` (`SMS_ChangeTextureAll`, `TMario::initModel` and
+/// `TEnemyMario::init`), and konst 0's alpha (`TMario::addDirty`) blends it in.
+const DIRT_TEXTURE: &str = "scene/map/pollution/h_ma_rak.bti";
+const DIRT_DUMMY: &str = "H_ma_rak_dummy";
+
+/// The dirt mask from the disc, if extracted.
+pub(crate) fn dirt_texture(dir: &Path) -> Option<Tex> {
+    let data = std::fs::read(dir.join(DIRT_TEXTURE)).ok()?;
+    let t = libsms_assets::texture::read_bti(&data, DIRT_DUMMY.into()).ok()?;
+    Some(Tex::new(t.image, t.wrap_s, t.wrap_t))
+}
+
+/// `replace` for [`build`]: the dirt mask where the model has the dummy.
+pub(crate) fn swap_dirt(name: &str, dirt: &Option<Tex>) -> Option<Tex> {
+    (name == DIRT_DUMMY).then(|| dirt.clone()).flatten()
+}
+
+/// Dirt levels baked (konst 0 alpha steps): each level is one more texture per material.
+const DIRT_LEVELS: f32 = 5.0;
+
+/// [`libsms::Mario::dirt_share`] as the konst alpha a bake uses, in [`DIRT_LEVELS`] steps.
+fn dirt_alpha(share: f32) -> u8 {
+    ((share.clamp(0.0, 1.0) * DIRT_LEVELS).round() / DIRT_LEVELS * 255.0).round() as u8
+}
 
 pub struct View {
     pub models: Vec<Model>,
@@ -500,6 +548,11 @@ pub struct View {
     helmet: Option<u32>,
     /// Draw the diving helmet on the head (`TMarioCap` model 2, flag `E_CAP_MODEL_HELMET`).
     pub helmet_on: bool,
+    /// Shadow Mario's swirl ([`Skin::Shadow`], once loaded): his model, the texture id all his
+    /// batches share, and the baker.
+    shadow: Option<(u32, i32, crate::shadow_skin::ShadowSwirl)>,
+    /// `kagemario_brush.bmd`'s index in `models` (drawn in Shadow Mario's left hand).
+    brush: Option<u32>,
     /// The Sunshine assets folder, kept for loading Luigi's rig and clips later.
     assets_dir: PathBuf,
     /// The body's named attachment points (head, chest, hands...) posed this frame, in
@@ -537,6 +590,8 @@ pub enum Anchor {
     FootR = 14,
 }
 pub const ANCHOR_COUNT: usize = 15;
+/// The Stu's `jnt_brain`, where its brain rides ([`View::prop_joint`]).
+pub const NAMEKURI_BRAIN_JOINT: usize = 2;
 
 /// `PARTICLE_MS_M_SPHIPD_A..D` (`TMario::emitBlurHipDropSuper`).
 pub const SUPER_POUND_FLAMES: [&str; 4] = [
@@ -924,7 +979,8 @@ fn build_batches(bmd: Bmd, batches: Vec<Batch>, replace: &dyn Fn(usize, &str) ->
 /// (konst 0's alpha is the dirt level, `TMario::addDirty`).
 fn base_inputs(model: u32) -> Inputs {
     Inputs {
-        k0_alpha: (matches!(model, models::BODY | models::CAP | 1..=4) || (model >= RIG_KEY_BASE && model != HELMET_KEY))
+        k0_alpha: (matches!(model, models::BODY | models::CAP | 1..=4)
+            || (model >= RIG_KEY_BASE && model != HELMET_KEY && model != BRUSH_KEY))
             .then_some(0),
         ..Inputs::default()
     }
@@ -1076,6 +1132,14 @@ impl View {
             Look::Sambo => return Self::load_prop(dir, "sambo", "sambo.bmd"),
             Look::SamboHead => return Self::load_prop(dir, "sambohead", "sambohead.bmd"),
             Look::Effects => return Self::load_effects(dir),
+            Look::KoopaJr => return Self::load_prop(dir, "koopajr", "koopajr_model.bmd"),
+            Look::NameKuri => return Self::load_prop(dir, "namekuri2", "name.bmd"),
+            Look::NameKuriBrain => return Self::load_prop(dir, "namekuri2", "brain.bmd"),
+            Look::Pakkun => return Self::load_prop(dir, "pakkun", "pakun.bmd"),
+            Look::PakkunSeed => return Self::load_prop(dir, "pakkun", "seed.bmd"),
+            Look::KoopaSign => {
+                return Self::load_prop(dir, "kagemario/stamp_koopa_sign", "stamp_koopa_sign_model1.bmd");
+            }
             _ => {}
         }
         let assets = libsms::Assets::load(dir);
@@ -1085,9 +1149,11 @@ impl View {
             ..Textures::default()
         };
         let none = |_: usize, _: &str| None;
+        let dirt = dirt_texture(dir);
+        let dirty = |_: usize, name: &str| swap_dirt(name, &dirt);
         let body = build(
             load_bmd(dir, paths::BODY)?,
-            &none,
+            &dirty,
             models::BODY,
             &mut textures,
         )?;
@@ -1101,7 +1167,7 @@ impl View {
             .textures
             .get(1)
             .map(|t| Tex::new(t.image.clone(), t.wrap_s, t.wrap_t));
-        let body_first = |i: usize, _: &str| if i == 0 { body_tex0.clone() } else { None };
+        let body_first = |i: usize, name: &str| if i == 0 { body_tex0.clone() } else { swap_dirt(name, &dirt) };
         // The nozzles ship an 8x8 stand-in for FLUDD's env-map texture; the game points it at
         // FLUDD's own (`SMS_ChangeTextureAll(.., "H_watergun_main_dummy", ..)`, `TWaterGun::init`).
         let fludd_env = |_: usize, name: &str| {
@@ -1281,6 +1347,8 @@ impl View {
             rig_bodies: Vec::new(),
             helmet: None,
             helmet_on: false,
+            shadow: None,
+            brush: None,
             assets_dir: dir.to_path_buf(),
             anchors: [None; ANCHOR_COUNT],
             vr_arms: false,
@@ -1379,6 +1447,20 @@ impl View {
     /// Poses a prop view: clip `clip` (an index from [`Self::prop_clip`]; negative is the bind
     /// pose) at `frame`, turned `yaw` (the host places and scales its own instance); `mirror` is the host's
     /// X flip, for env-mapped coordinates.
+    /// A prop view's joint `joint` (model space, unturned) in clip `clip` at `frame` (bind pose
+    /// for a clip of -1), for a host that mounts a part on it: the Swoopin' Stu wears its brain
+    /// ([`Look::NameKuriBrain`]) on joint [`NAMEKURI_BRAIN_JOINT`] (`TSharedParts(.., 2, ..)`,
+    /// namekuri.cpp). None for another view or a joint it doesn't have.
+    pub fn prop_joint(&self, clip: i32, frame: f32, joint: usize) -> Option<Mat4> {
+        let props = self.props.as_ref()?;
+        let model = self.models.first()?;
+        let joints = match usize::try_from(clip).ok().and_then(|i| props.get(i)) {
+            Some((_, c)) => model.bmd.pose(|j| c.sample(j, frame), |_| None),
+            None => model.bind.clone(),
+        };
+        joints.get(joint).copied()
+    }
+
     pub fn update_prop(&mut self, yaw: i16, clip: i32, frame: f32, mirror: bool) {
         let Some(props) = self.props.as_ref() else { return };
         let model = &self.models[0];
@@ -1434,7 +1516,9 @@ impl View {
             bmd.set_material_table(&t);
         }
         let mut textures = Textures::default();
-        let model = build(bmd, &|_, _| None, models::COUNT as u32, &mut textures)?;
+        // Goop enemies show goop through the dirt mask (`H_ma_rak_dummy`), as Mario does.
+        let dirt = dirt_texture(dir);
+        let model = build(bmd, &|_, name| swap_dirt(name, &dirt), models::COUNT as u32, &mut textures)?;
         let pose = Pose::new(&model.bmd, Mat4::IDENTITY, &model.bind);
         let mut positions = Vec::new();
         let mut normals = Vec::new();
@@ -1510,6 +1594,8 @@ impl View {
             rig_bodies: Vec::new(),
             helmet: None,
             helmet_on: false,
+            shadow: None,
+            brush: None,
             assets_dir: PathBuf::new(),
         })
     }
@@ -1610,6 +1696,8 @@ impl View {
             rig_bodies: Vec::new(),
             helmet: None,
             helmet_on: false,
+            shadow: None,
+            brush: None,
             assets_dir: PathBuf::new(),
         };
         view.update_shine(0.0, Vec3::ZERO, 0, 0, 0.0, 1.0, false);
@@ -1815,12 +1903,19 @@ impl View {
                     .filter(|rig| rig.parents == self.skeleton.parents)
                     .and_then(|_| load_bmd(&self.assets_dir, rel).ok())
                     .and_then(|bmd| {
-                        build(bmd, &|_, _| None, RIG_KEY_BASE + skin.id(), &mut self.textures).ok()
+                        let dirt = dirt_texture(&self.assets_dir);
+                        build(bmd, &|_, name| swap_dirt(name, &dirt), RIG_KEY_BASE + skin.id(), &mut self.textures).ok()
                     });
                 match loaded {
-                    Some(model) => {
+                    Some(mut model) => {
+                        let index = self.models.len() as u32;
+                        let brush = (skin == Skin::Shadow).then(|| self.attach_shadow(&mut model, index)).flatten();
                         self.models.push(model);
-                        self.rig_bodies.push((skin, self.models.len() as u32 - 1));
+                        self.rig_bodies.push((skin, index));
+                        if let Some(b) = brush {
+                            self.models.push(b);
+                            self.brush = Some(index + 1);
+                        }
                         true
                     }
                     None => false,
@@ -1865,6 +1960,29 @@ impl View {
     /// player is in the middle of it as Mario is from outside.
     pub fn set_vr_eye(&mut self, height: f32) {
         self.vr_eye = if height.is_finite() { height.max(0.0) } else { 0.0 };
+    }
+
+    /// Shadow Mario's look on his freshly built body: every batch takes the one swirl texture
+    /// (baked now, rebaked each game frame by [`Self::update`]), and his brush is loaded.
+    /// Returns the brush to push after the body.
+    fn attach_shadow(&mut self, model: &mut Model, index: u32) -> Option<Model> {
+        let swirl = crate::shadow_skin::ShadowSwirl::load(&self.assets_dir, &model.bmd)?;
+        self.textures.list.push(swirl.bake());
+        let id = self.textures.list.len() as i32 - 1;
+        self.textures.versions.insert(id, 1);
+        for bi in 0..model.batches.len() {
+            model.batch_texture[bi] = id;
+            model.batch_color[bi] = [1.0; 4];
+            model.batch_blend[bi] = blend::OPAQUE;
+            model.batch_env[bi] = None;
+        }
+        self.shadow = Some((index, id, swirl));
+        // The brush shows goop through the dirt mask as the game's does (`SMS_ChangeTextureAll`
+        // of `H_ma_rak_dummy`, `TEnemyMario::init`).
+        let dirt = dirt_texture(&self.assets_dir);
+        load_bmd(&self.assets_dir, crate::shadow_skin::BRUSH)
+            .ok()
+            .and_then(|bmd| build(bmd, &|_, name| swap_dirt(name, &dirt), BRUSH_KEY, &mut self.textures).ok())
     }
 
     /// The model a same-rig skin draws as its body, when that skin is current and loaded.
@@ -2032,6 +2150,16 @@ impl View {
             self.blink_at = self.time + 2.0 + (self.time * 7.13).fract() * 2.5;
         }
         let mut body_inputs: HashMap<usize, Inputs> = HashMap::new();
+        let dirt = dirt_alpha(m.dirt_share());
+        // Shadow Mario's swirl, rebaked when the game frame turns.
+        if let Some((sm, id, swirl)) = self.shadow.as_mut()
+            && self.skin == Skin::Shadow
+            && let Some(baked) = swirl.step(&mut self.models[*sm as usize].bmd, self.time)
+        {
+            self.textures.list[*id as usize] = baked;
+            let v = self.textures.version(*id as u32).wrapping_add(1).max(1);
+            self.textures.versions.insert(*id, v);
+        }
         if let Some(w) = &self.wink {
             let frame = (self.time - self.blink_at) * 30.0;
             if frame >= 0.0 {
@@ -2388,6 +2516,10 @@ impl View {
             if let (true, Some(hm), Some(h)) = (self.helmet_on, self.helmet, self.head.and_then(|h| joints.get(h))) {
                 parts.push((hm, *h, &self.models[hm as usize].bind));
             }
+            // Shadow Mario's brush on `jnt_hand_L` (`TEnemyMario::perform`).
+            if let (Skin::Shadow, Some(bm), Some(h)) = (self.skin, self.brush, self.hand_joints[1].and_then(|h| joints.get(h))) {
+                parts.push((bm, *h, &self.models[bm as usize].bind));
+            }
         } else if !luigi_body && !yoshi_body {
             parts.push((models::BODY, Mat4::IDENTITY, &joints));
             if let Some(h) = self.head.and_then(|h| joints.get(h)) {
@@ -2539,7 +2671,12 @@ impl View {
                 {
                     inputs.tex = i.tex;
                 }
-                let tex = if inputs == base_inputs(key) {
+                // His dirt (`TMario::addDirty`: konst 0's alpha on the body, cap and hands).
+                if inputs.k0_alpha.is_some() {
+                    inputs.k0_alpha = Some(dirt);
+                }
+                let swirl = self.shadow.as_ref().is_some_and(|s| s.0 == model);
+                let tex = if inputs == base_inputs(key) || swirl {
                     mdl.batch_texture[bi]
                 } else {
                     self.textures.get(mdl, key, b.material, &inputs)
@@ -3180,6 +3317,108 @@ mod tests {
         v.set_helmet(false);
         v.update(&mut sim, 1.0 / 60.0);
         assert!(!v.draws.iter().any(|d| d.model == hm), "taken off");
+    }
+
+    #[test]
+    fn shadow_mario_swirls_and_holds_his_brush() {
+        let Some(mut v) = view() else {
+            eprintln!("skipping: no assets/");
+            return;
+        };
+        assert!(v.load_skin(Skin::Shadow, None), "kagemario/default.bmd is on Mario's rig");
+        v.set_skin(Skin::Shadow);
+        let (body, _) = v.rig_body().expect("his body is loaded");
+        let brush = v.brush.expect("his brush is loaded");
+        let (_, swirl, _) = v.shadow.as_ref().map(|s| (s.0, s.1, ())).unwrap();
+        assert!(v.models[body as usize].batch_texture.iter().all(|&t| t == swirl));
+        let a = libsms::Assets::discover(None).unwrap();
+        let mut sim = Sim::new(a.params, a.anim_table, Vec3::ZERO, 0);
+        let mut host = libsms::FlatHost::default();
+        let pad = libsms::Pad::default();
+        let mut seen = Vec::new();
+        for _ in 0..20 {
+            sim.advance(&mut host, &pad, i16::MIN, 1.0 / 60.0);
+            v.update(&mut sim, 1.0 / 60.0);
+            seen.push((v.textures.version(swirl as u32), v.textures.list[swirl as usize].rgba.clone()));
+        }
+        let drawn: Vec<u32> = v.draws.iter().map(|d| d.model).collect();
+        assert!(drawn.contains(&body) && drawn.contains(&brush), "{drawn:?}");
+        assert!(!drawn.contains(&models::BODY) && !drawn.contains(&models::FLUDD), "{drawn:?}");
+        // The swirl moves: new pixels, a new version, at the game's 30 frames a second.
+        assert!(seen.first().unwrap().0 < seen.last().unwrap().0);
+        assert_ne!(seen.first().unwrap().1, seen.last().unwrap().1, "the swirl doesn't move");
+        // Mostly his blues: blue over red on average.
+        let px = v.textures.list[swirl as usize].rgba.as_chunks::<4>().0;
+        let (r, b) = px.iter().fold((0u64, 0u64), |(r, b), p| (r + p[0] as u64, b + p[2] as u64));
+        assert!(b > r, "blue {b} red {r}");
+        // The brush rides his left hand.
+        let hand = v.anchor(Anchor::HandL as usize).unwrap().w_axis.truncate();
+        let d = v.draws.iter().find(|d| d.model == brush).unwrap();
+        let n = v.models[brush as usize].vertex_count;
+        // A long stick held through the fist (its vertices are at its ends): his hand is inside
+        // its posed bounds.
+        let pts = &v.positions[d.first_vertex as usize..][..n];
+        let lo = pts.iter().fold(Vec3::splat(f32::MAX), |a, p| a.min(*p)) - Vec3::splat(15.0);
+        let hi = pts.iter().fold(Vec3::splat(f32::MIN), |a, p| a.max(*p)) + Vec3::splat(15.0);
+        assert!(hand.cmpge(lo).all() && hand.cmple(hi).all(), "hand {hand} outside brush {lo}..{hi}");
+    }
+
+    #[test]
+    fn goop_shows_on_mario_through_the_dirt_mask() {
+        let Some(mut v) = view() else {
+            eprintln!("skipping: no assets/");
+            return;
+        };
+        let a = libsms::Assets::discover(None).unwrap();
+        let mut sim = Sim::new(a.params, a.anim_table, Vec3::ZERO, 0);
+        let mut host = libsms::FlatHost::default();
+        let pad = libsms::Pad::default();
+        let body_textures = |v: &View| {
+            let d = v.draws.iter().find(|d| d.model == models::BODY).unwrap();
+            let n = v.models[models::BODY as usize].batches.len();
+            v.texture_ids[d.first_color as usize..][..n].to_vec()
+        };
+        sim.advance(&mut host, &pad, i16::MIN, 1.0 / 60.0);
+        v.update(&mut sim, 1.0 / 60.0);
+        let clean = body_textures(&v);
+        sim.mario.add_dirty(255.0);
+        sim.advance(&mut host, &pad, i16::MIN, 1.0 / 60.0);
+        v.update(&mut sim, 1.0 / 60.0);
+        let dirty = body_textures(&v);
+        assert_ne!(clean, dirty, "goop changes his bakes");
+        let changed = clean.iter().zip(&dirty).find(|(c, d)| c != d && **c >= 0 && **d >= 0).unwrap();
+        let (c, d) = (&v.textures.list[*changed.0 as usize], &v.textures.list[*changed.1 as usize]);
+        assert_ne!(c.rgba, d.rgba, "the dirty bake differs");
+    }
+
+    #[test]
+    fn bowser_jr_and_the_goop_critters_load_as_posed_props() {
+        let Some(dir) = libsms::assets::find(None) else {
+            eprintln!("skipping: no assets/");
+            return;
+        };
+        for (look, clip) in [
+            (Look::KoopaJr, Some("koopajr_wait")),
+            (Look::NameKuri, Some("name_walk")),
+            (Look::NameKuriBrain, None),
+            (Look::Pakkun, Some("pakun_shoot")),
+            (Look::PakkunSeed, None),
+            (Look::KoopaSign, Some("stamp_koopa_sign_draw1")),
+        ] {
+            let mut v = View::load_look(&dir, look).unwrap_or_else(|e| panic!("{look:?}: {e}"));
+            let (c, frames) = clip.map_or((-1, 0.0), |n| {
+                let (i, f) = v.prop_clip(n).unwrap_or_else(|| panic!("{look:?} has {n}"));
+                (i as i32, f)
+            });
+            v.update_prop(0, c, frames * 0.5, false);
+            assert_eq!(v.positions.len(), v.models[0].vertex_count, "{look:?}");
+            assert!(v.positions.iter().all(|p| p.is_finite()));
+            assert!(v.texture_ids.iter().any(|&t| t >= 0), "{look:?} is textured");
+        }
+        let stu = View::load_look(&dir, Look::NameKuri).unwrap();
+        let (walk, _) = stu.prop_clip("name_walk").unwrap();
+        let brain = stu.prop_joint(walk as i32, 10.0, NAMEKURI_BRAIN_JOINT).unwrap();
+        assert!(brain.w_axis.y > 20.0, "the brain rides on top: {}", brain.w_axis.y);
     }
 
     #[test]
