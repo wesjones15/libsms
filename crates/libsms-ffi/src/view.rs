@@ -1269,6 +1269,44 @@ pub unsafe extern "C" fn sms_view_prop_joint(
     })
 }
 
+/// Shadow Mario's warp as a refraction map (`shadow_skin::ShadowSwirl::refraction`: RoR2-style
+/// distortion normals over his body's coordinates, scrolled by `kagemario_scroll.btk` to this
+/// game frame) into `rgba` (`info`'s width x height x 4 bytes; null to ask the size) and the
+/// gain to divide a host's strength by into `gain`. Returns the swirl's frame + 1 (redraw when
+/// it changes), or 0 when the view isn't drawing his skin.
+///
+/// # Safety
+/// `view` from [`sms_view_new_look`]; `info` and `gain` writable; `rgba` null or writable for
+/// `capacity` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_shadow_refraction(
+    view: *mut SmsView,
+    info: *mut SmsTexture,
+    rgba: *mut u8,
+    capacity: u32,
+    gain: *mut f32,
+) -> u32 {
+    unsafe {
+        with_view(view, 0, |v| {
+            let Some(swirl) = v.view.shadow_swirl() else { return 0 };
+            let (side, px, g) = swirl.refraction();
+            if let Some(info) = info.as_mut() {
+                *info = SmsTexture { width: side, height: side, wrap_s: 1, wrap_t: 1, _pad: [0; 2] };
+            }
+            if let Some(gain) = gain.as_mut() {
+                *gain = g;
+            }
+            if !rgba.is_null() {
+                if (capacity as usize) < px.len() {
+                    return 0;
+                }
+                std::ptr::copy_nonoverlapping(px.as_ptr(), rgba, px.len());
+            }
+            (swirl.frame() as u32).wrapping_add(1).max(1)
+        })
+    }
+}
+
 /// Mario says `name` (an `MSD_SE_MV*` voice, e.g. `MSD_SE_MV23_JUMP_LARGE_01`), cutting off
 /// his last voice. Nothing without sound or an unknown name.
 ///

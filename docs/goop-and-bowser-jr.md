@@ -3,8 +3,8 @@
 Core modules: `goop.rs` (the field), `dirty.rs` (goop on Mario), `goop_critters.rs` (Swoopin'
 Stus, goop Piranhas, their shots), `koopajr.rs` (Shadow Mario / Bowser Jr. as a player).
 C ABI: `libsms-ffi/src/goop.rs` (`sms_goop_*`, `sms_sim_set_goop`, `sms_sim_set_koopajr`,
-`sms_jr_*`), ABI 46. Headless tests only. **Nothing here has been played in game, and there is
-no RoR2 survivor yet.**
+`sms_jr_*`), ABI 46. **Nothing here has been played in game.** The RoR2 survivor is built
+(ror2-mario, see "RoR2 survivor" below) but unplayed.
 
 ## Decomp sources
 - Pollution: Map/PollutionManager.cpp, PollutionLayer.cpp, PollutionAction.cpp
@@ -92,10 +92,35 @@ Headless tests only; nothing has been drawn in RoR2 or played.
   takes them, turned half round, at `mBrushScaleupDuringDrawing` (3) — his graffiti mark. A
   Bowser Jr. sim standing in that world takes it.
 
+- **Screen-grab swirl** (`ShadowSwirl::refraction`, `sms_view_shadow_refraction`): the warp's
+  IA offsets at this game frame's scroll, over the body's coordinates, packed as RoR2's
+  distortion normals (`[255, -y, 255, x]`, peak 0.8, the gain returned) for a host's
+  refraction pass over the body.
+
+## RoR2 survivor (ror2-mario, 2026-11-05; built, not played)
+- `KoopaJr.cs`: survivor `KoopaJrTest` / body `KoopaJrTestBody`, a Commando clone with Mario's
+  `MarioDriver` and a `KoopaJrBody`. The driver calls `sms_sim_set_koopajr` after
+  `sms_sim_new`, routes his buttons in place of FLUDD's (RT held paints as Shadow Mario, RT
+  tap a goop ball as Jr, RB tap form, RB hold 0.5 s next kind, d-pad up sign / seed, d-pad down
+  hide / appear; keyboard 1 and 2 for the d-pad), hides Mario's model in Jr form or hidden and
+  draws look 9 posed by `jr_clip`. HiddenInvincibility while under the goop. Skin: native 4
+  (`MarioSkin.Shadow`, `OwnSurvivor`, never in Mario's loadout). Skills: Magic Brush and Change
+  Form (descriptive, Commando's icons), Mario's own Ground Pound and Wet Slide defs.
+- `KoopaJrGoop.cs`: one world for the process (setup on a worker the first time a Jr is in
+  play; `sms_goop_clear` each new stage), handed to every Mario sim. The server steps it with
+  the enemies within 80 m of any Jr as targets; `sms_goop_contacts` hurts enemies by kind (a
+  host choice; `BowserJr.GoopHurtsEnemies`), critter hits land as Jr's damage, Piranha bursts
+  throw coins, sounds go through the player's view, particles through an effects view (look 8).
+  Every machine draws the chunks (a quad per goop texel at its height, a 64x64
+  `sms_goop_chunk_image_at` picture, nearby chunks redrawn each second to swim) and the Stus
+  (with brains), Piranhas and seeds as props.
+- `MarioShadowSwirl.cs`: the body drawn again with RoR2's `matDistortion` and the refraction
+  map above, re-uploaded each game frame (`BowserJr.SwirlRefraction`, 0 off).
+- Not done: multiplayer (the world runs and draws on the host only; Jr actions aren't sent),
+  critters never target a Mario teammate, the goop ball has no model, Stu TEV tints, skill
+  icons, a lobby display of the Jr form, and goop drawn only unlit.
+
 ## Not done
-- Drawing it in RoR2: the survivor's views, the goop chunk quads, a screen-grab shader for the
-  real swirl.
-- The RoR2 survivor (plugin, skills, skin, multiplayer).
 - Layer spreading (`FLAG_CAN_SPREAD`), footprints, `OIL_PULLING`, rumble.
 - Petey: no C ABI yet, no model in the view, no `.bas` playback wired (events name the clips).
 

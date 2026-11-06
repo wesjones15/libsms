@@ -1962,6 +1962,11 @@ impl View {
         self.vr_eye = if height.is_finite() { height.max(0.0) } else { 0.0 };
     }
 
+    /// Shadow Mario's swirl while his skin is drawn (for a host's screen-grab pass).
+    pub fn shadow_swirl(&self) -> Option<&crate::shadow_skin::ShadowSwirl> {
+        self.shadow.as_ref().filter(|_| self.skin == Skin::Shadow).map(|(_, _, s)| s)
+    }
+
     /// Shadow Mario's look on his freshly built body: every batch takes the one swirl texture
     /// (baked now, rebaked each game frame by [`Self::update`]), and his brush is loaded.
     /// Returns the brush to push after the body.
@@ -3351,6 +3356,21 @@ mod tests {
         let px = v.textures.list[swirl as usize].rgba.as_chunks::<4>().0;
         let (r, b) = px.iter().fold((0u64, 0u64), |(r, b), p| (r + p[0] as u64, b + p[2] as u64));
         assert!(b > r, "blue {b} red {r}");
+        // The host's screen-grab pass: a refraction map that bends both ways and scrolls.
+        let swirl_now = v.shadow_swirl().expect("his skin is drawn");
+        let (side, map, gain) = swirl_now.refraction();
+        assert_eq!(map.len(), (side * side * 4) as usize);
+        assert!(gain.is_finite() && gain > 0.0);
+        let xs: Vec<u8> = map.as_chunks::<4>().0.iter().map(|p| p[3]).collect();
+        assert!(xs.iter().any(|&x| x < 100) && xs.iter().any(|&x| x > 156), "the warp is flat");
+        let before = map.clone();
+        let mut later = None;
+        for _ in 0..10 {
+            sim.advance(&mut host, &pad, i16::MIN, 1.0 / 30.0);
+            v.update(&mut sim, 1.0 / 30.0);
+            later = v.shadow_swirl().map(|s| s.refraction().1);
+        }
+        assert_ne!(later.unwrap(), before, "the refraction doesn't scroll");
         // The brush rides his left hand.
         let hand = v.anchor(Anchor::HandL as usize).unwrap().w_axis.truncate();
         let d = v.draws.iter().find(|d| d.model == brush).unwrap();

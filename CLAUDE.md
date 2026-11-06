@@ -143,5 +143,5 @@ the Spray "bomb". See the spec.
 Goop (every pollution type, Mario's reactions, lifetime and cap), the goop critters and Bowser Jr./Shadow Mario
 as a player core with its C ABI (ABI 46), and their presentation (the Shadow Mario skin with its
 swirl and brush, Mario's goop, Jr/Stu/Piranha/seed/sign props, the goop surface from the disc's
-layers, the disc's stamps): headless only, never played, no RoR2 survivor yet; see
+layers, the disc's stamps, the screen-grab swirl map) and the RoR2 survivor (ror2-mario KoopaJr*.cs): built, never played; see
 docs/goop-and-bowser-jr.md.

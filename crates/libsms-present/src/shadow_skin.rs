@@ -126,6 +126,39 @@ impl ShadowSwirl {
         Some(self.bake())
     }
 
+    /// The game frame last stepped to (0 before the first step).
+    pub fn frame(&self) -> u64 {
+        self.frame.unwrap_or(0)
+    }
+
+    /// The warp as a refraction map for a host's screen-grab shader, over the body's own
+    /// coordinates at the current scroll: the warp's IA pair is the indirect offset
+    /// (`GX_ITF_4`, a half bias; `_mat_head`'s indirect stage pushes the screen copy by it),
+    /// packed as RoR2's distortion normals want them (`[255, -y, 255, x]`, a half bias, as
+    /// `heat_haze` packs the shimmer) and scaled so the largest is 0.8. Returns the side
+    /// ([`SIZE`]), the pixels and the gain the host divides its strength by.
+    pub fn refraction(&self) -> (u32, Vec<u8>, f32) {
+        let repeat = [Wrap::Repeat, Wrap::Repeat];
+        let (ww, wh, wp) = (&self.warp.0, &self.warp.1, &self.warp.2);
+        let t = self.params.warp_translation;
+        let mut offsets = Vec::with_capacity((SIZE * SIZE) as usize);
+        for y in 0..SIZE {
+            for x in 0..SIZE {
+                let (u, v) = ((x as f32 + 0.5) / SIZE as f32, (y as f32 + 0.5) / SIZE as f32);
+                let w = sample_rgba8_bilinear(*ww, *wh, wp, repeat, u * 2.0 + t.x, v * 2.0 + t.y).unwrap_or([0.5; 4]);
+                offsets.push(Vec2::new(w[0] - 0.5, w[3] - 0.5));
+            }
+        }
+        let peak = offsets.iter().map(|o| o.length()).fold(0.0, f32::max);
+        let gain = if peak > 1e-6 { 0.8 / peak } else { 1.0 };
+        let pack = |v: f32| ((v * gain * 0.5 + 0.5) * 255.0).round().clamp(0.0, 255.0) as u8;
+        let mut rgba = Vec::with_capacity(offsets.len() * 4);
+        for o in offsets {
+            rgba.extend_from_slice(&[255, pack(-o.y), 255, pack(o.x)]);
+        }
+        (SIZE, rgba, gain)
+    }
+
     /// The two stages over the body's coordinates at the current scroll.
     pub fn bake(&self) -> Baked {
         let repeat = [Wrap::Repeat, Wrap::Repeat];
