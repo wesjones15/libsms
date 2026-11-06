@@ -4402,7 +4402,10 @@ fn both_corkscrews_follow_camera_yaw_and_only_relative_pitch() {
         s.sim.mario.flight_camera=Some(libsms::Aim {yaw:left,pitch:-12000});
         run(s,80);
         assert_eq!(s.sim.mario.face_yaw,left,"camera left did not steer");
-        assert!(s.sim.mario.vel.y<0.0 && s.sim.mario.vel.y>=-max_vertical-0.01,"downward pitch was not bounded");
+        // By now (past 120 ticks) the corkscrew is flaming, which pitches up to 55 degrees.
+        let flaming_vertical=speed*55.0_f32.to_radians().sin();
+        assert!(s.sim.mario.vel.y<0.0 && s.sim.mario.vel.y>=-flaming_vertical-0.01,"downward pitch was not bounded");
+        assert!(s.sim.mario.vel.y < -max_vertical,"a flaming corkscrew didn't pitch past the plain one's limit");
         s.sim.mario.flight_camera=Some(libsms::Aim {yaw:left,pitch:6000});
         run(s,100);
         assert!(s.sim.mario.vel.y.abs()<0.01,"returning to starting angle did not level flight");

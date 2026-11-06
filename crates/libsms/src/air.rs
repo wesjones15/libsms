@@ -533,7 +533,17 @@ impl Mario {
         }
         self.set_anim(clip::SPIN, 1.0);
         self.emit_blur_spin_jump();
+        // Host extension: the flaming rocket spin, while it rises, is steered hard by the stick (the
+        // Rocket's own 2.5x air control) and turns him toward it, so the climb can be aimed.
+        let steer = self.rocket_super && self.vel.y > 0.0 && self.input.stick;
+        let mag = self.intended_mag;
+        if steer {
+            let rot = self.params.hover.rot_sp as i32;
+            self.face_yaw = crate::math::turn_toward(self.face_yaw, self.intended_yaw, rot);
+            self.intended_mag = mag * 2.5;
+        }
         self.jumping_basic(host, Status::SecJumpSlip, clip::SPIN, 0);
+        self.intended_mag = mag;
         self.status_timer += 1;
         let t = (self.status_timer * 4096) as i16;
         self.model_yaw = if self.status == Status::RightRotateJump {
@@ -589,15 +599,25 @@ impl Mario {
             // Host extension (both Turbo and ordinary dive): camera yaw steers the flight;
             // pitch is a small change relative to the camera at the start of this roll.
             // Keep the stick circle for sustaining the roll, rather than steering in circles.
+            // Host extension: a flaming corkscrew (the super one) is fully steerable. It turns and
+            // pitches much harder, and more so the faster it flies (the Turbo's is quicker than a plain
+            // dive's, and its wider arcs would otherwise feel sluggish), so it can be aimed at a target.
+            let (turn_k, pitch_gain, pitch_max, pitch_ease) = if self.corkscrew_super {
+                let k = (self.corkscrew_speed / self.params.jump.jump_jump_catch_sp.max(1.0)).clamp(1.0, 3.0);
+                (2.0 * k, 1.0, 55.0_f32.to_radians(), (0.15 * k).min(0.3))
+            } else {
+                (1.0, 0.35, 15.0_f32.to_radians(), 0.08)
+            };
             let target_pitch = if let Some(camera) = self.flight_camera {
                 let start = *self.corkscrew_camera_start.get_or_insert(camera.pitch);
                 let delta = camera.pitch.wrapping_sub(start) as f32 * std::f32::consts::PI / 32768.0;
-                self.face_yaw = crate::math::turn_toward(self.face_yaw, camera.yaw, self.params.hover.rot_sp as i32);
-                (delta * 0.35).clamp(-15.0_f32.to_radians(), 15.0_f32.to_radians())
+                let rot = (self.params.hover.rot_sp as f32 * turn_k) as i32;
+                self.face_yaw = crate::math::turn_toward(self.face_yaw, camera.yaw, rot);
+                (delta * pitch_gain).clamp(-pitch_max, pitch_max)
             } else { 0.0 };
-            self.corkscrew_pitch += (target_pitch - self.corkscrew_pitch) * 0.08;
+            self.corkscrew_pitch += (target_pitch - self.corkscrew_pitch) * pitch_ease;
             if self.flight_camera.is_none() && self.input.stick {
-                let rot = (self.params.hover.rot_sp as i32) / 2;
+                let rot = ((self.params.hover.rot_sp as f32 * turn_k) as i32) / 2;
                 self.face_yaw = crate::math::turn_toward(self.face_yaw, self.intended_yaw, rot);
             }
             self.model_yaw = self.face_yaw;
