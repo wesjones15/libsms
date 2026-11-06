@@ -2240,8 +2240,10 @@ impl View {
             luigi_world = Some(world);
         }
         // Mario's chest, Luigi's `WaistN`-aligned chest, or Yoshi's `jnt_neck_1`, carrying FLUDD.
+        // Luigi's, like Mario's, only exists while FLUDD is fitted (`look` is None without it): a
+        // Luigi with no FLUDD must not keep wearing the pack.
         let chest_frame = yoshi_chest
-            .or(luigi_chest)
+            .or(luigi_chest.filter(|_| look.is_some()))
             .or_else(|| look.and(self.chest).and_then(|c| joints.get(c)).copied());
         let fludd_base = chest_frame.map(|chest| {
             if self.skin == Skin::Yoshi {
