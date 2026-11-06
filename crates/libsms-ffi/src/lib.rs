@@ -1185,6 +1185,19 @@ pub unsafe extern "C" fn sms_sim_teleport(sim: *mut SmsSim, pos: *const SmsVec3)
     }
 }
 
+/// Moves Mario to `*pos` keeping his speed, status and water: a mirrored copy's small drift
+/// correction (see `Mario::nudge`). A real relocation is [`sms_sim_teleport`].
+///
+/// # Safety
+/// `sim` from [`sms_sim_new`]; `pos` readable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_sim_nudge(sim: *mut SmsSim, pos: *const SmsVec3) {
+    // SAFETY: the caller promised valid pointers.
+    if let (Some(s), Some(pos)) = (unsafe { sim.as_mut() }, unsafe { pos.as_ref() }) {
+        s.sim.mario.nudge((*pos).into());
+    }
+}
+
 /// Fills FLUDD's tank (a new level, a refill button); the HUD's full-tank chime plays on the
 /// next step if it wasn't full.
 ///

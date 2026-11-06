@@ -775,6 +775,18 @@ impl Mario {
         self.fall_peak_y = pos.y;
     }
 
+    /// Moves Mario to `pos` without touching his motion or state: for a host that mirrors
+    /// another machine's sim and only needs to pull a drifted copy back. Unlike
+    /// [`Self::teleport`] a slide, dive or jump chain keeps its speed and status.
+    pub fn nudge(&mut self, pos: Vec3) {
+        if !pos.is_finite() {
+            return;
+        }
+        let shift = pos - self.pos;
+        self.pos = pos;
+        self.prev_pos += shift;
+    }
+
     /// The host's world throws Mario: his velocity becomes `vel` (units per 30 Hz frame,
     /// `mVel`) and he flies as from a spring (`FORCE_JUMP`), facing along the throw, or away
     /// from it when it's mostly backwards (he flies back, as from a hit). For jump pads,
