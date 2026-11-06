@@ -271,7 +271,10 @@ pub const OPTIONAL_EXTRACTS: [(&str, &str, &str); 29] = [
 /// the goop (`TPollutionManager`): the stage layers' models and textures, `h_ma_rak.bti` (the
 /// mask Mario and the goop enemies show goop through, `cDirtyFileName` in enemyMario.cpp) and the
 /// goop effects Mario makes (`ms_m_ashios` feet, `ms_m_spinos` spin, `ms_m_tokeos` melting).
-pub const SCENE_FOLDERS: [(&str, &str); 12] = [
+/// `gatekeeper/` is the big goop Piranha Plant (`TBiancoGateKeeper`, gatekeeper.cpp:
+/// `gene_pakkun_model1.bmd`, its clips, `bas/` keys and `jpa/ms_gkpa_*` effects; the airstrip
+/// and Bianco stages).
+pub const SCENE_FOLDERS: [(&str, &str); 13] = [
     ("monte", "npc"),
     ("mapobj/fruit", "scene"),
     ("mapobj/eggyoshi", "scene"),
@@ -284,6 +287,7 @@ pub const SCENE_FOLDERS: [(&str, &str); 12] = [
     ("pakkun", "enemy"),
     ("bosspakkun", "enemy"),
     ("map/pollution", "scene"),
+    ("gatekeeper", "enemy"),
 ];
 
 /// Disc folders copied as they are: `AudioRes/` holds the wave archives (`Banks/*.aw`), the
@@ -293,7 +297,7 @@ pub const DISC_FOLDERS: [&str; 1] = ["AudioRes/"];
 
 /// Files that must exist for the library and viewer to work. Adding one here makes an older
 /// `assets/` incomplete, so hosts re-extract it on the next run.
-pub const REQUIRED: [&str; 43] = [
+pub const REQUIRED: [&str; 44] = [
     "particle/ms_enm_wathit.jpa",
     "params_mario/run.prm",
     "params_mario/jump.prm",
@@ -337,6 +341,7 @@ pub const REQUIRED: [&str; 43] = [
     "enemy/namekuri2/name.bmd",
     "enemy/pakkun/pakun.bmd",
     "scene/map/pollution/h_ma_rak.bti",
+    "enemy/gatekeeper/gene_pakkun_model1.bmd",
 ];
 
 pub const GAME_IDS: [(&str, &str); 3] = [

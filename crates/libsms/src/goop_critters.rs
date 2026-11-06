@@ -45,6 +45,10 @@ use std::path::Path;
 
 use glam::Vec3;
 
+#[path = "goop_gatekeeper.rs"]
+mod gatekeeper;
+pub use gatekeeper::{GateKeeper, KEEPER_TICKS_PER_FRAME, KeeperParams, KeeperState, keeper_clip, keeper_clip_ticks};
+
 use crate::damage::DamageKind;
 use crate::goop::{GoopField, GoopKind};
 use crate::host::{Enemy, Host, SurfaceFlags};
@@ -427,6 +431,8 @@ pub struct Shot {
 pub enum CritterKind {
     Stu,
     Piranha,
+    /// The big goop Piranha ([`GateKeeper`]).
+    GateKeeper,
 }
 
 /// What the critters did.
@@ -458,6 +464,14 @@ pub struct Critters {
     pub piranhas: Vec<Piranha>,
     pub shots: Vec<Shot>,
     pub events: Vec<CritterEvent>,
+    /// The big goop Piranhas ([`GateKeeper`]), their tuning and clip lengths (ticks).
+    pub keepers: Vec<GateKeeper>,
+    pub keeper_params: KeeperParams,
+    pub keeper_clips: [u32; 19],
+    /// Whether Gatekeepers grow out of big piles by themselves (off: only [`Critters::spawn_keeper`]).
+    pub keeper_spawning: bool,
+    keeper_cooldown: u32,
+    keeper_look: u32,
     /// Stus alive at once, at most (the disc's stages keep 2 a launcher).
     pub max_stus: usize,
     pub max_piranhas: usize,
@@ -509,6 +523,12 @@ impl Critters {
             piranhas: Vec::new(),
             shots: Vec::new(),
             events: Vec::new(),
+            keepers: Vec::new(),
+            keeper_params: KeeperParams::default(),
+            keeper_clips: [400; 19],
+            keeper_spawning: true,
+            keeper_cooldown: 0,
+            keeper_look: 0,
             max_stus: 6,
             max_piranhas: 4,
             spawn_interval: 600,
@@ -527,11 +547,13 @@ impl Critters {
     /// The disc's tuning and clip lengths from an extracted `assets/` folder.
     pub fn from_dir(assets: &Path) -> Critters {
         let prm = |n: &str| std::fs::read(assets.join("params_enemy").join(n)).ok().and_then(|d| Prm::parse(&d).ok());
-        Critters::new(
+        let mut c = Critters::new(
             prm("namekuri.prm").map_or_else(StuParams::default, |p| StuParams::from_prm(&p)),
             prm("pakkun.prm").map_or_else(PiranhaParams::default, |p| PiranhaParams::from_prm(&p)),
             CritterClips::from_dir(assets),
-        )
+        );
+        c.keeper_clips = keeper_clip_ticks(assets);
+        c
     }
 
     fn rand(&mut self) -> f32 {
@@ -565,6 +587,7 @@ impl Critters {
         self.stus.iter().any(|s| s.id == id)
             || self.piranhas.iter().any(|p| p.id == id)
             || self.shots.iter().any(|s| s.id == id)
+            || self.keepers.iter().any(|k| k.id == id)
     }
 
     /// Hit cylinders for the host's world (what FLUDD's water and Mario's stomps hit).
@@ -797,6 +820,7 @@ impl Critters {
         }
         self.step_stus(host, goop, targets);
         self.step_piranhas(targets);
+        self.step_keepers(goop, owner, targets);
         self.step_shots(host, goop, targets);
     }
 

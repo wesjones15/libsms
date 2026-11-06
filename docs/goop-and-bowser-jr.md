@@ -131,8 +131,40 @@ Headless tests only; nothing has been drawn in RoR2 or played.
   go to the other players, whose puppets hide Shadow Mario and draw look 9; the server keeps
   HiddenInvincibility on a client's hidden Jr.
 - Not done: critters never target a Mario teammate, critter damage is credited to the first
-  Jr, the goop ball has no model, Stu TEV tints, skill icons, a lobby display of the Jr form,
-  and goop drawn only unlit.
+  Jr, Stu TEV tints, skill icons, a lobby display of the Jr form, and Bowser Jr.'s walk.
+
+## 2026-11-06 pass (built, not played)
+- **Shadow Mario's look**: every kagemario material is blend 0 with z write (opaque). TEV stage
+  0 lerps REG0 (28,20,93) to REG1 (157,194,255) by the screen-space map, stage 1 lerps by
+  `H_kagemario_main` and adds RASC. So the body draws solid with its bake and the
+  `matDistortion` refraction pass draws over it (`MarioShadowSwirl.cs`); nothing is see-through.
+- **Voice** (`MSound.cpp startMarioVoice`, voice status 2 for `PLAYER_TYPE_SHADOW_MARIO`):
+  Mario's lines with no `MA_VO` random alternates, pitch 1.2, volume 0.9, port 11 = 1
+  (`VoiceSet::Shadow`, `sms_view_voice_set` 3).
+- **Brush attacks** (host moves, `koopajr.rs` `Brush`): RT tap swings `ma_draw` 28 to 72 over
+  the upper body and throws a `ShotKind::Paint` blob at frame 44 toward `sms_jr_set_aim`. Held,
+  he sprays small blobs while swaying 40 to 52. Each blob splats his paint kind on first touch
+  and carries a damage share (hit event `a >> 8`, hundredths). The d-pad sign is set aside.
+- **Effects**: the effects view (look 8) also loads `GOOP_EFFECTS` from their own folders
+  (`scene/map/pollution`, `enemy/kagemario/jpa`, `enemy/koopajr/jpa`,
+  `enemy/gatekeeper/jpa`, else `particle`). `ms_thunder_s` and the two smokes are directional
+  and draw nothing from a standing test emitter; not checked in game.
+- **Gatekeeper** (`goop_gatekeeper.rs`, `TBiancoGateKeeper`): grows from a pile of at least
+  110 texels within 400 units, searched within 2500 of the owner every 60 ticks (at most 1,
+  1800-tick cooldown). It runs appear1, then wait3 (swaying and turning toward the target),
+  then shoot1, launching at spine frame 0x34. It dives (dive1) after 2400 ticks or when its
+  pile is cleaned below half. The launch is an arced Paint blob of the critters' goop (splat
+  260, damage share 2), not a Gorogoro. Effects: kemuri, bota, yodare. Sounds: GATEKEEPER
+  APPEAR/WAIT/HIDE. It is FFI critter kind 4 (`clip_time` in half-frames),
+  `sms_goop_keeper_tune`, look 15 with the goop mask in place of `Q_kepper_dummy_128IA4`. It
+  can't be hurt. Not done: its `tex0/tex1` btk scroll, the `BASE` loop sound, effects bound
+  to joints (they are emitted at the mouth), and Gorogoro/Stu launches.
+- **Goop surface** (`KoopaJrGoop.cs`): each chunk corner is raycast onto the stage's own ground
+  (lift 4 cm), so neighbours meet with no grid seams and nothing sinks under the map. The
+  chunks use HGStandard cutout (lit, a little gloss). The swim redraw is now every 0.15 s
+  within 30 m.
+- Critters are now placed correctly (ModelView placed them at pos*scale), and goop balls draw
+  with the seed model.
 
 ## Not done
 - Layer spreading (`FLAG_CAN_SPREAD`), footprints, `OIL_PULLING`, rumble.

@@ -197,6 +197,10 @@ pub enum Look {
     /// Bowser Jr.'s sign that Shadow Mario paints (`stamp_koopa_sign_model1.bmd` with its
     /// `_draw1` clip; enemyMario.cpp draws it at three times his scale, turned half round).
     KoopaSign,
+    /// The big goop Piranha Plant (`TBiancoGateKeeper`, gatekeeper.cpp):
+    /// `gatekeeper/gene_pakkun_model1.bmd` and its `gene_pakkun_*` clips, the goop mask in place
+    /// of its `Q_kepper_dummy_128IA4` (`SMS_ChangeTextureAll` in `init`).
+    GateKeeper,
 }
 
 /// [`Look::Shadow`]'s ramp: dark where Mario's colours are dark, light where they're light.
@@ -350,6 +354,36 @@ pub const FLOWER_EFFECTS: [&str; 8] = [
     "ms_enm_disap_b",
 ];
 
+/// The goop's, its critters' and Bowser Jr.'s effects, with the folder each loads from (the
+/// scene's and the enemies' own `jpa/` folders, else the common `particle/`): the goop's
+/// burning (`ms_newfire_*`, pollution.cpp) and electric (`ms_thunder_s`) layers, a cleaned
+/// patch's sparkle (`ms_raku_indawa`, `ms_raku_kie`), Swoopin' Stu's and the goop Piranha's
+/// deaths (`ms_deadnamekli_*`, `ms_packn_hd_smoke`), their water hits (`ms_enm_wathit`), Shadow
+/// Mario's change (`ms_kgm_change`), Bowser Jr.'s blast (`ms_koopajr_killer`) and the
+/// Gatekeeper's smoke, drool and splats (`ms_gkpa_*`, gatekeeper.cpp).
+pub const GOOP_EFFECTS: [(&str, &str); 20] = [
+    ("ms_newfire_a", "scene/map/pollution"),
+    ("ms_newfire_b", "scene/map/pollution"),
+    ("ms_thunder_s", "particle"),
+    ("ms_raku_indawa", "particle"),
+    ("ms_raku_kie", "particle"),
+    ("ms_deadnamekli_n", "particle"),
+    ("ms_deadnamekli_o", "particle"),
+    ("ms_packn_hd_smoke", "particle"),
+    ("ms_enm_wathit", "particle"),
+    ("ms_kgm_change", "enemy/kagemario/jpa"),
+    ("ms_koopajr_killer", "enemy/koopajr/jpa"),
+    ("ms_gkpa_kemuri", "enemy/gatekeeper/jpa"),
+    ("ms_gkpa_kemuri_w", "enemy/gatekeeper/jpa"),
+    ("ms_gkpa_bota", "enemy/gatekeeper/jpa"),
+    ("ms_gkpa_yodare_l", "enemy/gatekeeper/jpa"),
+    ("ms_gkpa_yodare_s", "enemy/gatekeeper/jpa"),
+    ("ms_gkpa_dead", "enemy/gatekeeper/jpa"),
+    ("ms_gkpa_deadsmoke", "enemy/gatekeeper/jpa"),
+    ("ms_smb_hd_smoke", "particle"),
+    ("ms_smb_ap_smoke", "particle"),
+];
+
 /// The Shine Sprite's clips, glow effects and demo camera ([`Look::Shine`]).
 struct Shine {
     /// `shine_float`, `shine_demo_shine_get`.
@@ -447,6 +481,8 @@ const BRUSH_KEY: u32 = 0x2001;
 /// `TEnemyMario::init`), and konst 0's alpha (`TMario::addDirty`) blends it in.
 const DIRT_TEXTURE: &str = "scene/map/pollution/h_ma_rak.bti";
 const DIRT_DUMMY: &str = "H_ma_rak_dummy";
+/// The Gatekeeper's stand-in for the same mask (`TBiancoGateKeeper::init`).
+const GATEKEEPER_DUMMY: &str = "Q_kepper_dummy_128IA4";
 
 /// The dirt mask from the disc, if extracted.
 pub(crate) fn dirt_texture(dir: &Path) -> Option<Tex> {
@@ -457,7 +493,7 @@ pub(crate) fn dirt_texture(dir: &Path) -> Option<Tex> {
 
 /// `replace` for [`build`]: the dirt mask where the model has the dummy.
 pub(crate) fn swap_dirt(name: &str, dirt: &Option<Tex>) -> Option<Tex> {
-    (name == DIRT_DUMMY).then(|| dirt.clone()).flatten()
+    (name == DIRT_DUMMY || name == GATEKEEPER_DUMMY).then(|| dirt.clone()).flatten()
 }
 
 /// Dirt levels baked (konst 0 alpha steps): each level is one more texture per material.
@@ -1142,6 +1178,7 @@ impl View {
             Look::KoopaSign => {
                 return Self::load_prop(dir, "kagemario/stamp_koopa_sign", "stamp_koopa_sign_model1.bmd");
             }
+            Look::GateKeeper => return Self::load_prop(dir, "gatekeeper", "gene_pakkun_model1.bmd"),
             _ => {}
         }
         let assets = libsms::Assets::load(dir);
@@ -1412,6 +1449,15 @@ impl View {
         view.fx = Particles::load(dir, &FLOWER_EFFECTS);
         for name in FLOWER_EFFECTS {
             view.fx.set_world_space(name, true);
+        }
+        // The goop's and its creatures' (the host emits them all on this view).
+        for (name, folder) in GOOP_EFFECTS {
+            if FLOWER_EFFECTS.contains(&name) {
+                continue;
+            }
+            if view.fx.add_file(name, &dir.join(folder).join(format!("{name}.jpa"))) {
+                view.fx.set_world_space(name, true);
+            }
         }
         Ok(view)
     }
@@ -3428,6 +3474,7 @@ mod tests {
             (Look::Pakkun, Some("pakun_shoot")),
             (Look::PakkunSeed, None),
             (Look::KoopaSign, Some("stamp_koopa_sign_draw1")),
+            (Look::GateKeeper, Some("gene_pakkun_wait3")),
         ] {
             let mut v = View::load_look(&dir, look).unwrap_or_else(|e| panic!("{look:?}: {e}"));
             let (c, frames) = clip.map_or((-1, 0.0), |n| {
@@ -4302,6 +4349,30 @@ mod tests {
             saw |= !v.fx.vertices.is_empty();
         }
         assert!(saw, "pollen, rocks and smoke should draw quads");
+        assert!(v.fx.vertices.iter().all(|p| p.pos.is_finite()));
+    }
+
+    #[test]
+    fn goop_effects_load_from_their_folders_and_run() {
+        let Some(dir) = libsms::assets::find(None) else { eprintln!("SKIP: Sunshine assets absent"); return };
+        if !dir.join("enemy/gatekeeper/jpa/ms_gkpa_kemuri.jpa").is_file() { eprintln!("SKIP: goop effects not extracted"); return }
+        let mut v = View::load_look(&dir, Look::Effects).unwrap();
+        let mut drew = 0;
+        for (name, _) in GOOP_EFFECTS {
+            let mut one = View::load_look(&dir, Look::Effects).unwrap();
+            one.emit_effect(name, Vec3::ZERO, 1.0);
+            let mut saw = false;
+            for _ in 0..40 {
+                one.step_effects(1.0 / 30.0);
+                saw |= !one.fx.vertices.is_empty();
+            }
+            // Directional ones (`ms_thunder_s`, the two smokes) face their travel and draw
+            // nothing from a standing test emitter.
+            if !saw { eprintln!("no quads from a standing emitter: {name}"); } else { drew += 1; }
+            v.emit_effect(name, Vec3::ZERO, 1.0);
+        }
+        assert!(drew >= 17, "only {drew} goop effects drew");
+        v.step_effects(0.5);
         assert!(v.fx.vertices.iter().all(|p| p.pos.is_finite()));
     }
 

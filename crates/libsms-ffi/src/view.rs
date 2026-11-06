@@ -357,11 +357,11 @@ pub unsafe extern "C" fn sms_view_new(assets_dir: *const c_char, sound: u8) -> *
 /// same readers, with the model posed by [`sms_view_shine_update`] (never `sms_view_update`),
 /// its glow in the `sms_view_fx_*` readers and the Shine Get camera in [`sms_view_camera_shot`].
 /// `look` 5, 6 and 7 are the sambo flower, tower and head: one instance posed by
-/// [`sms_view_prop_update`] from a clip found with [`sms_view_prop_clip`]. Looks 9-14 are posed
+/// [`sms_view_prop_update`] from a clip found with [`sms_view_prop_clip`]. Looks 9-15 are posed
 /// the same way: 9 Bowser Jr. (`koopajr_damage/shoot/wait/yahoo`), 10 the Swoopin' Stu
 /// (`name_*`), 11 the brain it wears (on [`sms_view_prop_joint`] 2 of the Stu's pose), 12 the goop
 /// Piranha (`pakun_*`), 13 its goop ball / seed (no clips), 14 Bowser Jr.'s painted sign
-/// (`stamp_koopa_sign_draw1`).
+/// (`stamp_koopa_sign_draw1`), 15 the big goop Piranha Plant, the Gatekeeper (`gene_pakkun_*`).
 ///
 /// # Safety
 /// `assets_dir` a nul-terminated UTF-8 path.
@@ -395,6 +395,7 @@ pub unsafe extern "C" fn sms_view_new_look(
             12 => libsms_present::Look::Pakkun,
             13 => libsms_present::Look::PakkunSeed,
             14 => libsms_present::Look::KoopaSign,
+            15 => libsms_present::Look::GateKeeper,
             _ => libsms_present::Look::Mario,
         };
         let view = View::load_look(&dir, look).ok()?;

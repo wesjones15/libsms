@@ -837,6 +837,15 @@ impl Particles {
     }
 
     /// Adds an effect under `name`.
+    /// Loads one effect from `path` under `name` (the scene and enemy folders keep their own
+    /// `jpa/` effects beside the common `particle/` ones). False if it's absent or bad.
+    pub fn add_file(&mut self, name: &str, path: &Path) -> bool {
+        let Ok(data) = std::fs::read(path) else { return false };
+        let Ok(jpa) = Jpa::parse(&data) else { return false };
+        self.add(name, jpa);
+        true
+    }
+
     pub fn add(&mut self, name: &str, jpa: Jpa) {
         let paint = bake_paint(&mut self.textures, &jpa);
         let child_draw = bake_child_draw(&mut self.textures, &jpa);

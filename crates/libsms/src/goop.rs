@@ -890,6 +890,30 @@ impl GoopField {
 
     /// A random point on goop within `radius` of `near` (XZ), from `rand` in 0..1, for things
     /// that grow out of goop. `None` when there is none.
+    /// How many goop texels lie within `radius` of `at` (and 1000 up or down), and their middle
+    /// (at their mean height).
+    pub fn coverage(&self, at: Vec3, radius: f32) -> (u32, Vec3) {
+        let (mut n, mut sum) = (0u32, Vec3::ZERO);
+        let half = CHUNK as f32 * TEXEL;
+        for (key, c) in &self.chunks {
+            let (ox, oz) = texel_center(*key, 0);
+            if (ox + half * 0.5 - at.x).abs() > radius + half || (oz + half * 0.5 - at.z).abs() > radius + half {
+                continue;
+            }
+            for i in 0..CHUNK_TEXELS {
+                if c.density[i] <= c.kind[i].threshold() {
+                    continue;
+                }
+                let (x, z) = texel_center(*key, i);
+                if (x - at.x).powi(2) + (z - at.z).powi(2) <= radius * radius && (c.height[i] - at.y).abs() < 1000.0 {
+                    n += 1;
+                    sum += Vec3::new(x, c.height[i], z);
+                }
+            }
+        }
+        (n, if n > 0 { sum / n as f32 } else { at })
+    }
+
     pub fn random_spot(&self, near: Vec3, radius: f32, mut rand: impl FnMut() -> f32) -> Option<Vec3> {
         let mut spots: Vec<Vec3> = Vec::new();
         for (key, c) in &self.chunks {

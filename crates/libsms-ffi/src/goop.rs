@@ -15,7 +15,7 @@ use std::path::Path;
 
 use libsms::FixedClock;
 use libsms::goop::{GoopEvent, GoopField, GoopKind, GoopOp};
-use libsms::goop_critters::{CritterEvent, CritterKind, Critters, PiranhaState, ShotKind, StuState, Target};
+use libsms::goop_critters::{CritterEvent, CritterKind, Critters, KEEPER_TICKS_PER_FRAME, KeeperState, PiranhaState, ShotKind, StuState, Target};
 use libsms::koopajr::{Brush, Form, JrEvent, KoopaJr};
 use libsms::{Enemy, Vec3};
 
@@ -86,12 +86,14 @@ pub struct SmsCritter {
     pub lean: f32,
     /// Clip ticks in.
     pub clip_time: u32,
-    /// 0 Stu, 1 Piranha, 2 goop shot, 3 seed.
+    /// 0 Stu, 1 Piranha, 2 goop shot, 3 seed, 4 the Gatekeeper (`goop_critters::GateKeeper`;
+    /// its `clip_time` is in half-frames like the others', so `clip_time / 2` is its frame).
     pub kind: u8,
     /// Clip index (`goop_critters::stu_clip` / `piranha_clip`).
     pub clip: u8,
     /// Stu: 0 rising, 1 walking, 2 winding up, 3 leaping, 4 landing, 5 dying. Piranha: 0
-    /// appearing, 1 waiting, 2 shooting, 3 swelling, 4 down.
+    /// appearing, 1 waiting, 2 shooting, 3 swelling, 4 down. Gatekeeper: 0 appearing, 1
+    /// swaying, 2 launching, 3 diving.
     pub state: u8,
     pub _pad: u8,
     /// A Stu's TEV tint (`nameKuriTevColorData`, signed 10-bit RGBA).
@@ -283,7 +285,13 @@ impl SmsGoop {
         for e in std::mem::take(&mut self.critters.events) {
             match e {
                 CritterEvent::Spawned { id, kind, pos } => {
-                    self.push(ev::SPAWNED, (kind == CritterKind::Piranha) as i32, id, pos, 0.0, None)
+                    // `a`: the critter kind as `sms_goop_critters` lists it (0 Stu, 1 Piranha, 4 Gatekeeper).
+                    let a = match kind {
+                        CritterKind::Stu => 0,
+                        CritterKind::Piranha => 1,
+                        CritterKind::GateKeeper => 4,
+                    };
+                    self.push(ev::SPAWNED, a, id, pos, 0.0, None)
                 }
                 CritterEvent::Hit { id, target, mario, pos, kind, scale } => {
                     let k = libsms::DamageKind::ALL.iter().position(|d| *d == kind).unwrap_or(0);
@@ -384,6 +392,7 @@ pub unsafe extern "C" fn sms_goop_setup(g: *mut SmsGoop, assets_dir: *const c_ch
         s.field.clear();
         s.events.clear();
         let keep = (s.critters.max_stus, s.critters.max_piranhas, s.critters.spawn_interval, s.critters.mario_range);
+        let keeper = (s.critters.keeper_params.clone(), s.critters.keeper_spawning);
         s.critters = if assets_dir.is_null() {
             Critters::default()
         } else {
@@ -399,6 +408,7 @@ pub unsafe extern "C" fn sms_goop_setup(g: *mut SmsGoop, assets_dir: *const c_ch
             Critters::from_dir(dir)
         };
         (s.critters.max_stus, s.critters.max_piranhas, s.critters.spawn_interval, s.critters.mario_range) = keep;
+        (s.critters.keeper_params, s.critters.keeper_spawning) = keeper;
     })
 }
 
@@ -416,6 +426,7 @@ pub unsafe extern "C" fn sms_goop_clear(g: *mut SmsGoop) {
             s.critters.stus.clear();
             s.critters.piranhas.clear();
             s.critters.shots.clear();
+            s.critters.keepers.clear();
             s.critters.events.clear();
             s.events.clear();
             s.ops.clear();
@@ -449,6 +460,7 @@ pub unsafe extern "C" fn sms_goop_set_mirror(g: *mut SmsGoop, on: u8) {
         if on != 0 {
             s.mirror = Some(Vec::new());
             s.field.log = Some(Vec::new());
+            s.critters.keepers.clear();
             s.critters.stus.clear();
             s.critters.piranhas.clear();
             s.critters.shots.clear();
@@ -706,6 +718,30 @@ pub unsafe extern "C" fn sms_goop_critter_tune(
     })
 }
 
+/// The big goop Piranha (`goop_critters::GateKeeper`): how many at once (0: none grow), the
+/// goop texels (32 units a side) a pile needs within 400 units to grow one, and how long one
+/// stays up (120 Hz ticks). Zeros keep the current pile size and life.
+///
+/// # Safety
+/// `g` from [`sms_goop_new`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_goop_keeper_tune(g: *mut SmsGoop, max: u32, pile_texels: u32, life_ticks: u32) {
+    libcommon::ffi::guard("sms_goop_keeper_tune", (), || {
+        // SAFETY: as documented.
+        if let Some(s) = unsafe { g.as_mut() } {
+            let c = &mut s.critters;
+            c.keeper_spawning = max > 0;
+            c.keeper_params.max = (max as usize).min(4);
+            if pile_texels > 0 {
+                c.keeper_params.pile_texels = pile_texels;
+            }
+            if life_ticks > 0 {
+                c.keeper_params.life = life_ticks;
+            }
+        }
+    })
+}
+
 /// Paints goop of `kind` (`GoopKind` as u8).
 ///
 /// # Safety
@@ -918,6 +954,20 @@ pub unsafe extern "C" fn sms_goop_critters(g: *const SmsGoop, out: *mut SmsCritt
             all.push(SmsCritter {
                 id: x.id, pos: x.pos.into(), yaw: x.yaw, scale: x.swell, squash: 1.0, lean: 0.0,
                 clip_time: x.clip_time, kind: 1, clip: x.clip, state, _pad: 0, tint: [0; 4],
+            });
+        }
+        for x in &c.keepers {
+            let state = match x.state {
+                KeeperState::Appear => 0,
+                KeeperState::Wait => 1,
+                KeeperState::Shoot => 2,
+                KeeperState::Dive => 3,
+            };
+            // Its clips run at half the others' rate: report half-frames.
+            let half_frames = x.clip_time * 2 / KEEPER_TICKS_PER_FRAME;
+            all.push(SmsCritter {
+                id: x.id, pos: x.pos.into(), yaw: x.yaw, scale: x.scale, squash: 1.0, lean: 0.0,
+                clip_time: half_frames, kind: 4, clip: x.clip, state, _pad: 0, tint: [0; 4],
             });
         }
         for x in &c.shots {
