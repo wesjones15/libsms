@@ -703,19 +703,15 @@ mod tests {
     #[test]
     fn wrong_game_is_refused() {
         let img = disc_with(b"GALE01", &[("opening.bnr", b"x")]);
-        let dir = std::env::temp_dir().join("libsms_wrong_game.iso");
-        std::fs::write(&dir, img).unwrap();
-        let err = extract_assets(
-            &dir,
-            &std::env::temp_dir().join("libsms_wrong_game_out"),
-            &mut |_| {},
-        )
-        .unwrap_err();
+        let scratch = libcommon::scratch::dir(env!("CARGO_MANIFEST_DIR"), "libsms-wrong-game");
+        let iso = scratch.join("wrong_game.iso");
+        std::fs::write(&iso, img).unwrap();
+        let err = extract_assets(&iso, &scratch.join("out"), &mut |_| {}).unwrap_err();
         assert!(
             matches!(err, ExtractError::WrongGame(ref id) if id == "GALE01"),
             "{err}"
         );
-        let _ = std::fs::remove_file(dir);
+        let _ = std::fs::remove_dir_all(scratch);
     }
 
     #[test]

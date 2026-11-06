@@ -3847,8 +3847,7 @@ mod tests {
     #[ignore = "requires SMS_DISC and extracts the user's disc into a temporary cache"]
     fn a_first_run_extraction_holds_the_effects_the_luigi_tint_turns_green() {
         let disc = std::env::var("SMS_DISC").expect("set SMS_DISC to a Sunshine ISO/GCM");
-        let cache = std::env::temp_dir().join(format!("sms-smear-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&cache);
+        let cache = libcommon::scratch::dir(env!("CARGO_MANIFEST_DIR"), "sms-smear");
         struct Cleanup(std::path::PathBuf);
         impl Drop for Cleanup {
             fn drop(&mut self) {

@@ -14,8 +14,7 @@ fn extracts_a_real_disc_and_the_result_loads() {
         eprintln!("skipped: set SMS_ISO to a Super Mario Sunshine disc image");
         return;
     };
-    let out = std::env::temp_dir().join(format!("libsms_e2e_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&out);
+    let out = libcommon::scratch::dir(env!("CARGO_MANIFEST_DIR"), "libsms-e2e");
 
     let mut log = Vec::new();
     let report = libsms::extract::extract_assets(&iso, &out, &mut |m| log.push(m.to_owned()))
