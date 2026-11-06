@@ -49,6 +49,27 @@ pub const SIGN_SCALE: f32 = 3.0;
 pub struct Tile {
     pub layer: &'static str,
     pub image: Baked,
+    /// The look through one loop of the layer's btk ([`SCROLL_FRAMES`] bakes; `image` is the
+    /// first), and the loop's length in seconds (0: it doesn't move).
+    pub frames: Vec<Baked>,
+    pub loop_secs: f32,
+}
+
+impl Tile {
+    /// The tile's colour at `(u, v)` (repeats) `time` seconds into its loop, blending the two
+    /// nearest frames.
+    pub fn color_at(&self, u: f32, v: f32, time: f32) -> [f32; 3] {
+        if self.frames.len() < 2 || self.loop_secs <= 0.0 {
+            return sample_tile(&self.image, u, v);
+        }
+        let n = self.frames.len();
+        let p = (time / self.loop_secs).rem_euclid(1.0) * n as f32;
+        let i0 = (p as usize).min(n - 1);
+        let w = p - i0 as f32;
+        let a = sample_tile(&self.frames[i0], u, v);
+        let b = sample_tile(&self.frames[(i0 + 1) % n], u, v);
+        [0, 1, 2].map(|c| a[c] + (b[c] - a[c]) * w)
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -59,7 +80,7 @@ pub struct GoopSurface {
 
 impl GoopSurface {
     pub fn load(dir: &Path) -> GoopSurface {
-        let mut baked: Vec<(&'static str, Option<Baked>)> = Vec::new();
+        let mut baked: Vec<(&'static str, Option<(Vec<Baked>, f32)>)> = Vec::new();
         let tiles = GoopKind::ALL
             .iter()
             .map(|k| {
@@ -72,7 +93,7 @@ impl GoopSurface {
                         b
                     }
                 };
-                image.map(|image| Tile { layer, image })
+                image.map(|(frames, loop_secs)| Tile { layer, image: frames[0].clone(), frames, loop_secs })
             })
             .collect();
         GoopSurface { tiles }
@@ -88,6 +109,12 @@ impl GoopSurface {
     /// without a tile); alpha from the field's density, bilinear between texel centres
     /// (neighbouring chunks included) and eased around the kind's threshold.
     pub fn chunk_image(&self, field: &GoopField, key: (i32, i32), res: u32) -> Vec<u8> {
+        self.chunk_image_at(field, key, res, 0.0)
+    }
+
+    /// [`Self::chunk_image`] `time` seconds into each kind's loop ([`Tile::color_at`]); a host
+    /// redraws its chunks every so often to show the paint swim.
+    pub fn chunk_image_at(&self, field: &GoopField, key: (i32, i32), res: u32, time: f32) -> Vec<u8> {
         let res = res.clamp(1, MAX_CHUNK_IMAGE);
         let side = CHUNK as f32 * TEXEL;
         let origin = (key.0 as f32 * side, key.1 as f32 * side);
@@ -115,7 +142,7 @@ impl GoopSurface {
                     None => 0.0,
                 };
                 let rgb = match kind.and_then(|k| self.tile(k).map(|t| (k, t))) {
-                    Some((_, t)) => sample_tile(&t.image, x / TILE_PERIOD, z / TILE_PERIOD),
+                    Some((_, t)) => t.color_at(x / TILE_PERIOD, z / TILE_PERIOD, time),
                     None => kind.map_or([0.0; 3], |k| k.look().tint),
                 };
                 for c in rgb {
@@ -160,21 +187,44 @@ fn sample_tile(b: &Baked, u: f32, v: f32) -> [f32; 3] {
     [c[0], c[1], c[2]]
 }
 
-/// One layer's look at full density, over its colour maps' own repeat.
-fn bake_layer(dir: &Path, layer: &str) -> Option<Baked> {
+/// Frames baked over one loop of a layer's btk.
+pub const SCROLL_FRAMES: usize = 12;
+
+/// One layer's look at full density, over its colour maps' own repeat: one bake, or
+/// [`SCROLL_FRAMES`] over its btk's loop (the layers slide their warp, `B_ind_metal`, one repeat
+/// a loop, so the paint swims in place), with the loop's length in seconds.
+fn bake_layer(dir: &Path, layer: &str) -> Option<(Vec<Baked>, f32)> {
     let mut bmd = load_bmd(dir, &format!("{LAYERS}/{layer}.bmd")).ok()?;
+    let srt = std::fs::read(dir.join(format!("{LAYERS}/{layer}.btk")))
+        .ok()
+        .and_then(|d| libsms_assets::btk::TexSrt::parse(&d).ok())
+        .filter(|s| s.frames > 1.0);
     // The density map is each material's first when it has others (the slick layers have just
     // their colour map, alpha blended).
     let mut density: Vec<String> = Vec::new();
-    for m in &mut bmd.materials {
+    let mut animated: Vec<(usize, usize)> = Vec::new();
+    for (mi, m) in bmd.materials.iter_mut().enumerate() {
         if m.textures.iter().flatten().count() >= 2
             && let Some(t) = m.textures[0]
         {
             density.push(bmd.textures[t as usize].name.clone());
         }
-        // No matrices: the tile is the maps' own repeat, seamless. And every map over the one
-        // coordinate set the bake runs over (the burning layer reads its colour over a second).
-        m.tex_mtx = Default::default();
+        // No scale or turn: the tile is the maps' own repeat, seamless. A matrix the btk moves
+        // keeps only its translation (whole repeats over a loop, so still seamless).
+        for (slot, t) in m.tex_mtx.iter_mut().enumerate() {
+            let moved = srt.as_ref().is_some_and(|s| s.tracks.iter().any(|tr| tr.material == m.name && tr.matrix == slot));
+            match t.as_mut() {
+                Some(t) if moved => {
+                    t.scale = glam::Vec2::ONE;
+                    t.rotation = 0.0;
+                    t.translation = glam::Vec2::ZERO;
+                    animated.push((mi, slot));
+                }
+                _ => *t = None,
+            }
+        }
+        // Every map over the one coordinate set the bake runs over (the burning layer reads its
+        // colour over a second).
         for g in &mut m.tex_gens {
             if g.kind == 1 && (4..=11).contains(&g.src) {
                 g.src = 4;
@@ -187,18 +237,37 @@ fn bake_layer(dir: &Path, layer: &str) -> Option<Baked> {
         libcommon::texture::Wrap::Repeat,
     );
     let mut textures = Textures::default();
-    let model = build(
+    let mut model = build(
         bmd,
         &|_, name| density.iter().any(|d| d == name).then(|| full.clone()),
         crate::view::models::COUNT as u32,
         &mut textures,
     )
     .ok()?;
-    let id = model.batch_texture.iter().copied().find(|&t| t >= 0)?;
-    let mut b = textures.list.get(id as usize)?.clone();
-    // The slick layers are see-through paint over the floor: keep their alpha as coverage.
-    b.wrap = [0, 0];
-    Some(b)
+    let bi = model.batch_texture.iter().position(|&t| t >= 0)?;
+    let first = textures.list.get(model.batch_texture[bi] as usize)?.clone();
+    let tidy = |mut b: Baked| {
+        // The slick layers are see-through paint over the floor: keep their alpha as coverage.
+        b.wrap = [0, 0];
+        b
+    };
+    let Some(srt) = srt.filter(|_| !animated.is_empty()) else {
+        return Some((vec![tidy(first)], 0.0));
+    };
+    let mi = model.batches[bi].material;
+    let mut frames = Vec::with_capacity(SCROLL_FRAMES);
+    for i in 0..SCROLL_FRAMES {
+        srt.apply(&mut model.bmd, srt.frames * i as f32 / SCROLL_FRAMES as f32);
+        for &(m, slot) in &animated {
+            if let Some(t) = model.bmd.materials[m].tex_mtx[slot].as_mut() {
+                t.scale = glam::Vec2::ONE;
+                t.rotation = 0.0;
+            }
+        }
+        let b = model.source().bake(mi, &crate::tev::Inputs::default(), 512)?;
+        frames.push(tidy(b));
+    }
+    Some((frames, srt.frames / 30.0))
 }
 
 /// The field's stamps from the disc, `(pollute, clean)`: each picture's alpha (its intensity
@@ -340,6 +409,28 @@ mod tests {
             let px = t.image.rgba.as_chunks::<4>().0;
             assert!(px.iter().any(|p| p[..3] != px[0][..3]), "{k:?}'s tile varies");
         }
+    }
+
+    #[test]
+    fn the_paint_drifts_with_its_layer_scroll() {
+        let Some(dir) = dir() else { return };
+        let s = GoopSurface::load(&dir);
+        let moving: Vec<_> = GoopKind::ALL
+            .iter()
+            .filter_map(|&k| s.tile(k).map(|t| (k, t.loop_secs)))
+            .filter(|(_, l)| *l > 0.0)
+            .collect();
+        eprintln!("scrolling kinds: {moving:?}");
+        assert!(!moving.is_empty(), "some layer scrolls");
+        let (k, _) = moving[0];
+        let mut f = GoopField::new();
+        f.stamp(&Flat, Vec3::new(256.0, 0.0, 256.0), 200.0, k);
+        let a = s.chunk_image_at(&f, (0, 0), 32, 0.0);
+        let b = s.chunk_image_at(&f, (0, 0), 32, 10.0);
+        assert_ne!(a, b, "the picture drifts");
+        // The coverage doesn't move, only the paint.
+        let alpha = |img: &[u8]| img.chunks_exact(4).map(|p| p[3]).collect::<Vec<_>>();
+        assert_eq!(alpha(&a), alpha(&b));
     }
 
     #[test]

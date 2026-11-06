@@ -134,7 +134,7 @@ impl Model {
         self.batch_color.get(batch).copied().unwrap_or([1.0; 4])
     }
 
-    fn source(&self) -> Source<'_> {
+    pub(crate) fn source(&self) -> Source<'_> {
         Source {
             bmd: &self.bmd,
             textures: &self.textures,

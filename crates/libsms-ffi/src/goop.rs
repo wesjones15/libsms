@@ -629,6 +629,34 @@ pub unsafe extern "C" fn sms_goop_chunk_image(g: *mut SmsGoop, kx: i32, kz: i32,
     1
 }
 
+/// [`sms_goop_chunk_image`] `time` seconds into each kind's swim (the layers' btk slide their
+/// warp one repeat every 2000 game frames; the picture blends the nearest of 12 bakes). A host
+/// redraws its nearby chunks every second or so with its clock to show it.
+///
+/// # Safety
+/// As [`sms_goop_chunk_image`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_goop_chunk_image_at(
+    g: *mut SmsGoop,
+    kx: i32,
+    kz: i32,
+    res: u32,
+    time: f32,
+    rgba: *mut u8,
+) -> u8 {
+    // SAFETY: as documented.
+    let Some(s) = (unsafe { g.as_mut() }) else { return 0 };
+    if rgba.is_null() || !time.is_finite() || !s.field.chunks().any(|(k, _)| k == (kx, kz)) {
+        return 0;
+    }
+    let res = res.clamp(1, libsms_present::goop_surface::MAX_CHUNK_IMAGE);
+    let surface = s.surface.get_or_insert_with(Default::default);
+    let img = surface.chunk_image_at(&s.field, (kx, kz), res, time);
+    // SAFETY: as documented.
+    unsafe { std::ptr::copy_nonoverlapping(img.as_ptr(), rgba, img.len()) };
+    1
+}
+
 /// A goop kind's look at full density (the tile [`sms_goop_chunk_image`] repeats), RGBA8 into
 /// `rgba` when it has room for `cap` bytes; returns the side length (tiles are square), 0
 /// without one (no [`sms_goop_setup`] with assets).

@@ -82,8 +82,10 @@ Headless tests only; nothing has been drawn in RoR2 or played.
   the kind's threshold as alpha. The layer files are per stage on the disc and the extractor
   keeps the first copy of each name (from a test stage), so the looks are: brown chocolate
   (`TestChoco2`) for sink/instakill/electric, the pink-to-yellow paint (`B_RAKenogu_pink`) for the
-  fire kinds, glass and poison, see-through slick for oil and safe. No scroll (the layers' btk
-  scroll slowly; a host may scroll the tile).
+  fire kinds, glass and poison, see-through slick for oil and safe. The paint swims as on the disc:
+  each layer's btk slides its warp (`B_ind_metal`) one repeat every 2000 game frames (67 s), so
+  each tile is 12 bakes over that loop, blended by time (`sms_goop_chunk_image_at`; the two slick
+  layers don't move).
 - **Stamps**: `sms_goop_setup` reads `pollute.bti` and `clean.bti` into the field's stamps (the
   channel that varies, stretched to full strength) and projects Bowser Jr.'s sign from above as
   `stampModel` paints it: the three pens of `stamp_koopa_sign_model1` everywhere the draw clip
