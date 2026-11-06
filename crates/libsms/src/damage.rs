@@ -197,6 +197,12 @@ impl Mario {
         if self.guarded_fire() && (self.fire_rearm_ticks > 0 || self.is_wet()) {
             return;
         }
+        // Host extension: a ground pound, wind-up to get-up, isn't cut short by the burn reaction
+        // (`hurt` already spares it from the knock-down; every path to the fire hit, a fire hit,
+        // bullet, lava or graffito, goes through here).
+        if matches!(self.status, Status::HipDrop | Status::HipAttackEnd) {
+            return;
+        }
         if self.guarded_fire() {
             self.fire_voice_alt = !self.fire_voice_alt;
         }

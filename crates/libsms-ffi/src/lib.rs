@@ -728,9 +728,10 @@ impl Host for FfiHost<'_> {
                 e.pos = pos.into();
                 e.arg = diving as i32 | ((ground_pound as i32) << 1) | ((cushioned as i32) << 2);
             }
-            Event::GroundPound { super_, drop } => {
+            Event::GroundPound { super_, spin, drop } => {
                 e.kind = SmsEventKind::GroundPound as u32;
-                e.arg = super_ as i32;
+                // Bit 0 super, bit 1 spinning.
+                e.arg = super_ as i32 | ((spin as i32) << 1);
                 e.value = drop;
             }
             Event::WallBump => e.kind = SmsEventKind::WallBump as u32,

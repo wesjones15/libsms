@@ -384,8 +384,8 @@ impl Host for World {
         match e {
             Event::Jump(k) => self.note(format!("jump: {k:?}")),
             Event::Land { strong: true } => self.note("hard landing".into()),
-            Event::GroundPound { super_, drop } => {
-                self.note(format!("ground pound (super: {super_}, fell {drop:.0})"))
+            Event::GroundPound { super_, spin, drop } => {
+                self.note(format!("ground pound (super: {super_}, spin: {spin}, fell {drop:.0})"))
             }
             Event::WallBump => self.note("wall bump".into()),
             Event::TriggerFired(n) => self.note(format!("{n:?} fired")),

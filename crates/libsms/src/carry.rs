@@ -68,6 +68,21 @@ impl Mario {
         }
     }
 
+    /// Host extension: B in mid-air with something in hand throws it (as `pitching` does on the
+    /// ground, with his current velocity) instead of diving, and he stays in his jump.
+    pub(crate) fn air_throw(&mut self) -> bool {
+        if self.held.is_none() || !self.input.b_pressed || self.input.l_pressed {
+            return false;
+        }
+        self.exert();
+        self.drop_object();
+        self.input.dive = false;
+        if self.upper == UpperState::HoldingObject {
+            self.upper = UpperState::Idle;
+        }
+        true
+    }
+
     fn exert(&mut self) {
         self.events.push(Event::Sound(SoundCue {
             name: "MSD_SE_MV15_EXERT_INST_01",

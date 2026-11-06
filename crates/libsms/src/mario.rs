@@ -524,6 +524,9 @@ pub struct Mario {
     /// status changes (a clash knock-back inside a big enemy would re-arm the hit every tick); it
     /// is cleared when a new Rocket climb starts or Mario leaves the air.
     pub(crate) spin_hit: Vec<u64>,
+    /// Host extension: this ground pound is spinning (a stick circle during it), and its ticks.
+    pub(crate) pound_spin: bool,
+    pub(crate) pound_spin_age: u16,
 }
 
 impl Mario {
@@ -644,6 +647,8 @@ impl Mario {
             chain_grace: None,
             enemies_hit: Vec::new(),
             spin_hit: Vec::new(),
+            pound_spin: false,
+            pound_spin_age: 0,
         }
     }
 
@@ -1430,6 +1435,11 @@ impl Mario {
         self.corkscrew_super = false;
         self.corkscrew_used = false;
         self.rocket_super = false;
+        self.pound_spin = false;
+        if to == Status::HipDrop {
+            // A circle from before the pound doesn't count; it has to be made during it.
+            self.stick_hist.clear();
+        }
         if to != Status::Catch {
             self.blaze = 0;
         }

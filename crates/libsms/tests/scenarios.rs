@@ -1453,6 +1453,86 @@ fn mario_picks_up_fruit_carries_puts_and_throws_it() {
     assert!(s.event_count(|e| matches!(e, Event::Throw { id: 7, .. })) == 1);
 }
 
+/// A fire hit during a ground pound (wind-up or fall) doesn't cut it short or start the burn reaction.
+#[test]
+fn a_fire_hit_does_not_cancel_a_ground_pound() {
+    for fall in [false, true] {
+        let mut s: Scene<FlatHost> = Scene::flat();
+        s.sim.mario.pos = Vec3::new(0.0, 3000.0, 0.0);
+        s.step(2);
+        s.pad.l = true;
+        s.step(1);
+        s.pad.l = false;
+        if fall {
+            s.step(100);
+        }
+        assert_eq!(s.mario().status, Status::HipDrop);
+        s.sim.mario.damage(Vec3::new(50.0, 0.0, 0.0), libsms::DamageKind::Fire);
+        s.sim.mario.knock_down(Vec3::new(50.0, 0.0, 0.0), libsms::DamageKind::Fire);
+        s.step(1);
+        assert_eq!(s.mario().status, Status::HipDrop, "the burn cancelled the pound (fall: {fall})");
+    }
+}
+
+/// B in mid-air with something in hand throws it (no dive), and he stays in his jump.
+#[test]
+fn b_in_mid_air_throws_what_he_carries_instead_of_diving() {
+    let mut s = Scene::new(FruitHost {
+        fruit: Vec3::new(0.0, 0.0, 60.0),
+        held: false,
+    });
+    s.step(2);
+    s.pad.b = true;
+    s.step(1);
+    s.pad.b = false;
+    assert!(s.until(300, |m| m.held.is_some() && m.status == Status::Wait));
+    s.run_forward();
+    assert!(s.until(240, |m| m.forward_vel > 16.0));
+    s.press_a();
+    assert!(s.until(60, |m| !m.on_ground() && m.vel.y > 0.0));
+    s.step(5);
+    press_b(&mut s);
+    s.step(1);
+    assert_eq!(s.event_count(|e| matches!(e, Event::Throw { id: 7, .. })), 1, "nothing was thrown");
+    assert!(s.mario().held.is_none());
+    assert_ne!(s.mario().status, Status::JumpCatch, "he dived instead");
+    assert_ne!(s.mario().upper, libsms::UpperState::HoldingObject);
+}
+
+/// A stick circle during the pound's fall spins it (the landing reports it); without one it doesn't.
+#[test]
+fn a_stick_circle_during_the_pound_spins_it() {
+    let run = |circle: bool| -> bool {
+        let mut s: Scene<FlatHost> = Scene::flat();
+        s.sim.mario.pos = Vec3::new(0.0, 1500.0, 0.0);
+        s.step(2);
+        s.pad.l = true;
+        s.step(1);
+        s.pad.l = false;
+        assert_eq!(s.mario().status, Status::HipDrop);
+        let mut angle = 0.0f32;
+        for i in 0..3000 {
+            if circle && i < 40 {
+                angle += std::f32::consts::TAU / 12.0;
+                s.pad.stick = Vec2::new(angle.cos(), angle.sin());
+            } else {
+                s.pad.stick = Vec2::ZERO;
+            }
+            if s.mario().status == Status::HipAttackEnd {
+                break;
+            }
+            s.step(1);
+        }
+        let swirls = s.event_count(|e| matches!(e, Event::Particle(c) if c.name == "ms_m_blur2"));
+        let spun = s.host.events.iter().any(|e| matches!(e, Event::GroundPound { spin: true, .. }));
+        // The spin jump's swirl surrounds a spinning pound, and only that.
+        assert_eq!(swirls > 8, spun, "swirl particles: {swirls}, spun: {spun}");
+        spun
+    };
+    assert!(run(true), "the circle didn't spin the pound");
+    assert!(!run(false), "a plain pound spun");
+}
+
 #[test]
 fn what_he_carries_can_be_taken_away_and_his_hands_come_down() {
     let mut s = Scene::new(FruitHost {
@@ -2281,7 +2361,7 @@ fn pound_from(s: &mut Scene<FlatHost>, height: f32) -> (bool, f32, bool) {
         .iter()
         .rev()
         .find_map(|e| match e {
-            Event::GroundPound { super_, drop } => Some((*super_, *drop)),
+            Event::GroundPound { super_, drop, .. } => Some((*super_, *drop)),
             _ => None,
         })
         .expect("no ground pound event");

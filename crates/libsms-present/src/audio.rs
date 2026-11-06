@@ -895,6 +895,7 @@ mod tests {
                 "ground pound",
                 Event::GroundPound {
                     super_: true,
+                    spin: false,
                     drop: 900.0,
                 },
             ),

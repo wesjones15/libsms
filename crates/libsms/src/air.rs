@@ -384,6 +384,9 @@ impl Mario {
 
     /// `checkBackTrig`: B dives, L ground-pounds.
     fn check_back_trig(&mut self) -> bool {
+        if self.air_throw() {
+            return false;
+        }
         if self.input.dive {
             if self.input.l_pressed {
                 return self.change_status(Status::HipDrop, 0, false);
@@ -640,6 +643,11 @@ impl Mario {
     /// `hipAttacking`: ground pound (hover, then fall).
     fn hip_attacking(&mut self, host: &mut dyn Host) -> bool {
         let j = self.params.jump.clone();
+        // Host extension: a full stick circle spins the pound (the host widens and strengthens its landing).
+        if !self.pound_spin && self.check_stick_rotate().is_some() {
+            self.pound_spin = true;
+            self.pound_spin_age = 0;
+        }
         match self.status_state {
             0 | 1 => {
                 self.status_state = 1;
@@ -693,6 +701,7 @@ impl Mario {
                         self.last_pound_drop = drop;
                         host.event(Event::GroundPound {
                             super_: self.status_state == 3,
+                            spin: self.pound_spin,
                             drop,
                         });
                         let names: &[&'static str] = if self.status_state == 2 {
@@ -717,7 +726,14 @@ impl Mario {
                 }
             }
         }
-        self.model_yaw = self.face_yaw;
+        self.model_yaw = if self.pound_spin {
+            // The spin jump's swirl (`emitBlurSpinJump`) around him every tick of the spinning fall.
+            self.emit_blur_spin_jump();
+            self.pound_spin_age = self.pound_spin_age.wrapping_add(1);
+            self.face_yaw.wrapping_add((self.pound_spin_age as i32 * 4096) as i16)
+        } else {
+            self.face_yaw
+        };
         false
     }
 

@@ -24,7 +24,8 @@ pub enum Event {
     /// Ground pound hit the floor (`hipAttacking`). `super_`: it fell for longer than
     /// `mSuperHipAttackCt` ticks and came down faster (the game's flaming super pound). `drop`:
     /// units fallen, from the top of the wind-up (`unk104`) to the floor.
-    GroundPound { super_: bool, drop: f32 },
+    /// `spin`: host extension, a stick circle during the fall (a spinning pound).
+    GroundPound { super_: bool, spin: bool, drop: f32 },
     /// Hit a wall hard enough to bounce off (`playerRefrection`).
     WallBump,
     /// FLUDD fired water. The host spawns/simulates the water particles and applies damage;
