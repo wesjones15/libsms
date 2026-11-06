@@ -116,9 +116,23 @@ Headless tests only; nothing has been drawn in RoR2 or played.
   (with brains), Piranhas and seeds as props.
 - `MarioShadowSwirl.cs`: the body drawn again with RoR2's `matDistortion` and the refraction
   map above, re-uploaded each game frame (`BowserJr.SwirlRefraction`, 0 off).
-- Not done: multiplayer (the world runs and draws on the host only; Jr actions aren't sent),
-  critters never target a Mario teammate, the goop ball has no model, Stu TEV tints, skill
-  icons, a lobby display of the Jr form, and goop drawn only unlit.
+- Multiplayer (`KoopaJrGoopNet.cs`, ABI 47; built, not played): the server's world is the real
+  one. A client's world is a mirror (`sms_goop_set_mirror`): its sims stand in it, paint and
+  clean it at once, and the field's op log (`GoopField::log`, `GoopOp`) plus the mirror's
+  critter ops (shots and seeds taken out of its unstepped critters, stomps and water on
+  critter ids) go to the server each step (`sms_goop_take_ops`), which redoes them on its own
+  world (`sms_goop_apply_ops`, values range-checked, a client Jr's shots owned by his
+  netId-based id). The server sends changed chunks every 0.1 s (16 at a time, a live-texel
+  bitmask, a base height and per texel density, kind and u16 height; removals too) and the
+  critters within 120 m of a player every 0.1 s (unreliable); the mirror applies chunks with
+  `sms_goop_chunk_set` / `_drop`, except ones its own ops touched in the last 0.6 s (those
+  wait), and draws `sms_goop_mirror_critters` eased toward each snapshot. Goop sounds and
+  bursts go to every machine. Bowser Jr.'s form, hiding, clip and paint kind (`JrStateMsg`)
+  go to the other players, whose puppets hide Shadow Mario and draw look 9; the server keeps
+  HiddenInvincibility on a client's hidden Jr.
+- Not done: critters never target a Mario teammate, critter damage is credited to the first
+  Jr, the goop ball has no model, Stu TEV tints, skill icons, a lobby display of the Jr form,
+  and goop drawn only unlit.
 
 ## Not done
 - Layer spreading (`FLAG_CAN_SPREAD`), footprints, `OIL_PULLING`, rumble.
