@@ -2360,6 +2360,18 @@ pub unsafe extern "C" fn sms_view_prop_update(
     }
 }
 
+/// Runs a prop view's texture scrolls to `seconds` (look 15, the Gatekeeper: its goop flows);
+/// call before [`sms_view_prop_update`]. Its textures' versions change as they re-bake
+/// (`sms_view_texture_version`). Other looks do nothing.
+///
+/// # Safety
+/// `view` a live view handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_view_prop_scroll(view: *mut SmsView, seconds: f32) {
+    // SAFETY: as documented.
+    unsafe { with_view(view, (), |v| v.view.scroll_textures(seconds)) }
+}
+
 /// Starts one of the flower effects (`ms_smb_kafun_ow`, `ms_smb_ap_rock`...) at `pos` (sim units) on
 /// an effects view (`sms_view_new_look` look 8), `scale` big. Unknown names do nothing.
 ///

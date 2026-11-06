@@ -157,12 +157,18 @@ Headless tests only; nothing has been drawn in RoR2 or played.
   260, damage share 2), not a Gorogoro. Effects: kemuri, bota, yodare. Sounds: GATEKEEPER
   APPEAR/WAIT/HIDE. It is FFI critter kind 4 (`clip_time` in half-frames),
   `sms_goop_keeper_tune`, look 15 with the goop mask in place of `Q_kepper_dummy_128IA4`. It
-  can't be hurt. Not done: its `tex0/tex1` btk scroll, the `BASE` loop sound, effects bound
-  to joints (they are emitted at the mouth), and Gorogoro/Stu launches.
+  can't be hurt. Its goop flows (`TMultiBtk`: `gene_pakkun_tex0/tex1.btk` at a btk frame a game
+  frame, re-baked every other frame, `sms_view_prop_scroll`). Not done: the `BASE` loop sound,
+  effects bound to joints (they are emitted at the mouth), and Gorogoro/Stu launches.
 - **Goop surface** (`KoopaJrGoop.cs`): each chunk corner is raycast onto the stage's own ground
   (lift 4 cm), so neighbours meet with no grid seams and nothing sinks under the map. The
   chunks use HGStandard cutout (lit, a little gloss). The swim redraw is now every 0.15 s
   within 30 m.
+- **Shadow Mario's swirl loop**: `kagemario_scroll.btk` repeats every 200 frames and lands
+  where it started (scale 1 to 2 to 1, slide of 3 widths). The bake's second warp read drifted at half
+  the slide (1.5 widths a loop) and popped at the wrap; it now drifts a whole number of widths
+  a loop. The bake also applies the btk's scale about its centre as J3D does
+  (`shadow_skin::tests::the_swirl_loops_with_no_jump`).
 - Critters are now placed correctly (ModelView placed them at pos*scale), and goop balls draw
   with the seed model.
 

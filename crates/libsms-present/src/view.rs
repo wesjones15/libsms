@@ -589,6 +589,9 @@ pub struct View {
     /// Shadow Mario's swirl ([`Skin::Shadow`], once loaded): his model, the texture id all his
     /// batches share, and the baker.
     shadow: Option<(u32, i32, crate::shadow_skin::ShadowSwirl)>,
+    /// A prop's texture scrolls (the Gatekeeper's `TMultiBtk`), and the game frame last baked.
+    scroll: Vec<libsms_assets::btk::TexSrt>,
+    scroll_frame: Option<u64>,
     /// `kagemario_brush.bmd`'s index in `models` (drawn in Shadow Mario's left hand).
     brush: Option<u32>,
     /// The Sunshine assets folder, kept for loading Luigi's rig and clips later.
@@ -1028,10 +1031,15 @@ impl Textures {
     pub fn version(&self, id: u32) -> u32 { self.versions.get(&(id as i32)).copied().unwrap_or(0) }
 
     fn animate(&mut self, model: &Model, version: u32) {
+        self.animate_as(model, models::WATERBOOST, version);
+    }
+
+    /// Re-bakes `model`'s textures (after its texture matrices moved) with `index`'s inputs.
+    fn animate_as(&mut self, model: &Model, index: u32, version: u32) {
         for (bi, batch) in model.batches.iter().enumerate() {
             let id = model.batch_texture[bi];
             if id < 0 || self.version(id as u32) == version { continue; }
-            if let Some(mut baked) = model.source().bake(batch.material, &base_inputs(models::WATERBOOST), MAX_BAKE) {
+            if let Some(mut baked) = model.source().bake(batch.material, &base_inputs(index), MAX_BAKE) {
                 if let Some(shade) = self.shade { shade.apply(&mut baked.rgba); }
                 self.list[id as usize] = baked;
                 self.versions.insert(id, version);
@@ -1178,7 +1186,24 @@ impl View {
             Look::KoopaSign => {
                 return Self::load_prop(dir, "kagemario/stamp_koopa_sign", "stamp_koopa_sign_model1.bmd");
             }
-            Look::GateKeeper => return Self::load_prop(dir, "gatekeeper", "gene_pakkun_model1.bmd"),
+            Look::GateKeeper => {
+                // `TBiancoGateKeeper::init`: a `TMultiBtk` of the two scrolls over its goop.
+                let mut view = Self::load_prop(dir, "gatekeeper", "gene_pakkun_model1.bmd")?;
+                view.scroll = ["gene_pakkun_tex0.btk", "gene_pakkun_tex1.btk"]
+                    .iter()
+                    .filter_map(|n| std::fs::read(dir.join("enemy/gatekeeper").join(n)).ok())
+                    .filter_map(|d| libsms_assets::btk::TexSrt::parse(&d).ok())
+                    .collect();
+                if !view.scroll.is_empty() {
+                    // Its textures change: the host keeps them writable (a nonzero version).
+                    for &id in &view.models[0].batch_texture {
+                        if id >= 0 {
+                            view.textures.versions.insert(id, 1);
+                        }
+                    }
+                }
+                return Ok(view);
+            }
             _ => {}
         }
         let assets = libsms::Assets::load(dir);
@@ -1387,6 +1412,8 @@ impl View {
             helmet: None,
             helmet_on: false,
             shadow: None,
+            scroll: Vec::new(),
+            scroll_frame: None,
             brush: None,
             assets_dir: dir.to_path_buf(),
             anchors: [None; ANCHOR_COUNT],
@@ -1507,6 +1534,28 @@ impl View {
             None => model.bind.clone(),
         };
         joints.get(joint).copied()
+    }
+
+    /// Runs a prop's texture scrolls to `seconds` (the Gatekeeper's goop flowing over it).
+    /// `TMultiBtk::update` steps each at `0.5 * SMSGetAnmFrameRate()` (2), a btk frame a 30 fps
+    /// game frame, wrapping at its end (both loop whole tiles and turns, so the wrap is seamless).
+    /// Re-bakes the textures every other game frame; their versions change for the host.
+    pub fn scroll_textures(&mut self, seconds: f32) {
+        if self.scroll.is_empty() || !seconds.is_finite() {
+            return;
+        }
+        let frame = (seconds.max(0.0) * 30.0) as u64 & !1;
+        if self.scroll_frame == Some(frame) {
+            return;
+        }
+        self.scroll_frame = Some(frame);
+        let Some(model) = self.models.get_mut(0) else { return };
+        for s in &self.scroll {
+            let f = if s.frames > 0.0 { (frame as f64 % s.frames as f64) as f32 } else { 0.0 };
+            s.apply(&mut model.bmd, f);
+        }
+        let model = &self.models[0];
+        self.textures.animate_as(model, models::COUNT as u32, (frame / 2) as u32 + 2);
     }
 
     pub fn update_prop(&mut self, yaw: i16, clip: i32, frame: f32, mirror: bool) {
@@ -1643,6 +1692,8 @@ impl View {
             helmet: None,
             helmet_on: false,
             shadow: None,
+            scroll: Vec::new(),
+            scroll_frame: None,
             brush: None,
             assets_dir: PathBuf::new(),
         })
@@ -1745,6 +1796,8 @@ impl View {
             helmet: None,
             helmet_on: false,
             shadow: None,
+            scroll: Vec::new(),
+            scroll_frame: None,
             brush: None,
             assets_dir: PathBuf::new(),
         };
@@ -4350,6 +4403,27 @@ mod tests {
         }
         assert!(saw, "pollen, rocks and smoke should draw quads");
         assert!(v.fx.vertices.iter().all(|p| p.pos.is_finite()));
+    }
+
+    /// `TMultiBtk`: the goop flows over the Gatekeeper (its textures re-bake as the scrolls
+    /// run, in place, with new versions for the host).
+    #[test]
+    fn the_gatekeepers_goop_scrolls() {
+        let Some(dir) = libsms::assets::find(None) else { eprintln!("SKIP: Sunshine assets absent"); return };
+        if !dir.join("enemy/gatekeeper/gene_pakkun_tex1.btk").is_file() { eprintln!("SKIP: gatekeeper not extracted"); return }
+        let mut v = View::load_look(&dir, Look::GateKeeper).unwrap();
+        assert_eq!(v.scroll.len(), 2, "tex0 and tex1");
+        let ids: Vec<i32> = v.models[0].batch_texture.iter().copied().filter(|&i| i >= 0).collect();
+        assert!(!ids.is_empty());
+        assert!(ids.iter().all(|&i| v.textures.version(i as u32) != 0), "animated textures start at a nonzero version");
+        let count = v.textures.list.len();
+        v.scroll_textures(0.0);
+        let before: Vec<Vec<u8>> = ids.iter().map(|&i| v.textures.list[i as usize].rgba.clone()).collect();
+        let version = v.textures.version(ids[0] as u32);
+        v.scroll_textures(3.0);
+        assert!(ids.iter().enumerate().any(|(k, &i)| v.textures.list[i as usize].rgba != before[k]), "the goop should move");
+        assert_ne!(version, v.textures.version(ids[0] as u32), "the host is told");
+        assert_eq!(count, v.textures.list.len(), "re-baked in place");
     }
 
     #[test]

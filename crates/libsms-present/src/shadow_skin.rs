@@ -63,6 +63,10 @@ pub struct ShadowSwirl {
     warp: (u32, u32, Vec<u8>),
     params: SwirlParams,
     base_translation: Vec2,
+    /// The second read's share of the scroll: chosen so that over one loop of the btk (which
+    /// slides the warp a whole number of widths, 3 on the PAL disc) it too moves a whole
+    /// number of widths, so the loop's last frame runs into its first with no jump.
+    drift: Vec2,
     scroll: Option<TexSrt>,
     /// The material the btk scrolls (its matrix is read back each frame).
     material: usize,
@@ -84,6 +88,17 @@ impl ShadowSwirl {
         let reg = |i: usize| [0, 1, 2].map(|c| (m.tev_colors[i][c] as f32 / 255.0).clamp(0.0, 1.0));
         let mtx = m.tex_mtx[WARP_MTX].as_ref();
         let scroll = std::fs::read(dir.join(SCROLL)).ok().and_then(|d| TexSrt::parse(&d).ok());
+        // What one loop slides the warp (`kagemario_scroll.btk` repeats, mode 2).
+        let span = scroll
+            .as_ref()
+            .and_then(|s| {
+                let t = s.tracks.iter().find(|t| t.material == "_mat_head" && t.matrix == WARP_MTX)?;
+                let (a, b) = (t.values(0.0), t.values(s.frames));
+                Some(Vec2::new(b[2] - a[2], b[5] - a[5]))
+            })
+            .unwrap_or(Vec2::ZERO);
+        let share = |w: f32| if w.abs() < 0.5 { 0.5 } else { (w * 0.5).round().max(1.0) / w };
+        let drift = Vec2::new(share(span.x), share(span.y));
         Some(ShadowSwirl {
             main: image(MAP_MAIN),
             warp,
@@ -95,6 +110,7 @@ impl ShadowSwirl {
                 warp_translation: mtx.map_or(Vec2::ZERO, |t| t.translation),
             },
             base_translation: mtx.map_or(Vec2::ZERO, |t| t.translation),
+            drift,
             scroll,
             material,
             frame: None,
@@ -140,12 +156,12 @@ impl ShadowSwirl {
     pub fn refraction(&self) -> (u32, Vec<u8>, f32) {
         let repeat = [Wrap::Repeat, Wrap::Repeat];
         let (ww, wh, wp) = (&self.warp.0, &self.warp.1, &self.warp.2);
-        let t = self.params.warp_translation;
         let mut offsets = Vec::with_capacity((SIZE * SIZE) as usize);
         for y in 0..SIZE {
             for x in 0..SIZE {
                 let (u, v) = ((x as f32 + 0.5) / SIZE as f32, (y as f32 + 0.5) / SIZE as f32);
-                let w = sample_rgba8_bilinear(*ww, *wh, wp, repeat, u * 2.0 + t.x, v * 2.0 + t.y).unwrap_or([0.5; 4]);
+                let (wu, wv) = self.warp_uv(u, v);
+                let w = sample_rgba8_bilinear(*ww, *wh, wp, repeat, wu, wv).unwrap_or([0.5; 4]);
                 offsets.push(Vec2::new(w[0] - 0.5, w[3] - 0.5));
             }
         }
@@ -159,6 +175,14 @@ impl ShadowSwirl {
         (SIZE, rgba, gain)
     }
 
+    /// Where the warp is read for body coordinate `(u, v)` (tiled twice over the body): through
+    /// the btk's matrix as J3D applies it, scaled about its centre (0.5) and then moved, so
+    /// the swirl breathes (scale 1 to 2 and back) as it slides.
+    fn warp_uv(&self, u: f32, v: f32) -> (f32, f32) {
+        let (s, t) = (self.params.warp_scale, self.params.warp_translation);
+        ((u * 2.0 - 0.5) * s.x + 0.5 + t.x, (v * 2.0 - 0.5) * s.y + 0.5 + t.y)
+    }
+
     /// The two stages over the body's coordinates at the current scroll.
     pub fn bake(&self) -> Baked {
         let repeat = [Wrap::Repeat, Wrap::Repeat];
@@ -170,10 +194,12 @@ impl ShadowSwirl {
             for x in 0..SIZE {
                 let (u, v) = ((x as f32 + 0.5) / SIZE as f32, (y as f32 + 0.5) / SIZE as f32);
                 // The warp's IA pair is an offset (`GX_ITF_4`, biased by a half).
-                let w = warp(u * 2.0 + t.x, v * 2.0 + t.y);
+                let (wu, wv) = self.warp_uv(u, v);
+                let w = warp(wu, wv);
                 let (du, dv) = ((w[0] - 0.5) * PUSH, (w[3] - 0.5) * PUSH);
-                // The "screen": the warp's intensity, read again where the first read pushes.
-                let s = warp(u * 1.3 - t.y * 0.5 + du, v * 1.3 + t.x * 0.5 + dv)[0];
+                // The "screen": the warp's intensity, read again where the first read pushes,
+                // drifting crosswise at `drift` of the scroll (whole widths a loop).
+                let s = warp(u * 1.3 - t.y * self.drift.y + du, v * 1.3 + t.x * self.drift.x + dv)[0];
                 let s = s.clamp(0.0, 1.0);
                 let ramp = |i: usize| self.params.dark[i] + (self.params.light[i] - self.params.dark[i]) * s;
                 let main = self.main.as_ref().map_or(1.0, |(mw, mh, mp)| {
@@ -194,5 +220,45 @@ impl ShadowSwirl {
             rgba,
             env: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn swirl() -> Option<(ShadowSwirl, Bmd)> {
+        let dir = libsms::assets::find(None)?;
+        let bmd = Bmd::parse(&std::fs::read(dir.join(MODEL)).ok()?).ok()?;
+        let s = ShadowSwirl::load(&dir, &bmd)?;
+        s.scroll.as_ref()?;
+        Some((s, bmd))
+    }
+
+    fn diff(a: &Baked, b: &Baked) -> f32 {
+        let n = a.rgba.len() as f32;
+        a.rgba.iter().zip(&b.rgba).map(|(x, y)| (*x as f32 - *y as f32).abs()).sum::<f32>() / n
+    }
+
+    /// `kagemario_scroll.btk` repeats every `frames`: the bake and the refraction map at a
+    /// loop's end must be the start's, and its last step no bigger than any other step.
+    #[test]
+    fn the_swirl_loops_with_no_jump() {
+        let Some((mut s, mut bmd)) = swirl() else { eprintln!("SKIP: Shadow Mario's files absent"); return };
+        let frames = s.scroll.as_ref().unwrap().frames;
+        let at = |s: &mut ShadowSwirl, bmd: &mut Bmd, f: f32| s.step(bmd, f / 30.0 + 1e-4).unwrap_or_else(|| s.bake());
+        let first = at(&mut s, &mut bmd, 0.0);
+        let first_map = s.refraction().1;
+        let last = at(&mut s, &mut bmd, frames - 1.0);
+        let looped = at(&mut s, &mut bmd, frames);
+        let looped_map = s.refraction().1;
+        assert!(diff(&first, &looped) < 0.5, "the loop's start and end bakes differ by {}", diff(&first, &looped));
+        let map_diff = first_map.iter().zip(&looped_map).map(|(a, b)| (*a as i32 - *b as i32).abs()).max().unwrap_or(0);
+        assert!(map_diff <= 2, "refraction maps differ by {map_diff} over the loop");
+        let wrap_step = diff(&last, &looped);
+        let mid = at(&mut s, &mut bmd, frames * 0.5);
+        let mid_next = at(&mut s, &mut bmd, frames * 0.5 + 1.0);
+        let step = diff(&mid, &mid_next);
+        assert!(wrap_step < step * 3.0 + 1.0, "the loop's last step ({wrap_step}) jumps (a normal step: {step})");
     }
 }

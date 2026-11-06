@@ -82,6 +82,15 @@ impl TexSrt {
             tracks,
         })
     }
+}
+impl Transform {
+    /// Every channel's value at `frame` (unwrapped): per axis U, V, W the scale, rotation and
+    /// translation, so `[0]`/`[3]` scale, `[7]` rotation, `[2]`/`[5]` translation.
+    pub fn values(&self, frame: f32) -> [f32; 9] {
+        std::array::from_fn(|i| self.channels[i].value(frame))
+    }
+}
+impl TexSrt {
     pub fn apply(&self, bmd: &mut Bmd, frame: f32) {
         let frame = if self.mode == 2 && self.frames > 0. {
             frame.rem_euclid(self.frames)
