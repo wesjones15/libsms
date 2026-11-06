@@ -887,7 +887,12 @@ impl Mario {
             // from the droplet speed cap); ordinary spray keeps vanilla's eighth.
             self.vel
         } else {
-            Vec3::new(self.vel.x * 0.125, 0.0, self.vel.z * 0.125)
+            // Vanilla's eighth of his horizontal speed. Host extension: `vel` is the vanilla-scale
+            // speed and his travel is multiplied by the host's speed and any jump boost (a Wax
+            // Quail), so the part of that above 1x is carried in full, or he outruns his own water.
+            let travel = if self.limits_airborne() { self.limit_air_speed() } else { self.limit_ground_speed() };
+            let k = 0.125 + if travel.is_finite() { (travel - 1.0).clamp(0.0, 10.0) } else { 0.0 };
+            Vec3::new(self.vel.x * k, 0.0, self.vel.z * k)
         };
         let (mut size, mut dir_tremble) = (np.size, np.dir_tremble);
 

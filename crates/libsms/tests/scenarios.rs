@@ -4673,3 +4673,29 @@ fn vanilla_runoff_requests_real_droplets_every_eight_ticks_after_water_exit() {
     s.step(30);
     assert_eq!(s.host.events.iter().filter(|e| matches!(e, Event::BodyDrip { .. })).count(), 15);
 }
+
+#[test]
+fn spray_keeps_up_with_a_boosted_jump() {
+    // Host extension: the part of his travel above 1x (a Wax Quail) is carried by the water in
+    // full; vanilla's eighth stays the rest.
+    let inherit = |boost: f32| {
+        let mut s = Scene::flat();
+        s.sim.mario.give_fludd();
+        s.run_forward();
+        s.secs(1.0);
+        s.press_a();
+        s.sim.mario.boost_jump(boost);
+        s.host.events.clear();
+        s.pad.r_analog = 200;
+        s.step(20);
+        assert!(s.mario().status.is_jumping(), "still in the air");
+        let w = s.host.events.iter().filter_map(|e| match e {
+            Event::WaterEmit(w) => Some(*w),
+            _ => None,
+        }).last().expect("water left the nozzle");
+        w.inherit.z
+    };
+    let (plain, boosted) = (inherit(1.0), inherit(3.0));
+    assert!(plain > 0.0, "{plain}");
+    assert!(boosted > 8.0 * plain, "{plain} {boosted}");
+}

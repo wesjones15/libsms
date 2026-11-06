@@ -256,7 +256,7 @@ impl Mario {
     }
 
     /// Airborne for the limits: the jumping family (hovering and rocketing too).
-    fn limits_airborne(&self) -> bool {
+    pub(crate) fn limits_airborne(&self) -> bool {
         self.status.is_jumping()
     }
 
