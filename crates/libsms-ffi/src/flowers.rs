@@ -157,13 +157,15 @@ impl SmsFlowers {
 /// A new, empty world with the core's defaults (see [`sms_fw_setup`]).
 #[unsafe(no_mangle)]
 pub extern "C" fn sms_fw_new() -> *mut SmsFlowers {
-    Box::into_raw(Box::new(SmsFlowers {
-        world: FlowerWorld::new(),
-        events: Vec::new(),
-        table: libsms::flower::SpawnTable::default(),
-        clock: FixedClock::default(),
-        hits: Vec::new(),
-    }))
+    libcommon::ffi::guard("sms_fw_new", std::ptr::null_mut(), || {
+        Box::into_raw(Box::new(SmsFlowers {
+            world: FlowerWorld::new(),
+            events: Vec::new(),
+            table: libsms::flower::SpawnTable::default(),
+            clock: FixedClock::default(),
+            hits: Vec::new(),
+        }))
+    })
 }
 
 /// # Safety
@@ -171,10 +173,12 @@ pub extern "C" fn sms_fw_new() -> *mut SmsFlowers {
 /// ([`sms_sim_set_flowers`] with null first). Null is ignored.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_fw_free(fw: *mut SmsFlowers) {
-    if !fw.is_null() {
-        // SAFETY: the caller hands back ownership.
-        drop(unsafe { Box::from_raw(fw) });
-    }
+    libcommon::ffi::guard("sms_fw_free", (), || {
+        if !fw.is_null() {
+            // SAFETY: the caller hands back ownership.
+            drop(unsafe { Box::from_raw(fw) });
+        }
+    })
 }
 
 /// Gives `sim` the world its water and stomps hit (null to let go). The host keeps the world
@@ -184,10 +188,12 @@ pub unsafe extern "C" fn sms_fw_free(fw: *mut SmsFlowers) {
 /// `sim` from `sms_sim_new`; `fw` null or from [`sms_fw_new`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_sim_set_flowers(sim: *mut SmsSim, fw: *mut SmsFlowers) {
-    // SAFETY: as documented.
-    if let Some(s) = unsafe { sim.as_mut() } {
-        s.flower_world = fw;
-    }
+    libcommon::ffi::guard("sms_sim_set_flowers", (), || {
+        // SAFETY: as documented.
+        if let Some(s) = unsafe { sim.as_mut() } {
+            s.flower_world = fw;
+        }
+    })
 }
 
 /// Empties the world and reads the three `.prm` files from `assets_dir`'s `params_enemy/`, with
@@ -201,45 +207,47 @@ pub unsafe extern "C" fn sms_fw_setup(
     assets_dir: *const c_char,
     clips: *const SmsFlowerClips,
 ) {
-    // SAFETY: as documented.
-    let Some(s) = (unsafe { fw.as_mut() }) else { return };
-    let load = |name: &str| -> Option<libsms::prm::Prm> {
-        if assets_dir.is_null() {
-            return None;
+    libcommon::ffi::guard("sms_fw_setup", (), || {
+        // SAFETY: as documented.
+        let Some(s) = (unsafe { fw.as_mut() }) else { return };
+        let load = |name: &str| -> Option<libsms::prm::Prm> {
+            if assets_dir.is_null() {
+                return None;
+            }
+            // SAFETY: as documented.
+            let dir = unsafe { CStr::from_ptr(assets_dir) }.to_string_lossy().into_owned();
+            let data = std::fs::read(Path::new(&dir).join("params_enemy").join(name)).ok()?;
+            libsms::prm::Prm::parse(&data).ok()
+        };
+        let mut w = FlowerWorld::new().with_params(
+            load("samboflower.prm").as_ref(),
+            load("hanasambo.prm").as_ref(),
+            load("sambohead.prm").as_ref(),
+        );
+        if !assets_dir.is_null() {
+            // SAFETY: as documented.
+            let dir = unsafe { CStr::from_ptr(assets_dir) }.to_string_lossy().into_owned();
+            w = w.with_rig(Path::new(&dir));
         }
         // SAFETY: as documented.
-        let dir = unsafe { CStr::from_ptr(assets_dir) }.to_string_lossy().into_owned();
-        let data = std::fs::read(Path::new(&dir).join("params_enemy").join(name)).ok()?;
-        libsms::prm::Prm::parse(&data).ok()
-    };
-    let mut w = FlowerWorld::new().with_params(
-        load("samboflower.prm").as_ref(),
-        load("hanasambo.prm").as_ref(),
-        load("sambohead.prm").as_ref(),
-    );
-    if !assets_dir.is_null() {
-        // SAFETY: as documented.
-        let dir = unsafe { CStr::from_ptr(assets_dir) }.to_string_lossy().into_owned();
-        w = w.with_rig(Path::new(&dir));
-    }
-    // SAFETY: as documented.
-    if let Some(c) = unsafe { clips.as_ref() } {
-        let d = Clips::default();
-        let t = |v: u32, d: u32| if v == 0 { d } else { v };
-        w.clips = Clips {
-            flower_open: t(c.flower_open, d.flower_open),
-            tower_appear: t(c.tower_appear, d.tower_appear),
-            tower_hide: t(c.tower_hide, d.tower_hide),
-            tower_attack_start: t(c.tower_attack_start, d.tower_attack_start),
-            tower_attack: t(c.tower_attack, d.tower_attack),
-            tower_attack_end: t(c.tower_attack_end, d.tower_attack_end),
-            tower_freeze: t(c.tower_freeze, d.tower_freeze),
-            tower_die: t(c.tower_die, d.tower_die),
-        };
-    }
-    s.world = w;
-    s.events.clear();
-    s.hits.clear();
+        if let Some(c) = unsafe { clips.as_ref() } {
+            let d = Clips::default();
+            let t = |v: u32, d: u32| if v == 0 { d } else { v };
+            w.clips = Clips {
+                flower_open: t(c.flower_open, d.flower_open),
+                tower_appear: t(c.tower_appear, d.tower_appear),
+                tower_hide: t(c.tower_hide, d.tower_hide),
+                tower_attack_start: t(c.tower_attack_start, d.tower_attack_start),
+                tower_attack: t(c.tower_attack, d.tower_attack),
+                tower_attack_end: t(c.tower_attack_end, d.tower_attack_end),
+                tower_freeze: t(c.tower_freeze, d.tower_freeze),
+                tower_die: t(c.tower_die, d.tower_die),
+            };
+        }
+        s.world = w;
+        s.events.clear();
+        s.hits.clear();
+    })
 }
 
 /// The rare roll's odds: `chance_per_mille` of any spawn per roll, and weights for a flower
@@ -256,13 +264,15 @@ pub unsafe extern "C" fn sms_fw_set_table(
     w_enemy_ring: u32,
     w_tower: u32,
 ) {
-    // SAFETY: as documented.
-    if let Some(s) = unsafe { fw.as_mut() } {
-        s.table = libsms::flower::SpawnTable {
-            chance_per_mille,
-            weights: [w_ring, w_single, w_enemy_ring, w_tower],
-        };
-    }
+    libcommon::ffi::guard("sms_fw_set_table", (), || {
+        // SAFETY: as documented.
+        if let Some(s) = unsafe { fw.as_mut() } {
+            s.table = libsms::flower::SpawnTable {
+                chance_per_mille,
+                weights: [w_ring, w_single, w_enemy_ring, w_tower],
+            };
+        }
+    })
 }
 
 /// One roll with `r` and `s` uniform in [0, 1): 0 for nothing, else a spawn to hand to
@@ -272,14 +282,16 @@ pub unsafe extern "C" fn sms_fw_set_table(
 /// `fw` from [`sms_fw_new`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_fw_roll(fw: *const SmsFlowers, r: f32, s: f32) -> u32 {
-    // SAFETY: as documented.
-    match unsafe { fw.as_ref() } {
-        Some(f) if r.is_finite() && s.is_finite() => f
-            .table
-            .pick(r.clamp(0.0, 0.9999), s.clamp(0.0, 0.9999))
-            .map_or(0, pack),
-        _ => 0,
-    }
+    libcommon::ffi::guard("sms_fw_roll", 0, || {
+        // SAFETY: as documented.
+        match unsafe { fw.as_ref() } {
+            Some(f) if r.is_finite() && s.is_finite() => f
+                .table
+                .pick(r.clamp(0.0, 0.9999), s.clamp(0.0, 0.9999))
+                .map_or(0, pack),
+            _ => 0,
+        }
+    })
 }
 
 /// Puts a spawn at `pos` (sim units), a ring turned `yaw` degrees. Returns how many things it
@@ -294,21 +306,23 @@ pub unsafe extern "C" fn sms_fw_place(
     pos: *const SmsVec3,
     yaw: f32,
 ) -> u32 {
-    // SAFETY: as documented.
-    let (Some(s), Some(p), Some(sp)) =
-        (unsafe { fw.as_mut() }, unsafe { pos.as_ref() }, unpack(spawn))
-    else {
-        return 0;
-    };
-    let at = Vec3::from(*p);
-    if !at.is_finite() || !yaw.is_finite() {
-        return 0;
-    }
-    let w = &mut s.world;
-    if w.units.len() + w.towers.len() + w.heads.len() > 48 {
-        return 0;
-    }
-    w.place(sp, at, yaw) as u32
+    libcommon::ffi::guard("sms_fw_place", 0, || {
+        // SAFETY: as documented.
+        let (Some(s), Some(p), Some(sp)) =
+            (unsafe { fw.as_mut() }, unsafe { pos.as_ref() }, unpack(spawn))
+        else {
+            return 0;
+        };
+        let at = Vec3::from(*p);
+        if !at.is_finite() || !yaw.is_finite() {
+            return 0;
+        }
+        let w = &mut s.world;
+        if w.units.len() + w.towers.len() + w.heads.len() > 48 {
+            return 0;
+        }
+        w.place(sp, at, yaw) as u32
+    })
 }
 
 /// Steps the world by `dt` seconds (as many 120 Hz ticks as are due) with every Mario's feet
@@ -326,30 +340,32 @@ pub unsafe extern "C" fn sms_fw_step(
     count: u32,
     dt: f32,
 ) -> u32 {
-    // SAFETY: as documented.
-    let (Some(s), Some(host)) = (unsafe { fw.as_mut() }, unsafe { host.as_ref() }) else {
-        return 0;
-    };
-    let feet: Vec<Vec3> = if marios.is_null() {
-        Vec::new()
-    } else {
+    libcommon::ffi::guard("sms_fw_step", 0, || {
         // SAFETY: as documented.
-        unsafe { std::slice::from_raw_parts(marios, count.min(64) as usize) }
-            .iter()
-            .map(|v| Vec3::from(*v))
-            .filter(|v| v.is_finite())
-            .collect()
-    };
-    let n = s.clock.accumulate(dt);
-    let h = FfiHost(host, Vec::new(), Vec::new(), std::ptr::null());
-    let mut out = Vec::new();
-    for _ in 0..n {
-        s.world.step(&h, &feet, &mut out);
-    }
-    for e in &out {
-        s.push(e);
-    }
-    n
+        let (Some(s), Some(host)) = (unsafe { fw.as_mut() }, unsafe { host.as_ref() }) else {
+            return 0;
+        };
+        let feet: Vec<Vec3> = if marios.is_null() {
+            Vec::new()
+        } else {
+            // SAFETY: as documented.
+            unsafe { std::slice::from_raw_parts(marios, count.min(64) as usize) }
+                .iter()
+                .map(|v| Vec3::from(*v))
+                .filter(|v| v.is_finite())
+                .collect()
+        };
+        let n = s.clock.accumulate(dt);
+        let h = FfiHost(host, Vec::new(), Vec::new(), std::ptr::null());
+        let mut out = Vec::new();
+        for _ in 0..n {
+            s.world.step(&h, &feet, &mut out);
+        }
+        for e in &out {
+            s.push(e);
+        }
+        n
+    })
 }
 
 /// Applies a hit (0 water, 1 a stomp or other attack) on `id` where the world is stepped.
@@ -358,16 +374,18 @@ pub unsafe extern "C" fn sms_fw_step(
 /// `fw` from [`sms_fw_new`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_fw_hit(fw: *mut SmsFlowers, id: u64, kind: u32) {
-    // SAFETY: as documented.
-    let Some(s) = (unsafe { fw.as_mut() }) else { return };
-    if !FlowerWorld::owns(id) {
-        return;
-    }
-    let mut out = Vec::new();
-    s.world.hit(id, kind.min(1) as u8, &mut out);
-    for e in &out {
-        s.push(e);
-    }
+    libcommon::ffi::guard("sms_fw_hit", (), || {
+        // SAFETY: as documented.
+        let Some(s) = (unsafe { fw.as_mut() }) else { return };
+        if !FlowerWorld::owns(id) {
+            return;
+        }
+        let mut out = Vec::new();
+        s.world.hit(id, kind.min(1) as u8, &mut out);
+        for e in &out {
+            s.push(e);
+        }
+    })
 }
 
 /// Takes up to `max` hits the sims holding this world reported into `out`. Returns how many.
@@ -380,20 +398,22 @@ pub unsafe extern "C" fn sms_fw_take_hits(
     out: *mut SmsFlowerHit,
     max: u32,
 ) -> u32 {
-    // SAFETY: as documented.
-    let Some(s) = (unsafe { fw.as_mut() }) else { return 0 };
-    if out.is_null() {
-        return 0;
-    }
-    let n = s.hits.len().min(max as usize);
-    for (i, (id, kind)) in s.hits.drain(..n).enumerate() {
-        // SAFETY: `out` has room for `max`.
-        unsafe { out.add(i).write(SmsFlowerHit { id, kind: kind as u32, _pad: 0 }) };
-    }
-    if s.hits.len() > 256 {
-        s.hits.clear();
-    }
-    n as u32
+    libcommon::ffi::guard("sms_fw_take_hits", 0, || {
+        // SAFETY: as documented.
+        let Some(s) = (unsafe { fw.as_mut() }) else { return 0 };
+        if out.is_null() {
+            return 0;
+        }
+        let n = s.hits.len().min(max as usize);
+        for (i, (id, kind)) in s.hits.drain(..n).enumerate() {
+            // SAFETY: `out` has room for `max`.
+            unsafe { out.add(i).write(SmsFlowerHit { id, kind: kind as u32, _pad: 0 }) };
+        }
+        if s.hits.len() > 256 {
+            s.hits.clear();
+        }
+        n as u32
+    })
 }
 
 /// How many of `kind` (0 flowers, 1 towers, 2 heads) there are.
@@ -402,21 +422,23 @@ pub unsafe extern "C" fn sms_fw_take_hits(
 /// `fw` from [`sms_fw_new`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_fw_count(fw: *const SmsFlowers, kind: u8) -> u32 {
-    // SAFETY: as documented.
-    let Some(s) = (unsafe { fw.as_ref() }) else { return 0 };
-    (match kind {
-        0 => s.world.units.iter().map(|u| u.flowers.len()).sum(),
-        1 => s.world.towers.len(),
-        2 => s.world.heads.len(),
-        3 => s
-            .world
-            .towers
-            .iter()
-            .filter(|t| t.flower.is_some())
-            .count()
-            + s.world.heads.iter().filter(|h| h.flower.is_some()).count(),
-        _ => 0,
-    }) as u32
+    libcommon::ffi::guard("sms_fw_count", 0, || {
+        // SAFETY: as documented.
+        let Some(s) = (unsafe { fw.as_ref() }) else { return 0 };
+        (match kind {
+            0 => s.world.units.iter().map(|u| u.flowers.len()).sum(),
+            1 => s.world.towers.len(),
+            2 => s.world.heads.len(),
+            3 => s
+                .world
+                .towers
+                .iter()
+                .filter(|t| t.flower.is_some())
+                .count()
+                + s.world.heads.iter().filter(|h| h.flower.is_some()).count(),
+            _ => 0,
+        }) as u32
+    })
 }
 
 fn item_of(i: &Item) -> SmsFlowerItem {
@@ -442,16 +464,18 @@ pub unsafe extern "C" fn sms_fw_items(
     out: *mut SmsFlowerItem,
     max: u32,
 ) -> u32 {
-    // SAFETY: as documented.
-    let Some(s) = (unsafe { fw.as_ref() }) else { return 0 };
-    let items = s.world.items();
-    if !out.is_null() {
-        for (i, it) in items.iter().take(max as usize).enumerate() {
-            // SAFETY: `out` has room for `max`.
-            unsafe { out.add(i).write(item_of(it)) };
+    libcommon::ffi::guard("sms_fw_items", 0, || {
+        // SAFETY: as documented.
+        let Some(s) = (unsafe { fw.as_ref() }) else { return 0 };
+        let items = s.world.items();
+        if !out.is_null() {
+            for (i, it) in items.iter().take(max as usize).enumerate() {
+                // SAFETY: `out` has room for `max`.
+                unsafe { out.add(i).write(item_of(it)) };
+            }
         }
-    }
-    items.len() as u32
+        items.len() as u32
+    })
 }
 
 /// The `i`th of `kind`. Returns 0 past the end.
@@ -465,18 +489,20 @@ pub unsafe extern "C" fn sms_fw_get(
     i: u32,
     out: *mut SmsFlowerItem,
 ) -> u8 {
-    // SAFETY: as documented.
-    let (Some(s), Some(out)) = (unsafe { fw.as_ref() }, unsafe { out.as_mut() }) else {
-        return 0;
-    };
-    let items = s.world.items();
-    match items.iter().filter(|it| it.kind == kind).nth(i as usize) {
-        Some(it) => {
-            *out = item_of(it);
-            1
+    libcommon::ffi::guard("sms_fw_get", 0, || {
+        // SAFETY: as documented.
+        let (Some(s), Some(out)) = (unsafe { fw.as_ref() }, unsafe { out.as_mut() }) else {
+            return 0;
+        };
+        let items = s.world.items();
+        match items.iter().filter(|it| it.kind == kind).nth(i as usize) {
+            Some(it) => {
+                *out = item_of(it);
+                1
+            }
+            None => 0,
         }
-        None => 0,
-    }
+    })
 }
 
 /// Makes this world a copy of a snapshot (a client's: it is not stepped).
@@ -485,25 +511,27 @@ pub unsafe extern "C" fn sms_fw_get(
 /// `fw` from [`sms_fw_new`]; `items` has `count` entries.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_fw_mirror(fw: *mut SmsFlowers, items: *const SmsFlowerItem, count: u32) {
-    // SAFETY: as documented.
-    let Some(s) = (unsafe { fw.as_mut() }) else { return };
-    if items.is_null() {
-        return;
-    }
-    // SAFETY: as documented.
-    let list: Vec<Item> = unsafe { std::slice::from_raw_parts(items, count.min(512) as usize) }
-        .iter()
-        .filter(|i| Vec3::from(i.pos).is_finite() && i.yaw.is_finite())
-        .map(|i| Item {
-            kind: i.kind,
-            state: i.state,
-            handle: i.handle,
-            age: i.age,
-            pos: i.pos.into(),
-            yaw: i.yaw,
-        })
-        .collect();
-    s.world.mirror(&list);
+    libcommon::ffi::guard("sms_fw_mirror", (), || {
+        // SAFETY: as documented.
+        let Some(s) = (unsafe { fw.as_mut() }) else { return };
+        if items.is_null() {
+            return;
+        }
+        // SAFETY: as documented.
+        let list: Vec<Item> = unsafe { std::slice::from_raw_parts(items, count.min(512) as usize) }
+            .iter()
+            .filter(|i| Vec3::from(i.pos).is_finite() && i.yaw.is_finite())
+            .map(|i| Item {
+                kind: i.kind,
+                state: i.state,
+                handle: i.handle,
+                age: i.age,
+                pos: i.pos.into(),
+                yaw: i.yaw,
+            })
+            .collect();
+        s.world.mirror(&list);
+    })
 }
 
 /// Takes up to `max` pending events (oldest first) into `out`. Returns how many.
@@ -516,15 +544,17 @@ pub unsafe extern "C" fn sms_fw_events(
     out: *mut SmsFlowerEvent,
     max: u32,
 ) -> u32 {
-    // SAFETY: as documented.
-    let Some(s) = (unsafe { fw.as_mut() }) else { return 0 };
-    if out.is_null() {
-        return 0;
-    }
-    let n = s.events.len().min(max as usize);
-    for (i, e) in s.events.drain(..n).enumerate() {
-        // SAFETY: `out` has room for `max`.
-        unsafe { out.add(i).write(e) };
-    }
-    n as u32
+    libcommon::ffi::guard("sms_fw_events", 0, || {
+        // SAFETY: as documented.
+        let Some(s) = (unsafe { fw.as_mut() }) else { return 0 };
+        if out.is_null() {
+            return 0;
+        }
+        let n = s.events.len().min(max as usize);
+        for (i, e) in s.events.drain(..n).enumerate() {
+            // SAFETY: `out` has room for `max`.
+            unsafe { out.add(i).write(e) };
+        }
+        n as u32
+    })
 }

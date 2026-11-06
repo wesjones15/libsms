@@ -26,9 +26,11 @@ pub unsafe extern "C" fn sms_heat_new(dir: *const c_char) -> *mut HeatHaze {
 /// `heat` is null or a live handle, freed exactly once.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_heat_free(heat: *mut HeatHaze) {
-    if !heat.is_null() {
-        drop(unsafe { Box::from_raw(heat) })
-    }
+    libcommon::ffi::guard("sms_heat_free", (), || {
+        if !heat.is_null() {
+            drop(unsafe { Box::from_raw(heat) })
+        }
+    })
 }
 
 /// Packed AG normal map (asset-derived gain, compensated by host magnitude). No partial writes.

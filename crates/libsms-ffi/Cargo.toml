@@ -12,3 +12,4 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 libsms.workspace = true
 libsms-present.workspace = true
 glam.workspace = true
+libcommon.workspace = true
