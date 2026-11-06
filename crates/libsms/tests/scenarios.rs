@@ -1453,6 +1453,34 @@ fn mario_picks_up_fruit_carries_puts_and_throws_it() {
     assert!(s.event_count(|e| matches!(e, Event::Throw { id: 7, .. })) == 1);
 }
 
+/// The stick nudges a ground pound's fall sideways, only a little; with no stick it falls straight.
+#[test]
+fn the_stick_slightly_aims_a_ground_pound_in_its_fall() {
+    let drift = |stick: Vec2| -> f32 {
+        let mut s: Scene<FlatHost> = Scene::flat();
+        s.sim.mario.pos = Vec3::new(0.0, 3000.0, 0.0);
+        s.step(2);
+        s.pad.l = true;
+        s.step(1);
+        s.pad.l = false;
+        s.step(70); // past the wind-up, into the fall
+        s.pad.stick = stick;
+        let start = s.mario().pos;
+        for _ in 0..3000 {
+            if s.mario().status != Status::HipDrop {
+                break;
+            }
+            s.step(1);
+        }
+        let end = s.mario().pos;
+        ((end.x - start.x).powi(2) + (end.z - start.z).powi(2)).sqrt()
+    };
+    let (still, aimed) = (drift(Vec2::ZERO), drift(Vec2::Y));
+    assert!(still < 1.0, "a pound with no stick drifted {still}");
+    assert!(aimed > 20.0, "the stick didn't aim the pound ({aimed})");
+    assert!(aimed < 1500.0, "the aim isn't slight ({aimed})");
+}
+
 /// A fire hit during a ground pound (wind-up or fall) doesn't cut it short or start the burn reaction.
 #[test]
 fn a_fire_hit_does_not_cancel_a_ground_pound() {

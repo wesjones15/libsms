@@ -14,6 +14,9 @@ pub(crate) const PAD_ACTION_GRACE: u32 = 12;
 
 /// The Turbo corkscrew lasts as long as the stick keeps circling, and this many ticks (a fifth of a second, the length of the stick history)
 /// past the last full circle's reading, so a slow circle doesn't drop out between turns.
+/// Host extension: the most the stick moves a ground pound sideways in its fall (decomp units per 30 Hz
+/// frame; a run is 45 to 80).
+const POUND_AIM_SPEED: f32 = 12.0;
 const CORKSCREW_GRACE: u16 = 24;
 /// There is no cap on either corkscrew (Turbo or plain dive): it goes on as long as the stick circles.
 /// A corkscrew that has gone on this long (1 s) is in flames and hits with the super blow.
@@ -710,6 +713,15 @@ impl Mario {
                 } else {
                     j.super_hip_attack_speed_y
                 };
+                // Host extension: the stick nudges the fall along (up to POUND_AIM_SPEED, a fraction of a
+                // run), turning him toward it, so a pound can be aimed a little in motion.
+                if self.input.stick {
+                    let rot = (self.params.hover.rot_sp as i32) / 2;
+                    self.face_yaw = crate::math::turn_toward(self.face_yaw, self.intended_yaw, rot);
+                    self.set_player_velocity(POUND_AIM_SPEED * (self.intended_mag / 32.0).clamp(0.0, 1.0));
+                } else {
+                    self.set_player_velocity(0.0);
+                }
                 // `emitBlurHipDrop`: the fall's smear (the super pound's flames are the view's,
                 // from `pounding`).
                 if self.status_state == 2 {
