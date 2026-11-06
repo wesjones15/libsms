@@ -27,7 +27,7 @@
 //! its `version` changes when the picture does.
 
 use std::ffi::{CString, c_char};
-use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
 
 use glam::{Mat4, Vec3, Vec4};
@@ -343,8 +343,10 @@ pub unsafe extern "C" fn sms_view_nozzle_portrait(view: *mut SmsView) {
 /// `assets_dir` a nul-terminated UTF-8 path.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_view_new(assets_dir: *const c_char, sound: u8) -> *mut SmsView {
-    // SAFETY: as documented.
-    unsafe { sms_view_new_look(assets_dir, sound, 0) }
+    libcommon::ffi::guard("sms_view_new", std::ptr::null_mut(), || {
+        // SAFETY: as documented.
+        unsafe { sms_view_new_look(assets_dir, sound, 0) }
+    })
 }
 
 /// [`sms_view_new`] drawing `look`: 0 Mario, 1 Shadow Mario, 2 a static yellow coin.
@@ -374,7 +376,7 @@ pub unsafe extern "C" fn sms_view_new_look(
     let dir = unsafe { std::ffi::CStr::from_ptr(assets_dir) }
         .to_string_lossy()
         .into_owned();
-    let made = catch_unwind(|| {
+    let made = crate::caught("sms_view_new_look", || {
         let dir = PathBuf::from(dir);
         let look = match look {
             1 => libsms_present::Look::Shadow,
@@ -433,7 +435,9 @@ pub unsafe extern "C" fn sms_view_entrance_new(
     assets_dir: *const c_char,
     sound: u8,
 ) -> *mut SmsView {
-    unsafe { make_entrance(assets_dir, sound, false) }
+    libcommon::ffi::guard("sms_view_entrance_new", std::ptr::null_mut(), || {
+        unsafe { make_entrance(assets_dir, sound, false) }
+    })
 }
 
 /// Short game entrance. The original `sms_view_entrance_new` remains available unchanged.
@@ -441,7 +445,9 @@ pub unsafe extern "C" fn sms_view_entrance_new(
 /// `assets_dir` is a nul-terminated UTF-8 path with a worker-prepared portal cache.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_view_entrance_fast_new(assets_dir: *const c_char, sound: u8) -> *mut SmsView {
-    unsafe { make_entrance(assets_dir, sound, true) }
+    libcommon::ffi::guard("sms_view_entrance_fast_new", std::ptr::null_mut(), || {
+        unsafe { make_entrance(assets_dir, sound, true) }
+    })
 }
 
 unsafe fn make_entrance(assets_dir: *const c_char, sound: u8, fast: bool) -> *mut SmsView {
@@ -449,7 +455,7 @@ unsafe fn make_entrance(assets_dir: *const c_char, sound: u8, fast: bool) -> *mu
     if ptr.is_null() {
         return ptr;
     }
-    let loaded = catch_unwind(AssertUnwindSafe(|| {
+    let loaded = crate::caught("make_entrance", AssertUnwindSafe(|| {
         let dir = PathBuf::from(
             unsafe { std::ffi::CStr::from_ptr(assets_dir) }
                 .to_string_lossy()
@@ -820,7 +826,7 @@ pub unsafe extern "C" fn sms_view_free(view: *mut SmsView) {
         // SAFETY: the caller hands back ownership.
         let v = unsafe { Box::from_raw(view) };
         // Stopping the stream joins its thread; never let a panic out.
-        let _ = catch_unwind(AssertUnwindSafe(move || drop(v)));
+        let _ = crate::caught("sms_view_free", AssertUnwindSafe(move || drop(v)));
     }
 }
 
@@ -831,11 +837,13 @@ pub unsafe extern "C" fn sms_view_free(view: *mut SmsView) {
 /// `view` from [`sms_view_new`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_view_status(view: *const SmsView) -> *const c_char {
-    // SAFETY: as documented.
-    match unsafe { view.as_ref() } {
-        Some(v) => v.status.as_ptr(),
-        None => std::ptr::null(),
-    }
+    libcommon::ffi::guard("sms_view_status", std::ptr::null(), || {
+        // SAFETY: as documented.
+        match unsafe { view.as_ref() } {
+            Some(v) => v.status.as_ptr(),
+            None => std::ptr::null(),
+        }
+    })
 }
 
 /// Runs `f` on a live view, poisoning it if `f` panics.
@@ -854,7 +862,7 @@ pub(crate) unsafe fn with_view<R>(
     if v.poisoned {
         return fallback;
     }
-    match catch_unwind(AssertUnwindSafe(|| f(v))) {
+    match crate::caught("with_view", AssertUnwindSafe(|| f(v))) {
         Ok(r) => r,
         Err(_) => {
             v.poisoned = true;
@@ -1221,15 +1229,17 @@ pub unsafe extern "C" fn sms_view_update(
 /// `view` from [`sms_view_new`]; `out` 16 writable floats.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_view_anchor(view: *const SmsView, id: u32, out: *mut f32) -> u32 {
-    if view.is_null() || out.is_null() {
-        return 0;
-    }
-    // SAFETY: as documented.
-    let Some(m) = (unsafe { &*view }).view.anchor(id as usize) else {
-        return 0;
-    };
-    unsafe { std::ptr::copy_nonoverlapping(m.to_cols_array().as_ptr(), out, 16) };
-    1
+    libcommon::ffi::guard("sms_view_anchor", 0, || {
+        if view.is_null() || out.is_null() {
+            return 0;
+        }
+        // SAFETY: as documented.
+        let Some(m) = (unsafe { &*view }).view.anchor(id as usize) else {
+            return 0;
+        };
+        unsafe { std::ptr::copy_nonoverlapping(m.to_cols_array().as_ptr(), out, 16) };
+        1
+    })
 }
 
 /// A prop view's joint `joint` (one 4x4, column-major, model space before the instance's turn)
@@ -1246,15 +1256,17 @@ pub unsafe extern "C" fn sms_view_prop_joint(
     joint: u32,
     out: *mut f32,
 ) -> u32 {
-    if view.is_null() || out.is_null() {
-        return 0;
-    }
-    // SAFETY: as documented.
-    let Some(m) = (unsafe { &*view }).view.prop_joint(clip, frame, joint as usize) else {
-        return 0;
-    };
-    unsafe { std::ptr::copy_nonoverlapping(m.to_cols_array().as_ptr(), out, 16) };
-    1
+    libcommon::ffi::guard("sms_view_prop_joint", 0, || {
+        if view.is_null() || out.is_null() {
+            return 0;
+        }
+        // SAFETY: as documented.
+        let Some(m) = (unsafe { &*view }).view.prop_joint(clip, frame, joint as usize) else {
+            return 0;
+        };
+        unsafe { std::ptr::copy_nonoverlapping(m.to_cols_array().as_ptr(), out, 16) };
+        1
+    })
 }
 
 /// Mario says `name` (an `MSD_SE_MV*` voice, e.g. `MSD_SE_MV23_JUMP_LARGE_01`), cutting off

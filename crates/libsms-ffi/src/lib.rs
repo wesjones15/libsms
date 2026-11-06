@@ -19,7 +19,7 @@ pub mod heat_haze;
 pub mod view;
 
 use std::ffi::{CStr, CString, c_char, c_void};
-use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::panic::AssertUnwindSafe;
 use std::path::Path;
 
 use libsms::event::{EnemyHitKind, Event, JumpKind};
@@ -35,13 +35,37 @@ pub const SMS_ABI_VERSION: u32 = 46;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sms_abi_version() -> u32 {
-    SMS_ABI_VERSION
+    libcommon::ffi::guard("sms_abi_version", 0, || {
+        SMS_ABI_VERSION
+    })
+}
+
+/// `catch_unwind` that also records the panic message for [`sms_take_panic`].
+pub(crate) fn caught<R>(name: &'static str, f: impl FnOnce() -> R) -> Result<R, ()> {
+    libcommon::ffi::guard(name, None, || Some(f())).ok_or(())
+}
+
+/// Copies the oldest unread native panic message (NUL-terminated, cut to fit) into `out` and
+/// returns its length without the NUL, or 0 when none is pending. The host drains this and logs it.
+///
+/// # Safety
+/// `out` points to `len` writable bytes, or is null when `len` is 0.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_take_panic(out: *mut u8, len: u32) -> u32 {
+    if out.is_null() || len == 0 {
+        return 0;
+    }
+    // SAFETY: as documented.
+    let buf = unsafe { std::slice::from_raw_parts_mut(out, len as usize) };
+    libcommon::ffi::take_panic_into(buf)
 }
 
 /// Fixed simulation rate in Hz.
 #[unsafe(no_mangle)]
 pub extern "C" fn sms_tick_hz() -> u32 {
-    libsms::TICK_HZ
+    libcommon::ffi::guard("sms_tick_hz", 0, || {
+        libsms::TICK_HZ
+    })
 }
 
 #[repr(C)]
@@ -434,11 +458,13 @@ pub struct SmsLimits {
 /// `sim` from [`sms_sim_new`] or null; `pos` readable or null.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_sim_wet_at(sim: *const SmsSim, pos: *const SmsVec3) -> u32 {
-    // SAFETY: the caller promised valid pointers.
-    match (unsafe { sim.as_ref() }, unsafe { pos.as_ref() }) {
-        (Some(s), Some(p)) if !s.poisoned => u32::from(s.water.on_ground_near(Vec3::new(p.x, p.y, p.z))),
-        _ => 0,
-    }
+    libcommon::ffi::guard("sms_sim_wet_at", 0, || {
+        // SAFETY: the caller promised valid pointers.
+        match (unsafe { sim.as_ref() }, unsafe { pos.as_ref() }) {
+            (Some(s), Some(p)) if !s.poisoned => u32::from(s.water.on_ground_near(Vec3::new(p.x, p.y, p.z))),
+            _ => 0,
+        }
+    })
 }
 
 /// Tests actual FLUDD droplet sweeps against a host hazard segment, in sim units.
@@ -448,11 +474,13 @@ pub unsafe extern "C" fn sms_sim_wet_at(sim: *const SmsSim, pos: *const SmsVec3)
 pub unsafe extern "C" fn sms_sim_water_touches_segment(
     sim: *const SmsSim, a: *const SmsVec3, b: *const SmsVec3, radius: f32,
 ) -> u32 {
-    match (unsafe { sim.as_ref() }, unsafe { a.as_ref() }, unsafe { b.as_ref() }) {
-        (Some(s), Some(a), Some(b)) if !s.poisoned => u32::from(s.water.touches_segment(
-            Vec3::new(a.x, a.y, a.z), Vec3::new(b.x, b.y, b.z), radius)),
-        _ => 0,
-    }
+    libcommon::ffi::guard("sms_sim_water_touches_segment", 0, || {
+        match (unsafe { sim.as_ref() }, unsafe { a.as_ref() }, unsafe { b.as_ref() }) {
+            (Some(s), Some(a), Some(b)) if !s.poisoned => u32::from(s.water.touches_segment(
+                Vec3::new(a.x, a.y, a.z), Vec3::new(b.x, b.y, b.z), radius)),
+            _ => 0,
+        }
+    })
 }
 
 /// Tells this sim whether another Mario's wet ground is under it for the next step.
@@ -461,10 +489,12 @@ pub unsafe extern "C" fn sms_sim_water_touches_segment(
 /// `sim` from [`sms_sim_new`] or null.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_sim_set_foreign_wet(sim: *mut SmsSim, wet: u32) {
-    // SAFETY: the caller promised a valid pointer or null.
-    if let Some(s) = unsafe { sim.as_mut() } {
-        s.foreign_wet = wet != 0;
-    }
+    libcommon::ffi::guard("sms_sim_set_foreign_wet", (), || {
+        // SAFETY: the caller promised a valid pointer or null.
+        if let Some(s) = unsafe { sim.as_mut() } {
+            s.foreign_wet = wet != 0;
+        }
+    })
 }
 
 /// An opaque sim handle.
@@ -869,7 +899,7 @@ pub unsafe extern "C" fn sms_sim_new(
     let dir = unsafe { CStr::from_ptr(assets_dir) }
         .to_string_lossy()
         .into_owned();
-    let made = catch_unwind(|| {
+    let made = crate::caught("sms_sim_new", || {
         let dir = Path::new(&dir);
         if !dir.join("params_mario").is_dir() {
             return None;
@@ -917,10 +947,12 @@ pub unsafe extern "C" fn sms_sim_new(
 /// `sim` must come from [`sms_sim_new`] and not be used afterwards. Null is ignored.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_sim_free(sim: *mut SmsSim) {
-    if !sim.is_null() {
-        // SAFETY: the caller hands back ownership.
-        drop(unsafe { Box::from_raw(sim) });
-    }
+    libcommon::ffi::guard("sms_sim_free", (), || {
+        if !sim.is_null() {
+            // SAFETY: the caller hands back ownership.
+            drop(unsafe { Box::from_raw(sim) });
+        }
+    })
 }
 
 /// Advances by `dt` seconds of host time: as many 120 Hz ticks as are due, each with `pad`.
@@ -952,7 +984,7 @@ pub unsafe extern "C" fn sms_sim_step(
         return 0;
     }
     let pad = pad.to_pad(camera_yaw);
-    let ran = catch_unwind(AssertUnwindSafe(|| {
+    let ran = crate::caught("sms_sim_step", AssertUnwindSafe(|| {
         let mut targets = Vec::new();
         // SAFETY: the host keeps a world it set alive until it clears it (`sms_sim_set_flowers`).
         let mut fw = unsafe { s.flower_world.as_mut() };
@@ -1121,33 +1153,35 @@ pub unsafe extern "C" fn sms_sim_step(
 /// `sim` from [`sms_sim_new`]; `out` writable.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_sim_state(sim: *const SmsSim, out: *mut SmsState) -> u8 {
-    // SAFETY: the caller promised valid pointers.
-    let (Some(s), Some(out)) = (unsafe { sim.as_ref() }, unsafe { out.as_mut() }) else {
-        return 0;
-    };
-    let m = &s.sim.mario;
-    *out = SmsState {
-        pos: m.pos.into(),
-        vel: m.vel.into(),
-        forward_vel: m.forward_vel,
-        anim_frame: m.anim.frame,
-        water: m.fludd.as_ref().map_or(0.0, |f| f.level(&m.params)),
-        alpha: s.sim.alpha(),
-        face_yaw: m.face_yaw,
-        model_yaw: m.model_yaw,
-        health: m.health,
-        on_ground: m.on_ground() as u8,
-        has_fludd: m.fludd.is_some() as u8,
-        pounding: m.pounding(),
-        in_water: m.in_water() as u8,
-        win_demo: if m.win_demo_posing() {
-            2
-        } else {
-            m.is_win_demo() as u8
-        },
-        nozzle: m.fludd.as_ref().map_or(0, |f| f.nozzle as u8 + 1),
-    };
-    1
+    libcommon::ffi::guard("sms_sim_state", 0, || {
+        // SAFETY: the caller promised valid pointers.
+        let (Some(s), Some(out)) = (unsafe { sim.as_ref() }, unsafe { out.as_mut() }) else {
+            return 0;
+        };
+        let m = &s.sim.mario;
+        *out = SmsState {
+            pos: m.pos.into(),
+            vel: m.vel.into(),
+            forward_vel: m.forward_vel,
+            anim_frame: m.anim.frame,
+            water: m.fludd.as_ref().map_or(0.0, |f| f.level(&m.params)),
+            alpha: s.sim.alpha(),
+            face_yaw: m.face_yaw,
+            model_yaw: m.model_yaw,
+            health: m.health,
+            on_ground: m.on_ground() as u8,
+            has_fludd: m.fludd.is_some() as u8,
+            pounding: m.pounding(),
+            in_water: m.in_water() as u8,
+            win_demo: if m.win_demo_posing() {
+                2
+            } else {
+                m.is_win_demo() as u8
+            },
+            nozzle: m.fludd.as_ref().map_or(0, |f| f.nozzle as u8 + 1),
+        };
+        1
+    })
 }
 
 /// Mario's status name (`Wait`, `Jump`, `HipAttack`...), valid until the next call on `sim`.
@@ -1156,12 +1190,14 @@ pub unsafe extern "C" fn sms_sim_state(sim: *const SmsSim, out: *mut SmsState) -
 /// `sim` from [`sms_sim_new`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_sim_status_name(sim: *mut SmsSim) -> *const c_char {
-    // SAFETY: the caller promised a valid pointer.
-    let Some(s) = (unsafe { sim.as_mut() }) else {
-        return std::ptr::null();
-    };
-    s.status = CString::new(format!("{:?}", s.sim.mario.status)).unwrap_or_default();
-    s.status.as_ptr()
+    libcommon::ffi::guard("sms_sim_status_name", std::ptr::null(), || {
+        // SAFETY: the caller promised a valid pointer.
+        let Some(s) = (unsafe { sim.as_mut() }) else {
+            return std::ptr::null();
+        };
+        s.status = CString::new(format!("{:?}", s.sim.mario.status)).unwrap_or_default();
+        s.status.as_ptr()
+    })
 }
 
 /// The body animation playing (`wait`, `run`, `jump`...), valid until the next call on `sim`.
@@ -1170,12 +1206,14 @@ pub unsafe extern "C" fn sms_sim_status_name(sim: *mut SmsSim) -> *const c_char 
 /// `sim` from [`sms_sim_new`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_sim_clip_name(sim: *mut SmsSim) -> *const c_char {
-    // SAFETY: the caller promised a valid pointer.
-    let Some(s) = (unsafe { sim.as_mut() }) else {
-        return std::ptr::null();
-    };
-    s.clip = CString::new(s.sim.mario.anim.clip).unwrap_or_default();
-    s.clip.as_ptr()
+    libcommon::ffi::guard("sms_sim_clip_name", std::ptr::null(), || {
+        // SAFETY: the caller promised a valid pointer.
+        let Some(s) = (unsafe { sim.as_mut() }) else {
+            return std::ptr::null();
+        };
+        s.clip = CString::new(s.sim.mario.anim.clip).unwrap_or_default();
+        s.clip.as_ptr()
+    })
 }
 
 /// Moves Mario to `*pos` at rest, for when the host relocates him (teleports, respawns).
@@ -1184,12 +1222,14 @@ pub unsafe extern "C" fn sms_sim_clip_name(sim: *mut SmsSim) -> *const c_char {
 /// `sim` from [`sms_sim_new`]; `pos` readable.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_sim_teleport(sim: *mut SmsSim, pos: *const SmsVec3) {
-    // SAFETY: the caller promised valid pointers.
-    if let (Some(s), Some(pos)) = (unsafe { sim.as_mut() }, unsafe { pos.as_ref() }) {
-        s.sim.mario.teleport((*pos).into());
-        s.water.particles.clear();
-        s.water.contacts.clear();
-    }
+    libcommon::ffi::guard("sms_sim_teleport", (), || {
+        // SAFETY: the caller promised valid pointers.
+        if let (Some(s), Some(pos)) = (unsafe { sim.as_mut() }, unsafe { pos.as_ref() }) {
+            s.sim.mario.teleport((*pos).into());
+            s.water.particles.clear();
+            s.water.contacts.clear();
+        }
+    })
 }
 
 /// Moves Mario to `*pos` keeping his speed, status and water: a mirrored copy's small drift
@@ -1199,10 +1239,12 @@ pub unsafe extern "C" fn sms_sim_teleport(sim: *mut SmsSim, pos: *const SmsVec3)
 /// `sim` from [`sms_sim_new`]; `pos` readable.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_sim_nudge(sim: *mut SmsSim, pos: *const SmsVec3) {
-    // SAFETY: the caller promised valid pointers.
-    if let (Some(s), Some(pos)) = (unsafe { sim.as_mut() }, unsafe { pos.as_ref() }) {
-        s.sim.mario.nudge((*pos).into());
-    }
+    libcommon::ffi::guard("sms_sim_nudge", (), || {
+        // SAFETY: the caller promised valid pointers.
+        if let (Some(s), Some(pos)) = (unsafe { sim.as_mut() }, unsafe { pos.as_ref() }) {
+            s.sim.mario.nudge((*pos).into());
+        }
+    })
 }
 
 /// Fills FLUDD's tank (a new level, a refill button); the HUD's full-tank chime plays on the
@@ -1212,10 +1254,12 @@ pub unsafe extern "C" fn sms_sim_nudge(sim: *mut SmsSim, pos: *const SmsVec3) {
 /// `sim` from [`sms_sim_new`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_sim_refill(sim: *mut SmsSim) {
-    // SAFETY: the caller promised a valid pointer.
-    if let Some(s) = unsafe { sim.as_mut() } {
-        s.sim.mario.refill_water();
-    }
+    libcommon::ffi::guard("sms_sim_refill", (), || {
+        // SAFETY: the caller promised a valid pointer.
+        if let Some(s) = unsafe { sim.as_mut() } {
+            s.sim.mario.refill_water();
+        }
+    })
 }
 
 /// Fits FLUDD's nozzle at once, or takes FLUDD away: `slot` 0 no FLUDD, 1 Spray, 2 Hover,
@@ -1228,11 +1272,13 @@ pub unsafe extern "C" fn sms_sim_refill(sim: *mut SmsSim) {
 /// `sim` from [`sms_sim_new`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_sim_select_nozzle(sim: *mut SmsSim, slot: u32) -> u8 {
-    // SAFETY: the caller promised a valid pointer.
-    match unsafe { sim.as_mut() } {
-        Some(s) => s.sim.mario.select_nozzle(slot) as u8,
-        None => 0,
-    }
+    libcommon::ffi::guard("sms_sim_select_nozzle", 0, || {
+        // SAFETY: the caller promised a valid pointer.
+        match unsafe { sim.as_mut() } {
+            Some(s) => s.sim.mario.select_nozzle(slot) as u8,
+            None => 0,
+        }
+    })
 }
 
 /// Quick Spray/alternate switch with Sunshine's changeBackup selection cue
@@ -1243,10 +1289,12 @@ pub unsafe extern "C" fn sms_sim_select_nozzle(sim: *mut SmsSim, slot: u32) -> u
 /// `sim` from [`sms_sim_new`] or null.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_sim_switch_nozzle(sim: *mut SmsSim, slot: u32) -> u8 {
-    match unsafe { sim.as_mut() } {
-        Some(s) => s.sim.mario.switch_nozzle(slot) as u8,
-        None => 0,
-    }
+    libcommon::ffi::guard("sms_sim_switch_nozzle", 0, || {
+        match unsafe { sim.as_mut() } {
+            Some(s) => s.sim.mario.switch_nozzle(slot) as u8,
+            None => 0,
+        }
+    })
 }
 
 /// Fits FLUDD's nozzle as the radial menu's choice (same slots as [`sms_sim_select_nozzle`]).
@@ -1259,11 +1307,13 @@ pub unsafe extern "C" fn sms_sim_switch_nozzle(sim: *mut SmsSim, slot: u32) -> u
 /// `sim` from [`sms_sim_new`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_sim_equip_nozzle(sim: *mut SmsSim, slot: u32) -> u8 {
-    // SAFETY: the caller promised a valid pointer.
-    match unsafe { sim.as_mut() } {
-        Some(s) => s.sim.mario.equip_nozzle(slot) as u8,
-        None => 0,
-    }
+    libcommon::ffi::guard("sms_sim_equip_nozzle", 0, || {
+        // SAFETY: the caller promised a valid pointer.
+        match unsafe { sim.as_mut() } {
+            Some(s) => s.sim.mario.equip_nozzle(slot) as u8,
+            None => 0,
+        }
+    })
 }
 
 /// Sets the host's limits (see [`SmsLimits`]); a new sim has none, as the game.
@@ -1272,41 +1322,43 @@ pub unsafe extern "C" fn sms_sim_equip_nozzle(sim: *mut SmsSim, slot: u32) -> u8
 /// `sim` from [`sms_sim_new`]; `limits` readable.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_sim_set_limits(sim: *mut SmsSim, limits: *const SmsLimits) {
-    // SAFETY: the caller promised valid pointers.
-    let (Some(s), Some(l)) = (unsafe { sim.as_mut() }, unsafe { limits.as_ref() }) else {
-        return;
-    };
-    let factor = |v: f32| {
-        if v.is_finite() && v > 0.0 {
-            v.clamp(0.1, 10.0)
-        } else {
-            1.0
-        }
-    };
-    let ticks = |secs: f32| {
-        if secs.is_finite() && secs > 0.0 {
-            ((secs * TICK_HZ as f32).round() as u32).clamp(1, 1_000_000)
-        } else {
-            0
-        }
-    };
-    s.sim.mario.limits = libsms::Limits {
-        air_uses: l.air_uses != 0,
-        air_extra: l.air_extra.min(1000),
-        air_jumps: l.air_jumps.min(1000),
-        spray_rate: factor(l.spray_rate),
-        spray_ticks: ticks(l.spray_seconds),
-        hover_time: factor(l.hover_time),
-        spray_fade: factor(l.spray_fade),
-        turbo_speed: factor(l.turbo_speed),
-        wet_slide: (l.wet_slide != 0).then_some(libsms::WetSlide {
-            ready: l.wet_slide_ready != 0,
-            anywhere: l.wet_slide == 2,
-            max_ticks: ticks(l.wet_slide_seconds),
-            glide: l.wet_slide_flags & 1 != 0,
-            water_free: l.wet_slide_flags & 2 != 0,
-        }),
-    };
+    libcommon::ffi::guard("sms_sim_set_limits", (), || {
+        // SAFETY: the caller promised valid pointers.
+        let (Some(s), Some(l)) = (unsafe { sim.as_mut() }, unsafe { limits.as_ref() }) else {
+            return;
+        };
+        let factor = |v: f32| {
+            if v.is_finite() && v > 0.0 {
+                v.clamp(0.1, 10.0)
+            } else {
+                1.0
+            }
+        };
+        let ticks = |secs: f32| {
+            if secs.is_finite() && secs > 0.0 {
+                ((secs * TICK_HZ as f32).round() as u32).clamp(1, 1_000_000)
+            } else {
+                0
+            }
+        };
+        s.sim.mario.limits = libsms::Limits {
+            air_uses: l.air_uses != 0,
+            air_extra: l.air_extra.min(1000),
+            air_jumps: l.air_jumps.min(1000),
+            spray_rate: factor(l.spray_rate),
+            spray_ticks: ticks(l.spray_seconds),
+            hover_time: factor(l.hover_time),
+            spray_fade: factor(l.spray_fade),
+            turbo_speed: factor(l.turbo_speed),
+            wet_slide: (l.wet_slide != 0).then_some(libsms::WetSlide {
+                ready: l.wet_slide_ready != 0,
+                anywhere: l.wet_slide == 2,
+                max_ticks: ticks(l.wet_slide_seconds),
+                glide: l.wet_slide_flags & 1 != 0,
+                water_free: l.wet_slide_flags & 2 != 0,
+            }),
+        };
+    })
 }
 
 /// The host's camera as the game's L-button camera (`isLButtonCamera`): while `on`, FLUDD's
@@ -1317,13 +1369,15 @@ pub unsafe extern "C" fn sms_sim_set_limits(sim: *mut SmsSim, limits: *const Sms
 /// `sim` from [`sms_sim_new`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_sim_set_aim(sim: *mut SmsSim, on: u8, yaw: i16, pitch: f32) {
-    // SAFETY: the caller promised a valid pointer.
-    if let Some(s) = unsafe { sim.as_mut() } {
-        s.sim.mario.aim = (on != 0 && pitch.is_finite()).then(|| libsms::Aim {
-            yaw,
-            pitch: (pitch.clamp(-1.5, 1.5) * (32768.0 / std::f32::consts::PI)) as i16,
-        });
-    }
+    libcommon::ffi::guard("sms_sim_set_aim", (), || {
+        // SAFETY: the caller promised a valid pointer.
+        if let Some(s) = unsafe { sim.as_mut() } {
+            s.sim.mario.aim = (on != 0 && pitch.is_finite()).then(|| libsms::Aim {
+                yaw,
+                pitch: (pitch.clamp(-1.5, 1.5) * (32768.0 / std::f32::consts::PI)) as i16,
+            });
+        }
+    })
 }
 
 /// Host camera steering for either corkscrew. Pitch radians are up positive;
@@ -1332,12 +1386,14 @@ pub unsafe extern "C" fn sms_sim_set_aim(sim: *mut SmsSim, on: u8, yaw: i16, pit
 /// `sim` from [`sms_sim_new`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_sim_set_flight_camera(sim: *mut SmsSim, on: u8, yaw: i16, pitch: f32) {
-    if let Some(s) = unsafe { sim.as_mut() } {
-        s.sim.mario.flight_camera = (on != 0 && pitch.is_finite()).then(|| libsms::Aim {
-            yaw,
-            pitch: (pitch.clamp(-1.5, 1.5) * (32768.0 / std::f32::consts::PI)) as i16,
-        });
-    }
+    libcommon::ffi::guard("sms_sim_set_flight_camera", (), || {
+        if let Some(s) = unsafe { sim.as_mut() } {
+            s.sim.mario.flight_camera = (on != 0 && pitch.is_finite()).then(|| libsms::Aim {
+                yaw,
+                pitch: (pitch.clamp(-1.5, 1.5) * (32768.0 / std::f32::consts::PI)) as i16,
+            });
+        }
+    })
 }
 
 /// The direction the sim last sent FLUDD's water (a diagnostic: what the host's aim became). Returns
@@ -1347,12 +1403,14 @@ pub unsafe extern "C" fn sms_sim_set_flight_camera(sim: *mut SmsSim, on: u8, yaw
 /// `sim` from [`sms_sim_new`]; `out` is null or writable.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_sim_last_spray(sim: *const SmsSim, out: *mut SmsSpray) -> u32 {
-    // SAFETY: the caller promised valid pointers.
-    let Some(s) = (unsafe { sim.as_ref() }) else { return 0 };
-    if let Some(o) = unsafe { out.as_mut() } {
-        *o = s.last_spray;
-    }
-    s.last_spray.emits
+    libcommon::ffi::guard("sms_sim_last_spray", 0, || {
+        // SAFETY: the caller promised valid pointers.
+        let Some(s) = (unsafe { sim.as_ref() }) else { return 0 };
+        if let Some(o) = unsafe { out.as_mut() } {
+            *o = s.last_spray;
+        }
+        s.last_spray.emits
+    })
 }
 
 /// The host's health ran out: Mario falls down for good (`loserExec`: the "die" clip and his
@@ -1362,10 +1420,12 @@ pub unsafe extern "C" fn sms_sim_last_spray(sim: *const SmsSim, out: *mut SmsSpr
 /// `sim` from [`sms_sim_new`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_sim_down(sim: *mut SmsSim) {
-    // SAFETY: the caller promised a valid pointer.
-    if let Some(s) = unsafe { sim.as_mut() } {
-        s.sim.mario.knock_out();
-    }
+    libcommon::ffi::guard("sms_sim_down", (), || {
+        // SAFETY: the caller promised a valid pointer.
+        if let Some(s) = unsafe { sim.as_mut() } {
+            s.sim.mario.knock_out();
+        }
+    })
 }
 
 /// Adds `share` of a full tank to FLUDD's (a host's own water: healing, pickups).
@@ -1374,10 +1434,12 @@ pub unsafe extern "C" fn sms_sim_down(sim: *mut SmsSim) {
 /// `sim` from [`sms_sim_new`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_sim_add_water(sim: *mut SmsSim, share: f32) {
-    // SAFETY: the caller promised a valid pointer.
-    if let Some(s) = unsafe { sim.as_mut() } {
-        s.sim.mario.add_water(share);
-    }
+    libcommon::ffi::guard("sms_sim_add_water", (), || {
+        // SAFETY: the caller promised a valid pointer.
+        if let Some(s) = unsafe { sim.as_mut() } {
+            s.sim.mario.add_water(share);
+        }
+    })
 }
 
 /// The host's world throws Mario: his velocity becomes `*vel` (units per 30 Hz frame, as
@@ -1387,10 +1449,12 @@ pub unsafe extern "C" fn sms_sim_add_water(sim: *mut SmsSim, share: f32) {
 /// `sim` from [`sms_sim_new`]; `vel` readable.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_sim_launch(sim: *mut SmsSim, vel: *const SmsVec3) {
-    // SAFETY: the caller promised valid pointers.
-    if let (Some(s), Some(v)) = (unsafe { sim.as_mut() }, unsafe { vel.as_ref() }) {
-        s.sim.mario.launch((*v).into());
-    }
+    libcommon::ffi::guard("sms_sim_launch", (), || {
+        // SAFETY: the caller promised valid pointers.
+        if let (Some(s), Some(v)) = (unsafe { sim.as_mut() }, unsafe { vel.as_ref() }) {
+            s.sim.mario.launch((*v).into());
+        }
+    })
 }
 
 /// A world jump-pad flight: mVel velocity, gravity in mVel per 120 Hz tick.
@@ -1398,9 +1462,11 @@ pub unsafe extern "C" fn sms_sim_launch(sim: *mut SmsSim, vel: *const SmsVec3) {
 /// `sim` from [`sms_sim_new`]; `vel` readable (null is ignored).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_sim_launch_pad(sim: *mut SmsSim, vel: *const SmsVec3, gravity: f32) {
-    if let (Some(s), Some(v)) = (unsafe { sim.as_mut() }, unsafe { vel.as_ref() }) {
-        s.sim.mario.launch_pad((*v).into(), gravity);
-    }
+    libcommon::ffi::guard("sms_sim_launch_pad", (), || {
+        if let (Some(s), Some(v)) = (unsafe { sim.as_mut() }, unsafe { vel.as_ref() }) {
+            s.sim.mario.launch_pad((*v).into(), gravity);
+        }
+    })
 }
 
 /// The host took what Mario carries away (a teammate he held broke free): he lets go, no throw.
@@ -1409,10 +1475,12 @@ pub unsafe extern "C" fn sms_sim_launch_pad(sim: *mut SmsSim, vel: *const SmsVec
 /// `sim` from [`sms_sim_new`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_sim_let_go(sim: *mut SmsSim) {
-    // SAFETY: as documented.
-    if let Some(s) = unsafe { sim.as_mut() } {
-        s.sim.mario.let_go();
-    }
+    libcommon::ffi::guard("sms_sim_let_go", (), || {
+        // SAFETY: as documented.
+        if let Some(s) = unsafe { sim.as_mut() } {
+            s.sim.mario.let_go();
+        }
+    })
 }
 
 /// Another Mario holds him (non-zero) or has let go (0): see `Mario::set_carried`. The pose is the fire
@@ -1422,10 +1490,12 @@ pub unsafe extern "C" fn sms_sim_let_go(sim: *mut SmsSim) {
 /// `sim` from [`sms_sim_new`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_sim_set_carried(sim: *mut SmsSim, on: u8) {
-    // SAFETY: as documented.
-    if let Some(s) = unsafe { sim.as_mut() } {
-        s.sim.mario.set_carried(on != 0);
-    }
+    libcommon::ffi::guard("sms_sim_set_carried", (), || {
+        // SAFETY: as documented.
+        if let Some(s) = unsafe { sim.as_mut() } {
+            s.sim.mario.set_carried(on != 0);
+        }
+    })
 }
 
 /// A hit from `from` that knocks Mario down (`damageExec`'s fall, voice and flash for the
@@ -1441,15 +1511,17 @@ pub unsafe extern "C" fn sms_sim_knock_down(
     from: *const SmsVec3,
     kind: u8,
 ) -> u8 {
-    // SAFETY: the caller promised valid pointers.
-    if let (Some(s), Some(f)) = (unsafe { sim.as_mut() }, unsafe { from.as_ref() }) {
-        let kind = libsms::DamageKind::ALL
-            .get(kind as usize)
-            .copied()
-            .unwrap_or(libsms::DamageKind::EnemyCommon);
-        return s.sim.mario.knock_down((*f).into(), kind) as u8;
-    }
-    0
+    libcommon::ffi::guard("sms_sim_knock_down", 0, || {
+        // SAFETY: the caller promised valid pointers.
+        if let (Some(s), Some(f)) = (unsafe { sim.as_mut() }, unsafe { from.as_ref() }) {
+            let kind = libsms::DamageKind::ALL
+                .get(kind as usize)
+                .copied()
+                .unwrap_or(libsms::DamageKind::EnemyCommon);
+            return s.sim.mario.knock_down((*f).into(), kind) as u8;
+        }
+        0
+    })
 }
 
 /// Sets Mario on fire (the host's burning, with no attacker and no sim health lost): he is
@@ -1462,11 +1534,13 @@ pub unsafe extern "C" fn sms_sim_knock_down(
 /// `sim` from [`sms_sim_new`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_sim_ignite(sim: *mut SmsSim) -> u8 {
-    // SAFETY: the caller promised a valid pointer.
-    match unsafe { sim.as_mut() } {
-        Some(s) => s.sim.mario.ignite() as u8,
-        None => 0,
-    }
+    libcommon::ffi::guard("sms_sim_ignite", 0, || {
+        // SAFETY: the caller promised a valid pointer.
+        match unsafe { sim.as_mut() } {
+            Some(s) => s.sim.mario.ignite() as u8,
+            None => 0,
+        }
+    })
 }
 
 /// Actual body contact with another Mario's FLUDD: extinguish and start vanilla's runoff timer.
@@ -1474,9 +1548,11 @@ pub unsafe extern "C" fn sms_sim_ignite(sim: *mut SmsSim) -> u8 {
 /// `sim` from [`sms_sim_new`] or null.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_sim_wet(sim: *mut SmsSim) {
-    if let Some(s) = unsafe { sim.as_mut() }.filter(|s| !s.poisoned) {
-        s.sim.mario.wet();
-    }
+    libcommon::ffi::guard("sms_sim_wet", (), || {
+        if let Some(s) = unsafe { sim.as_mut() }.filter(|s| !s.poisoned) {
+            s.sim.mario.wet();
+        }
+    })
 }
 
 fn wet_from_own_spray(s: &mut SmsSim) {
@@ -1494,10 +1570,12 @@ fn wet_from_own_spray(s: &mut SmsSim) {
 /// `sim` from [`sms_sim_new`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_sim_boost_jump(sim: *mut SmsSim, factor: f32) {
-    // SAFETY: the caller promised a valid pointer.
-    if let Some(s) = unsafe { sim.as_mut() } {
-        s.sim.mario.boost_jump(factor);
-    }
+    libcommon::ffi::guard("sms_sim_boost_jump", (), || {
+        // SAFETY: the caller promised a valid pointer.
+        if let Some(s) = unsafe { sim.as_mut() } {
+            s.sim.mario.boost_jump(factor);
+        }
+    })
 }
 
 /// Mario touches a Shine Sprite at `pos`, turned `yaw` (a 16-bit angle, 0x8000 a half turn): he
@@ -1508,11 +1586,13 @@ pub unsafe extern "C" fn sms_sim_boost_jump(sim: *mut SmsSim, factor: f32) {
 /// `sim` from [`sms_sim_new`]; `pos` readable.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_sim_shine_get(sim: *mut SmsSim, pos: *const SmsVec3, yaw: i16) -> u8 {
-    // SAFETY: the caller promised valid pointers.
-    match (unsafe { sim.as_mut() }, unsafe { pos.as_ref() }) {
-        (Some(s), Some(p)) => s.sim.mario.get_shine(Vec3::new(p.x, p.y, p.z), yaw) as u8,
-        _ => 0,
-    }
+    libcommon::ffi::guard("sms_sim_shine_get", 0, || {
+        // SAFETY: the caller promised valid pointers.
+        match (unsafe { sim.as_mut() }, unsafe { pos.as_ref() }) {
+            (Some(s), Some(p)) => s.sim.mario.get_shine(Vec3::new(p.x, p.y, p.z), yaw) as u8,
+            _ => 0,
+        }
+    })
 }
 
 /// Lets Mario out of the Shine Get pose, for a host whose stage didn't end.
@@ -1521,10 +1601,12 @@ pub unsafe extern "C" fn sms_sim_shine_get(sim: *mut SmsSim, pos: *const SmsVec3
 /// `sim` from [`sms_sim_new`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_sim_shine_end(sim: *mut SmsSim) {
-    // SAFETY: the caller promised a valid pointer.
-    if let Some(s) = unsafe { sim.as_mut() } {
-        s.sim.mario.end_win_demo();
-    }
+    libcommon::ffi::guard("sms_sim_shine_end", (), || {
+        // SAFETY: the caller promised a valid pointer.
+        if let Some(s) = unsafe { sim.as_mut() } {
+            s.sim.mario.end_win_demo();
+        }
+    })
 }
 
 /// Presentation-only pose for a skill portrait: sets a fresh sim's status, animation clip and
@@ -1548,46 +1630,48 @@ pub unsafe extern "C" fn sms_sim_portrait(
     nozzle: u32,
     wet: u8,
 ) -> u8 {
-    use libsms::anim::clip;
-    use libsms::Status;
-    let Some(s) = (unsafe { sim.as_mut() }) else { return 0 };
-    let status = match status {
-        0 => Status::Wait,
-        1 => Status::HipDrop,
-        2 => Status::Catch,
-        3 => Status::JumpCatch,
-        4 => Status::SlipFore,
-        5 => Status::Run,
-        6 => Status::Squat,
-        _ => return 0,
-    };
-    let name = match clip {
-        0 => clip::WAIT,
-        1 => clip::HIP_FALL,
-        2 => clip::DIVE,
-        3 => clip::HIP_END,
-        4 => clip::SLIP,
-        5 => clip::JUMP,
-        6 => clip::SQUAT,
-        _ => return 0,
-    };
-    let m = &mut s.sim.mario;
-    m.portrait_pose(status, name, frame, state, wet != 0);
-    if nozzle != 0 {
-        let p = m.params.clone();
-        let kind = match nozzle {
-            1 => libsms::NozzleKind::Spray,
-            2 => libsms::NozzleKind::Rocket,
-            3 => libsms::NozzleKind::Hover,
-            4 => libsms::NozzleKind::Turbo,
+    libcommon::ffi::guard("sms_sim_portrait", 0, || {
+        use libsms::anim::clip;
+        use libsms::Status;
+        let Some(s) = (unsafe { sim.as_mut() }) else { return 0 };
+        let status = match status {
+            0 => Status::Wait,
+            1 => Status::HipDrop,
+            2 => Status::Catch,
+            3 => Status::JumpCatch,
+            4 => Status::SlipFore,
+            5 => Status::Run,
+            6 => Status::Squat,
             _ => return 0,
         };
-        if let Some(f) = m.fludd.as_mut() {
-            f.change_nozzle(kind, false, &p);
-            f.refill(&p);
+        let name = match clip {
+            0 => clip::WAIT,
+            1 => clip::HIP_FALL,
+            2 => clip::DIVE,
+            3 => clip::HIP_END,
+            4 => clip::SLIP,
+            5 => clip::JUMP,
+            6 => clip::SQUAT,
+            _ => return 0,
+        };
+        let m = &mut s.sim.mario;
+        m.portrait_pose(status, name, frame, state, wet != 0);
+        if nozzle != 0 {
+            let p = m.params.clone();
+            let kind = match nozzle {
+                1 => libsms::NozzleKind::Spray,
+                2 => libsms::NozzleKind::Rocket,
+                3 => libsms::NozzleKind::Hover,
+                4 => libsms::NozzleKind::Turbo,
+                _ => return 0,
+            };
+            if let Some(f) = m.fludd.as_mut() {
+                f.change_nozzle(kind, false, &p);
+                f.refill(&p);
+            }
         }
-    }
-    1
+        1
+    })
 }
 
 /// Host option: draw and play a Yoshi skin wearing Mario's moves. On, the rider's flutter
@@ -1598,10 +1682,12 @@ pub unsafe extern "C" fn sms_sim_portrait(
 /// `sim` from [`sms_sim_new`] or null.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_sim_set_yoshi_skin(sim: *mut SmsSim, on: u8) {
-    // SAFETY: the caller promised a valid pointer.
-    if let Some(s) = unsafe { sim.as_mut() } {
-        s.sim.mario.options.yoshi_skin = on != 0;
-    }
+    libcommon::ffi::guard("sms_sim_set_yoshi_skin", (), || {
+        // SAFETY: the caller promised a valid pointer.
+        if let Some(s) = unsafe { sim.as_mut() } {
+            s.sim.mario.options.yoshi_skin = on != 0;
+        }
+    })
 }
 
 /// Sets host tuning (see [`SmsTuning`]); a new sim has the game's.
@@ -1610,64 +1696,66 @@ pub unsafe extern "C" fn sms_sim_set_yoshi_skin(sim: *mut SmsSim, on: u8) {
 /// `sim` from [`sms_sim_new`]; `tuning` readable.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_sim_set_tuning(sim: *mut SmsSim, tuning: *const SmsTuning) {
-    // SAFETY: the caller promised valid pointers.
-    if let (Some(s), Some(t)) = (unsafe { sim.as_mut() }, unsafe { tuning.as_ref() }) {
-        let ticks = |secs: f32| (secs.max(0.0) * TICK_HZ as f32).round().min(1.0e4) as u32;
-        let o = &mut s.sim.mario.options;
-        o.jump_height = if t.jump_height.is_finite() {
-            t.jump_height.clamp(0.1, 10.0)
-        } else {
-            1.0
-        };
-        o.jump_buffer_ticks = ticks(t.jump_buffer);
-        o.chain_grace_ticks = ticks(t.chain_grace);
-        let factor = |v: f32| {
-            if v.is_finite() {
-                v.clamp(0.1, 10.0)
+    libcommon::ffi::guard("sms_sim_set_tuning", (), || {
+        // SAFETY: the caller promised valid pointers.
+        if let (Some(s), Some(t)) = (unsafe { sim.as_mut() }, unsafe { tuning.as_ref() }) {
+            let ticks = |secs: f32| (secs.max(0.0) * TICK_HZ as f32).round().min(1.0e4) as u32;
+            let o = &mut s.sim.mario.options;
+            o.jump_height = if t.jump_height.is_finite() {
+                t.jump_height.clamp(0.1, 10.0)
             } else {
                 1.0
-            }
-        };
-        o.move_speed = factor(t.move_speed);
-        o.traction = if t.traction > 0.0 { factor(t.traction) } else { 1.0 };
-        o.enemy_push = t.enemy_push != 0;
-        o.cycle_nozzles = t.cycle_nozzles != 0;
-        o.unlimited_water = t.unlimited_water != 0;
-        o.spray_pressure_fades = t.spray_steady == 0;
-        o.shallow_water_wets = t.shallow_wet != 0;
-        o.knockdown_cancel = t.knockdown_cancel != 0;
-        s.slide_splashes = t.slide_splashes != 0;
-        o.slide_fx_scale = if t.slide_fx_scale.is_finite() && t.slide_fx_scale > 0.0 {
-            t.slide_fx_scale.clamp(0.1, 5.0)
-        } else {
-            1.0
-        };
-        s.water.reach = factor(t.spray_reach);
-        o.stomp_bounce = factor(t.stomp_bounce);
-        // The rocket's apex grows about as its lift to the power 1.9 (examples/report.rs:
-        // x1.25 lift 1.52 times as high, x1.5 2.16, x2 3.76).
-        o.rocket_thrust = factor(t.rocket_height).powf(1.0 / 1.9);
-        o.pound_jump = if t.pound_jump.is_finite() {
-            t.pound_jump.clamp(0.0, 2.0)
-        } else {
-            0.0
-        };
-        o.stomp_jump = if t.stomp_jump.is_finite() {
-            t.stomp_jump.clamp(1.0, 10.0)
-        } else {
-            1.0
-        };
-        o.short_hop = if t.short_hop.is_finite() {
-            t.short_hop.clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
-        o.corkscrew_hold_degrees = if t.corkscrew_hold_degrees.is_finite() {
-            t.corkscrew_hold_degrees.clamp(0.0, 360.0)
-        } else {
-            60.0
-        };
-    }
+            };
+            o.jump_buffer_ticks = ticks(t.jump_buffer);
+            o.chain_grace_ticks = ticks(t.chain_grace);
+            let factor = |v: f32| {
+                if v.is_finite() {
+                    v.clamp(0.1, 10.0)
+                } else {
+                    1.0
+                }
+            };
+            o.move_speed = factor(t.move_speed);
+            o.traction = if t.traction > 0.0 { factor(t.traction) } else { 1.0 };
+            o.enemy_push = t.enemy_push != 0;
+            o.cycle_nozzles = t.cycle_nozzles != 0;
+            o.unlimited_water = t.unlimited_water != 0;
+            o.spray_pressure_fades = t.spray_steady == 0;
+            o.shallow_water_wets = t.shallow_wet != 0;
+            o.knockdown_cancel = t.knockdown_cancel != 0;
+            s.slide_splashes = t.slide_splashes != 0;
+            o.slide_fx_scale = if t.slide_fx_scale.is_finite() && t.slide_fx_scale > 0.0 {
+                t.slide_fx_scale.clamp(0.1, 5.0)
+            } else {
+                1.0
+            };
+            s.water.reach = factor(t.spray_reach);
+            o.stomp_bounce = factor(t.stomp_bounce);
+            // The rocket's apex grows about as its lift to the power 1.9 (examples/report.rs:
+            // x1.25 lift 1.52 times as high, x1.5 2.16, x2 3.76).
+            o.rocket_thrust = factor(t.rocket_height).powf(1.0 / 1.9);
+            o.pound_jump = if t.pound_jump.is_finite() {
+                t.pound_jump.clamp(0.0, 2.0)
+            } else {
+                0.0
+            };
+            o.stomp_jump = if t.stomp_jump.is_finite() {
+                t.stomp_jump.clamp(1.0, 10.0)
+            } else {
+                1.0
+            };
+            o.short_hop = if t.short_hop.is_finite() {
+                t.short_hop.clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            o.corkscrew_hold_degrees = if t.corkscrew_hold_degrees.is_finite() {
+                t.corkscrew_hold_degrees.clamp(0.0, 360.0)
+            } else {
+                60.0
+            };
+        }
+    })
 }
 
 /// Sizes of the ABI's structs, for hosts to check their copies against: `SmsVec3`,
@@ -1681,47 +1769,49 @@ pub unsafe extern "C" fn sms_sim_set_tuning(sim: *mut SmsSim, tuning: *const Sms
 /// `out` null or writable for `max`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_struct_sizes(out: *mut u32, max: u32) -> u32 {
-    use std::mem::size_of;
-    let sizes = [
-        size_of::<SmsVec3>(),
-        size_of::<SmsGroundHit>(),
-        size_of::<SmsRoofHit>(),
-        size_of::<SmsWallHit>(),
-        size_of::<SmsEvent>(),
-        size_of::<SmsHost>(),
-        size_of::<SmsPad>(),
-        size_of::<SmsState>(),
-        size_of::<view::SmsModelInfo>(),
-        size_of::<view::SmsBatch>(),
-        size_of::<view::SmsTexture>(),
-        size_of::<view::SmsDraw>(),
-        size_of::<view::SmsViewFrame>(),
-        size_of::<SmsTuning>(),
-        size_of::<view::SmsWaterVertex>(),
-        size_of::<view::SmsWaterInfo>(),
-        size_of::<SmsEnemy>(),
-        size_of::<view::SmsFxVertex>(),
-        size_of::<view::SmsFxBatch>(),
-        size_of::<view::SmsFxInfo>(),
-        size_of::<view::SmsHudInfo>(),
-        size_of::<SmsLimits>(),
-        size_of::<view::SmsScreenFx>(),
-        size_of::<view::SmsScreenSprite>(),
-        size_of::<view::SmsShineFrame>(),
-        size_of::<view::SmsShineInfo>(),
-        size_of::<view::SmsCameraShot>(),
-        size_of::<goop::SmsGoopEvent>(),
-        size_of::<goop::SmsGoopTarget>(),
-        size_of::<goop::SmsCritter>(),
-        size_of::<goop::SmsJrState>(),
-    ];
-    if !out.is_null() {
-        for (i, s) in sizes.iter().take(max as usize).enumerate() {
-            // SAFETY: as documented.
-            unsafe { out.add(i).write(*s as u32) };
+    libcommon::ffi::guard("sms_struct_sizes", 0, || {
+        use std::mem::size_of;
+        let sizes = [
+            size_of::<SmsVec3>(),
+            size_of::<SmsGroundHit>(),
+            size_of::<SmsRoofHit>(),
+            size_of::<SmsWallHit>(),
+            size_of::<SmsEvent>(),
+            size_of::<SmsHost>(),
+            size_of::<SmsPad>(),
+            size_of::<SmsState>(),
+            size_of::<view::SmsModelInfo>(),
+            size_of::<view::SmsBatch>(),
+            size_of::<view::SmsTexture>(),
+            size_of::<view::SmsDraw>(),
+            size_of::<view::SmsViewFrame>(),
+            size_of::<SmsTuning>(),
+            size_of::<view::SmsWaterVertex>(),
+            size_of::<view::SmsWaterInfo>(),
+            size_of::<SmsEnemy>(),
+            size_of::<view::SmsFxVertex>(),
+            size_of::<view::SmsFxBatch>(),
+            size_of::<view::SmsFxInfo>(),
+            size_of::<view::SmsHudInfo>(),
+            size_of::<SmsLimits>(),
+            size_of::<view::SmsScreenFx>(),
+            size_of::<view::SmsScreenSprite>(),
+            size_of::<view::SmsShineFrame>(),
+            size_of::<view::SmsShineInfo>(),
+            size_of::<view::SmsCameraShot>(),
+            size_of::<goop::SmsGoopEvent>(),
+            size_of::<goop::SmsGoopTarget>(),
+            size_of::<goop::SmsCritter>(),
+            size_of::<goop::SmsJrState>(),
+        ];
+        if !out.is_null() {
+            for (i, s) in sizes.iter().take(max as usize).enumerate() {
+                // SAFETY: as documented.
+                unsafe { out.add(i).write(*s as u32) };
+            }
         }
-    }
-    sizes.len() as u32
+        sizes.len() as u32
+    })
 }
 
 #[cfg(test)]
