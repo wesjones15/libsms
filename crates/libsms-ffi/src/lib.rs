@@ -31,7 +31,7 @@ use libsms::{
 use view::SmsView;
 
 /// ABI version, bumped when the C interface changes.
-pub const SMS_ABI_VERSION: u32 = 46;
+pub const SMS_ABI_VERSION: u32 = 47;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sms_abi_version() -> u32 {
@@ -994,7 +994,7 @@ pub unsafe extern "C" fn sms_sim_step(
         // SAFETY: the host keeps a world it set alive until it clears it (`sms_sim_set_goop`).
         let gw: *mut goop::SmsGoop = s.goop_world;
         if let Some(g) = unsafe { gw.as_ref() } {
-            targets.extend(g.critters.enemies().into_iter().map(|e| libsms::flower::Target {
+            targets.extend(g.enemies().into_iter().map(|e| libsms::flower::Target {
                 id: e.id,
                 pos: e.pos,
                 radius: e.radius,
@@ -1021,7 +1021,7 @@ pub unsafe extern "C" fn sms_sim_step(
                         match *e {
                             Event::GoopPaint { pos, radius, kind } => g.field.stamp(&*h, pos, radius, kind),
                             Event::EnemyHit { id, .. } if libsms::goop_critters::Critters::owns_id(id) => {
-                                g.critters.stomp(id);
+                                g.stomp(id);
                             }
                             _ => {}
                         }
@@ -1115,7 +1115,7 @@ pub unsafe extern "C" fn sms_sim_step(
                 for ev in &s.water.events {
                     if let WaterEvent::Hit { id, pos, attack, .. } = *ev {
                         if libsms::goop_critters::Critters::owns_id(id) {
-                            g.critters.water_hit(id, pos, attack);
+                            g.water_hit(id, pos, attack);
                         }
                     }
                 }
@@ -1803,6 +1803,7 @@ pub unsafe extern "C" fn sms_struct_sizes(out: *mut u32, max: u32) -> u32 {
             size_of::<goop::SmsGoopTarget>(),
             size_of::<goop::SmsCritter>(),
             size_of::<goop::SmsJrState>(),
+            size_of::<goop::SmsGoopOp>(),
         ];
         if !out.is_null() {
             for (i, s) in sizes.iter().take(max as usize).enumerate() {
@@ -2239,15 +2240,91 @@ mod tests {
     }
 
     #[test]
+    fn a_mirror_logs_bowser_jrs_paint_and_shots_for_the_server_to_redo() {
+        let Some(dir) = libsms::assets::find(None) else {
+            eprintln!("skipping: no assets/");
+            return;
+        };
+        let dir = CString::new(dir.to_string_lossy().as_bytes()).unwrap();
+        let mut c = [0u32, 0, 0];
+        let host = SmsHost {
+            user: &mut c as *mut [u32; 3] as *mut c_void,
+            ground: Some(flat),
+            roof: None,
+            walls: None,
+            event: None,
+            enemies: None,
+            water: None,
+            takeables: None,
+            take: None,
+        };
+        unsafe {
+            let server = goop::sms_goop_new();
+            let client = goop::sms_goop_new();
+            goop::sms_goop_setup(server, dir.as_ptr());
+            goop::sms_goop_setup(client, dir.as_ptr());
+            goop::sms_goop_set_mirror(client, 1);
+            let sim = sms_sim_new(dir.as_ptr(), &SmsVec3::default(), 0);
+            goop::sms_sim_set_goop(sim, client);
+            goop::sms_sim_set_koopajr(sim, 1, 7);
+            let brush = SmsPad { stick_y: 1.0, r: 1, r_analog: 255, ..SmsPad::default() };
+            for _ in 0..120 {
+                sms_sim_step(sim, &host, &brush, 0, 1.0 / 60.0, std::ptr::null_mut());
+            }
+            // The client sees its own paint at once, and logs it.
+            let mut keys = [0i32; 64];
+            let painted = goop::sms_goop_chunk_list(client, keys.as_mut_ptr(), std::ptr::null_mut(), 32);
+            assert!(painted > 0, "the brush painted the mirror");
+            let mut ops = vec![goop::SmsGoopOp::default(); 4096];
+            let n = goop::sms_goop_take_ops(client, ops.as_mut_ptr(), 4096) as usize;
+            assert!(n > 0 && ops[..n].iter().all(|o| o.kind == goop::op::STAMP), "stamps logged: {n}");
+            assert_eq!(goop::sms_goop_take_ops(client, ops.as_mut_ptr(), 4096), 0, "taken once");
+            // The server redoes them: the same chunks.
+            assert_eq!(goop::sms_goop_apply_ops(server, &host, ops.as_ptr(), n as u32, 0x2_0000_0005) as usize, n);
+            let mut server_keys = [0i32; 64];
+            assert_eq!(goop::sms_goop_chunk_list(server, server_keys.as_mut_ptr(), std::ptr::null_mut(), 32), painted);
+            // A chunk the server sends back replaces the mirror's.
+            let (mut d, mut k, mut h) = ([0u8; 256], [0u8; 256], [0f32; 256]);
+            assert_eq!(goop::sms_goop_chunk(server, server_keys[0], server_keys[1], d.as_mut_ptr(), k.as_mut_ptr(), h.as_mut_ptr()), 1);
+            goop::sms_goop_chunk_drop(client, server_keys[0], server_keys[1]);
+            goop::sms_goop_chunk_set(client, server_keys[0], server_keys[1], d.as_ptr(), k.as_ptr(), h.as_ptr());
+            let (mut d2, mut k2, mut h2) = ([0u8; 256], [0u8; 256], [0f32; 256]);
+            assert_eq!(goop::sms_goop_chunk(client, server_keys[0], server_keys[1], d2.as_mut_ptr(), k2.as_mut_ptr(), h2.as_mut_ptr()), 1);
+            assert_eq!(d, d2);
+            assert_eq!(k, k2);
+            // A goop ball goes to the server: none flies in the mirror.
+            assert_eq!(goop::sms_jr_action(sim, &host, 0), 1);
+            assert_eq!(goop::sms_jr_action(sim, &host, 4), 1);
+            assert_eq!(goop::sms_goop_critters(client, std::ptr::null_mut(), 0), 0);
+            let n = goop::sms_goop_take_ops(client, ops.as_mut_ptr(), 4096) as usize;
+            let shot = ops[..n].iter().find(|o| o.kind == goop::op::GOOP_SHOT).copied().expect("the shot is logged");
+            assert_eq!(goop::sms_goop_apply_ops(server, &host, &shot, 1, 0x2_0000_0005), 1);
+            let mut list = vec![goop::SmsCritter::default(); 8];
+            assert_eq!(goop::sms_goop_critters(server, list.as_mut_ptr(), 8), 1);
+            assert_eq!(list[0].kind, 2);
+            // The mirror draws what the server sent.
+            goop::sms_goop_mirror_critters(client, list.as_ptr(), 1);
+            assert_eq!(goop::sms_goop_critters(client, std::ptr::null_mut(), 0), 1);
+            // Nonsense from a client is skipped.
+            let bad = goop::SmsGoopOp { kind: goop::op::STAMP, a: f32::NAN, ..Default::default() };
+            assert_eq!(goop::sms_goop_apply_ops(server, &host, &bad, 1, 0), 0);
+            goop::sms_sim_set_goop(sim, std::ptr::null_mut());
+            sms_sim_free(sim);
+            goop::sms_goop_free(server);
+            goop::sms_goop_free(client);
+        }
+    }
+
+    #[test]
     fn struct_sizes_are_what_hosts_mirror() {
-        let mut sizes = [0u32; 31];
-        let n = unsafe { sms_struct_sizes(sizes.as_mut_ptr(), 31) } as usize;
+        let mut sizes = [0u32; 32];
+        let n = unsafe { sms_struct_sizes(sizes.as_mut_ptr(), 32) } as usize;
         // ror2-mario's Native.cs and ror2-common's view structs check these at load.
         assert_eq!(
             &sizes[..n],
             &[
                 12, 20, 8, 16, 32, 72, 24, 52, 40, 24, 12, 64, 48, 60, 24, 28, 24, 36, 16, 12, 32,
-                36, 72, 40, 52, 16, 40, 48, 40, 56, 20
+                36, 72, 40, 52, 16, 40, 48, 40, 56, 20, 48
             ]
         );
     }

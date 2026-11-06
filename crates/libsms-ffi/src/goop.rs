@@ -14,7 +14,7 @@ use std::ffi::{CStr, CString, c_char};
 use std::path::Path;
 
 use libsms::FixedClock;
-use libsms::goop::{GoopEvent, GoopField, GoopKind};
+use libsms::goop::{GoopEvent, GoopField, GoopKind, GoopOp};
 use libsms::goop_critters::{CritterEvent, CritterKind, Critters, PiranhaState, ShotKind, StuState, Target};
 use libsms::koopajr::{Form, JrEvent, KoopaJr};
 use libsms::{Enemy, Vec3};
@@ -116,6 +116,40 @@ pub struct SmsJrState {
     pub shot_timer: u32,
 }
 
+/// What a goop op is ([`SmsGoopOp::kind`]).
+pub mod op {
+    /// A stamp: `pos`, radius `a`, `goop` kind.
+    pub const STAMP: u8 = 1;
+    /// Bowser Jr.'s sign: `pos`, half-side `a`, yaw `b` (radians), `goop` kind.
+    pub const SIGN: u8 = 2;
+    /// A clean: `pos`, radius `a`.
+    pub const CLEAN: u8 = 3;
+    /// A goop ball from `pos` at `vel`, gravity `a`, splat radius `b`, shooter `id`.
+    pub const GOOP_SHOT: u8 = 4;
+    /// A Piranha seed from `pos` at `vel`, thrower `id`.
+    pub const SEED: u8 = 5;
+    /// A stomp or pound on critter `id`.
+    pub const STOMP: u8 = 6;
+    /// FLUDD's water on critter `id` at `pos` with `attack`.
+    pub const WATER: u8 = 7;
+}
+
+/// One change a mirror's sims made to its world, for the server to redo on its own
+/// ([`sms_goop_take_ops`], [`sms_goop_apply_ops`]).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SmsGoopOp {
+    pub id: u64,
+    pub pos: SmsVec3,
+    pub vel: SmsVec3,
+    pub a: f32,
+    pub b: f32,
+    pub kind: u8,
+    pub goop: u8,
+    pub attack: i16,
+    pub _pad: u32,
+}
+
 /// An opaque goop world.
 pub struct SmsGoop {
     pub(crate) field: GoopField,
@@ -128,9 +162,75 @@ pub struct SmsGoop {
     pub(crate) sign: Option<(libsms::goop::Mask, f32)>,
     /// Each kind's look for drawing, read by [`sms_goop_setup`].
     surface: Option<libsms_present::goop_surface::GoopSurface>,
+    /// A networked client's copy ([`sms_goop_set_mirror`]): the server's critters as last
+    /// sent, drawn and aimed at in place of stepped ones.
+    mirror: Option<Vec<SmsCritter>>,
+    /// The critter changes a mirror's sims made (the goop's own are `field.log`).
+    ops: Vec<SmsGoopOp>,
 }
 
 impl SmsGoop {
+    /// What a sim's water and stomps may hit: the stepped critters, or a mirror's copies.
+    pub(crate) fn enemies(&self) -> Vec<Enemy> {
+        let Some(list) = self.mirror.as_ref() else { return self.critters.enemies() };
+        let (s, p) = (&self.critters.stu_params, &self.critters.piranha_params);
+        list.iter()
+            .filter_map(|c| match (c.kind, c.state) {
+                (0, st) if st != 5 => Some(Enemy {
+                    id: c.id,
+                    pos: c.pos.into(),
+                    radius: s.damage_radius * c.scale,
+                    height: s.damage_height * c.scale,
+                }),
+                (1, st) if st != 4 => Some(Enemy {
+                    id: c.id,
+                    pos: c.pos.into(),
+                    radius: p.damage_radius * c.scale,
+                    height: p.damage_height,
+                }),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// A stomp or pound on critter `id`: landed, or logged for the server on a mirror.
+    pub(crate) fn stomp(&mut self, id: u64) {
+        if self.mirror.is_some() {
+            self.ops.push(SmsGoopOp { id, kind: op::STOMP, ..Default::default() });
+        } else {
+            self.critters.stomp(id);
+        }
+    }
+
+    /// FLUDD's water on critter `id`: landed, or logged for the server on a mirror.
+    pub(crate) fn water_hit(&mut self, id: u64, pos: Vec3, attack: i16) {
+        if self.mirror.is_some() {
+            self.ops.push(SmsGoopOp { id, pos: pos.into(), attack, kind: op::WATER, ..Default::default() });
+        } else {
+            self.critters.water_hit(id, pos, attack);
+        }
+    }
+
+    /// On a mirror, a shot a sim just made goes to the server instead (its critters aren't
+    /// stepped here).
+    fn shot_to_server(&mut self, id: u64) {
+        if self.mirror.is_none() {
+            return;
+        }
+        let Some(i) = self.critters.shots.iter().position(|x| x.id == id) else { return };
+        let x = self.critters.shots.remove(i);
+        let seed = x.kind == ShotKind::Seed;
+        self.ops.push(SmsGoopOp {
+            id: x.owner,
+            pos: x.pos.into(),
+            vel: x.vel.into(),
+            a: x.gravity,
+            b: x.splat,
+            kind: if seed { op::SEED } else { op::GOOP_SHOT },
+            ..Default::default()
+        });
+    }
+
     fn name(&mut self, n: &'static str) -> *const c_char {
         self.names
             .entry(n)
@@ -222,6 +322,8 @@ pub extern "C" fn sms_goop_new() -> *mut SmsGoop {
             names: HashMap::new(),
             sign: None,
             surface: None,
+            mirror: None,
+            ops: Vec::new(),
         }))
     })
 }
@@ -302,6 +404,238 @@ pub unsafe extern "C" fn sms_goop_clear(g: *mut SmsGoop) {
             s.critters.shots.clear();
             s.critters.events.clear();
             s.events.clear();
+            s.ops.clear();
+            if let Some(log) = s.field.log.as_mut() {
+                log.clear();
+            }
+            if let Some(m) = s.mirror.as_mut() {
+                m.clear();
+            }
+        }
+    })
+}
+
+/// Makes the world a networked client's copy of the server's (`on` nonzero) or a world of its
+/// own. A copy's critters are the server's as last given ([`sms_goop_mirror_critters`]), never
+/// stepped, and what its sims do to it (paint, cleaning, shots, hits on critters) is logged
+/// for the server ([`sms_goop_take_ops`]); its goop is the server's chunks
+/// ([`sms_goop_chunk_set`]) plus its own sims' paint and cleaning until those come back.
+///
+/// # Safety
+/// `g` from [`sms_goop_new`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_goop_set_mirror(g: *mut SmsGoop, on: u8) {
+    libcommon::ffi::guard("sms_goop_set_mirror", (), || {
+        // SAFETY: as documented.
+        let Some(s) = (unsafe { g.as_mut() }) else { return };
+        if (on != 0) == s.mirror.is_some() {
+            return;
+        }
+        s.ops.clear();
+        if on != 0 {
+            s.mirror = Some(Vec::new());
+            s.field.log = Some(Vec::new());
+            s.critters.stus.clear();
+            s.critters.piranhas.clear();
+            s.critters.shots.clear();
+            s.critters.events.clear();
+        } else {
+            s.mirror = None;
+            s.field.log = None;
+        }
+    })
+}
+
+/// A mirror's critters, as the server last sent them (ignored unless [`sms_goop_set_mirror`]).
+///
+/// # Safety
+/// `g` from [`sms_goop_new`]; `list` holds `n` (or is null).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_goop_mirror_critters(g: *mut SmsGoop, list: *const SmsCritter, n: u32) {
+    libcommon::ffi::guard("sms_goop_mirror_critters", (), || {
+        // SAFETY: as documented.
+        let Some(s) = (unsafe { g.as_mut() }) else { return };
+        let Some(m) = s.mirror.as_mut() else { return };
+        m.clear();
+        if list.is_null() {
+            return;
+        }
+        // SAFETY: as documented.
+        let src = unsafe { std::slice::from_raw_parts(list, n.min(4096) as usize) };
+        m.extend(src.iter().copied().filter(|c| Vec3::from(c.pos).is_finite() && c.scale.is_finite()));
+    })
+}
+
+/// Takes up to `max` of a mirror's logged changes (oldest first: the goop's, then the
+/// critters'). Returns how many were written.
+///
+/// # Safety
+/// `g` from [`sms_goop_new`]; `out` has room for `max`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_goop_take_ops(g: *mut SmsGoop, out: *mut SmsGoopOp, max: u32) -> u32 {
+    libcommon::ffi::guard("sms_goop_take_ops", 0, || {
+        // SAFETY: as documented.
+        let Some(s) = (unsafe { g.as_mut() }) else { return 0 };
+        if out.is_null() {
+            return 0;
+        }
+        let max = max as usize;
+        let mut n = 0usize;
+        if let Some(log) = s.field.log.as_mut() {
+            let take = log.len().min(max);
+            for o in log.drain(..take) {
+                let x = match o {
+                    GoopOp::Stamp { pos, radius, kind } => {
+                        SmsGoopOp { pos: pos.into(), a: radius, goop: kind as u8, kind: op::STAMP, ..Default::default() }
+                    }
+                    GoopOp::Mask { pos, half, yaw, kind } => SmsGoopOp {
+                        pos: pos.into(),
+                        a: half,
+                        b: yaw,
+                        goop: kind as u8,
+                        kind: op::SIGN,
+                        ..Default::default()
+                    },
+                    GoopOp::Clean { pos, radius } => {
+                        SmsGoopOp { pos: pos.into(), a: radius, kind: op::CLEAN, ..Default::default() }
+                    }
+                };
+                // SAFETY: as documented.
+                unsafe { *out.add(n) = x };
+                n += 1;
+            }
+        }
+        let take = s.ops.len().min(max - n);
+        for x in s.ops.drain(..take) {
+            // SAFETY: as documented.
+            unsafe { *out.add(n) = x };
+            n += 1;
+        }
+        n as u32
+    })
+}
+
+/// The server redoes a client's logged changes on its own world. `owner` is the host's id for
+/// the client's Bowser Jr. (his shots' shooter; 0 for none). Values out of range are skipped.
+/// Returns how many were applied; their events queue as the world's own.
+///
+/// # Safety
+/// `g` from [`sms_goop_new`]; `host` valid; `ops` holds `n`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_goop_apply_ops(
+    g: *mut SmsGoop,
+    host: *const SmsHost,
+    ops: *const SmsGoopOp,
+    n: u32,
+    owner: u64,
+) -> u32 {
+    libcommon::ffi::guard("sms_goop_apply_ops", 0, || {
+        // SAFETY: as documented.
+        let (Some(s), Some(host)) = (unsafe { g.as_mut() }, unsafe { host.as_ref() }) else { return 0 };
+        if ops.is_null() {
+            return 0;
+        }
+        // SAFETY: as documented.
+        let list = unsafe { std::slice::from_raw_parts(ops, n.min(4096) as usize) };
+        let h = FfiHost(host, Vec::new(), Vec::new(), std::ptr::null());
+        let mut done = 0u32;
+        for o in list {
+            let pos: Vec3 = o.pos.into();
+            let vel: Vec3 = o.vel.into();
+            if !pos.is_finite() || !vel.is_finite() || !o.a.is_finite() || !o.b.is_finite() {
+                continue;
+            }
+            let size_ok = o.a > 0.0 && o.a <= 4096.0;
+            let fast_ok = vel.length() < 20000.0;
+            let kind = GoopKind::from_u8(o.goop);
+            let applied = match o.kind {
+                op::STAMP if size_ok => {
+                    s.field.stamp(&h, pos, o.a, kind);
+                    true
+                }
+                op::SIGN if size_ok => {
+                    match s.sign.clone() {
+                        Some((mask, _)) => s.field.stamp_mask(&h, pos, o.a, o.b, &mask, kind),
+                        None => s.field.stamp(&h, pos, o.a, kind),
+                    }
+                    true
+                }
+                op::CLEAN if size_ok => {
+                    s.field.clean(pos, o.a);
+                    true
+                }
+                op::GOOP_SHOT if fast_ok && o.a.abs() <= 100.0 && o.b >= 0.0 && o.b <= 4096.0 => {
+                    s.critters.shoot_goop(pos, vel, o.a, o.b, owner);
+                    true
+                }
+                op::SEED if fast_ok => {
+                    s.critters.throw_seed(pos, vel, owner);
+                    true
+                }
+                op::STOMP if Critters::owns_id(o.id) => s.critters.stomp(o.id),
+                op::WATER if Critters::owns_id(o.id) => s.critters.water_hit(o.id, pos, o.attack),
+                _ => false,
+            };
+            done += applied as u32;
+        }
+        s.drain_critter_events();
+        s.drain_field_events();
+        done
+    })
+}
+
+/// Puts a chunk as the server has it (on a mirror): 256 densities, kinds (`GoopKind` as u8)
+/// and painted heights, row by row. All-zero densities remove it.
+///
+/// # Safety
+/// `g` from [`sms_goop_new`]; each array holds 256.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_goop_chunk_set(
+    g: *mut SmsGoop,
+    kx: i32,
+    kz: i32,
+    density: *const u8,
+    kinds: *const u8,
+    heights: *const f32,
+) {
+    libcommon::ffi::guard("sms_goop_chunk_set", (), || {
+        // SAFETY: as documented.
+        let Some(s) = (unsafe { g.as_mut() }) else { return };
+        if density.is_null() || kinds.is_null() || heights.is_null() {
+            return;
+        }
+        // SAFETY: as documented.
+        let (d, k, h) = unsafe {
+            (
+                std::slice::from_raw_parts(density, 256),
+                std::slice::from_raw_parts(kinds, 256),
+                std::slice::from_raw_parts(heights, 256),
+            )
+        };
+        let mut density = [0u8; 256];
+        let mut kind = [GoopKind::Sink; 256];
+        let mut height = [0f32; 256];
+        for i in 0..256 {
+            if h[i].is_finite() {
+                density[i] = d[i];
+                height[i] = h[i];
+            }
+            kind[i] = GoopKind::from_u8(k[i]);
+        }
+        s.field.set_chunk((kx, kz), &density, &kind, &height);
+    })
+}
+
+/// Removes a chunk (one the server no longer has).
+///
+/// # Safety
+/// `g` from [`sms_goop_new`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_goop_chunk_drop(g: *mut SmsGoop, kx: i32, kz: i32) {
+    libcommon::ffi::guard("sms_goop_chunk_drop", (), || {
+        // SAFETY: as documented.
+        if let Some(s) = unsafe { g.as_mut() } {
+            s.field.drop_chunk((kx, kz));
         }
     })
 }
@@ -529,6 +863,15 @@ pub unsafe extern "C" fn sms_goop_critters(g: *const SmsGoop, out: *mut SmsCritt
     libcommon::ffi::guard("sms_goop_critters", 0, || {
         // SAFETY: as documented.
         let Some(s) = (unsafe { g.as_ref() }) else { return 0 };
+        if let Some(list) = s.mirror.as_ref() {
+            if !out.is_null() {
+                for (i, x) in list.iter().take(max as usize).enumerate() {
+                    // SAFETY: as documented.
+                    unsafe { *out.add(i) = *x };
+                }
+            }
+            return list.len() as u32;
+        }
         let c = &s.critters;
         let mut all = Vec::with_capacity(c.stus.len() + c.piranhas.len() + c.shots.len());
         for x in &c.stus {
@@ -811,8 +1154,20 @@ pub unsafe extern "C" fn sms_jr_action(sim: *mut SmsSim, host: *const SmsHost, a
                 }
                 None => false,
             },
-            (4, Some(w)) => jr.shoot(m, &mut w.critters).is_some(),
-            (5, Some(w)) => jr.spit_seed(m, &mut w.critters).is_some(),
+            (4, Some(w)) => match jr.shoot(m, &mut w.critters) {
+                Some(id) => {
+                    w.shot_to_server(id);
+                    true
+                }
+                None => false,
+            },
+            (5, Some(w)) => match jr.spit_seed(m, &mut w.critters) {
+                Some(id) => {
+                    w.shot_to_server(id);
+                    true
+                }
+                None => false,
+            },
             (6, _) => jr.water_hit(m),
             (7, _) => {
                 let all = GoopKind::ALL;

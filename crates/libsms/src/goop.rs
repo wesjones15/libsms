@@ -354,6 +354,19 @@ pub enum GoopEvent {
     Ambient { pos: Vec3, kind: GoopKind },
 }
 
+/// A change a painter or cleaner made, logged for a host that keeps another copy of the field
+/// in step (a networked game's server, which redoes a client's paint and cleaning on its own
+/// field: [`GoopField::log`]). Not the game's; the game has one machine.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum GoopOp {
+    /// [`GoopField::stamp`].
+    Stamp { pos: Vec3, radius: f32, kind: GoopKind },
+    /// [`GoopField::stamp_mask`] (the mask is the host's to know: Bowser Jr.'s sign).
+    Mask { pos: Vec3, half: f32, yaw: f32, kind: GoopKind },
+    /// [`GoopField::clean`].
+    Clean { pos: Vec3, radius: f32 },
+}
+
 /// The world's goop.
 #[derive(Debug, Clone)]
 pub struct GoopField {
@@ -369,6 +382,8 @@ pub struct GoopField {
     pub pollute: Mask,
     pub clean: Mask,
     pub events: Vec<GoopEvent>,
+    /// When set, every stamp and clean is also recorded here ([`GoopOp`]).
+    pub log: Option<Vec<GoopOp>>,
     pub ticks: u64,
     live: usize,
     next_slot: u8,
@@ -422,6 +437,7 @@ impl GoopField {
             pollute: Mask::disc(32),
             clean: Mask::disc(32),
             events: Vec::new(),
+            log: None,
             ticks: 0,
             live: 0,
             next_slot: 0,
@@ -502,11 +518,53 @@ impl GoopField {
         self.live = 0;
     }
 
+    /// Puts a chunk's texels as another copy of the field has them (a networked host's
+    /// mirror): densities, kinds and painted heights, 16x16 row by row. All-zero densities
+    /// remove the chunk. The texels count as painted now (for the cap).
+    pub fn set_chunk(
+        &mut self,
+        key: (i32, i32),
+        density: &[u8; CHUNK_TEXELS],
+        kind: &[GoopKind; CHUNK_TEXELS],
+        height: &[f32; CHUNK_TEXELS],
+    ) {
+        let before = self.chunks.get(&key).map_or(0, |c| c.live());
+        if density.iter().all(|&d| d == 0) {
+            self.chunks.remove(&key);
+            self.live = self.live.saturating_sub(before);
+            return;
+        }
+        let slot = &mut self.next_slot;
+        let c = self.chunks.entry(key).or_insert_with(|| {
+            let c = Chunk::new(*slot);
+            *slot = ((*slot as u64 + 1) % SWEEP) as u8;
+            c
+        });
+        c.density = *density;
+        c.kind = *kind;
+        c.height = *height;
+        c.born = [self.ticks as u32; CHUNK_TEXELS];
+        c.version = c.version.wrapping_add(1);
+        c.recompute_oldest();
+        let after = c.live();
+        self.live = self.live.saturating_sub(before) + after;
+    }
+
+    /// Removes a chunk (a mirror's copy of one the other field no longer has).
+    pub fn drop_chunk(&mut self, key: (i32, i32)) {
+        if let Some(c) = self.chunks.remove(&key) {
+            self.live = self.live.saturating_sub(c.live());
+        }
+    }
+
     /// `stamp(1, x, y, z, size)`: paints a disc of goop of `radius` at `pos` with the pollute
     /// stamp. `pos.y` is the ground the painter stands on.
     pub fn stamp(&mut self, host: &dyn Host, pos: Vec3, radius: f32, kind: GoopKind) {
+        if let Some(log) = self.log.as_mut() {
+            log.push(GoopOp::Stamp { pos, radius, kind });
+        }
         let mask = std::mem::replace(&mut self.pollute, Mask { size: 0, alpha: Vec::new() });
-        self.stamp_mask(host, pos, radius, 0.0, &mask, kind);
+        self.paint_mask(host, pos, radius, 0.0, &mask, kind);
         self.pollute = mask;
         self.events.push(GoopEvent::Painted { pos, radius, kind });
     }
@@ -522,6 +580,13 @@ impl GoopField {
         mask: &Mask,
         kind: GoopKind,
     ) {
+        if let Some(log) = self.log.as_mut() {
+            log.push(GoopOp::Mask { pos, half, yaw, kind });
+        }
+        self.paint_mask(host, pos, half, yaw, mask, kind);
+    }
+
+    fn paint_mask(&mut self, host: &dyn Host, pos: Vec3, half: f32, yaw: f32, mask: &Mask, kind: GoopKind) {
         if half <= 0.0 {
             return;
         }
@@ -564,6 +629,9 @@ impl GoopField {
     /// `TPollutionManager::clean` (`stamp(0, ..)`): wipes goop off a disc of `radius` around
     /// `pos` with the clean stamp. Returns how many texels lost goop.
     pub fn clean(&mut self, pos: Vec3, radius: f32) -> u32 {
+        if let Some(log) = self.log.as_mut() {
+            log.push(GoopOp::Clean { pos, radius });
+        }
         let mask = std::mem::replace(&mut self.clean, Mask { size: 0, alpha: Vec::new() });
         let mut dense = false;
         let mut changed = 0u32;
