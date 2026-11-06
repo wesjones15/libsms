@@ -263,7 +263,8 @@ pub unsafe extern "C" fn sms_view_set_pose(
 
 /// Overrides whose voice the Mario cues play: 0 Mario's, 1 Piantissimo's jump voice with Mario's
 /// lines for the rest (what [`sms_view_skin`] picks for him), 2 Piantissimo exactly as the game
-/// has him (the jump voice and nothing else). Call after [`sms_view_skin`].
+/// has him (the jump voice and nothing else), 3 Shadow Mario's (Mario's lines pitched 1.2x at 0.9
+/// volume, no alternates; what [`sms_view_skin`] picks for skin 4). Call after [`sms_view_skin`].
 ///
 /// # Safety
 /// `view` must be a live Mario view from sms_view_new.
@@ -275,6 +276,7 @@ pub unsafe extern "C" fn sms_view_voice_set(view: *mut SmsView, set: u32) {
                 audio.set_voice_set(match set {
                     1 => libsms_present::view::VoiceSet::Piantissimo,
                     2 => libsms_present::view::VoiceSet::PiantissimoStrict,
+                    3 => libsms_present::view::VoiceSet::Shadow,
                     _ => libsms_present::view::VoiceSet::Mario,
                 });
             }

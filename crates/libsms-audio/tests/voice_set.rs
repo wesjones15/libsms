@@ -67,3 +67,16 @@ fn other_voices_fall_back_to_marios_or_stay_silent_when_strict() {
         assert!(voice(&data, VoiceSet::PiantissimoStrict, name).is_none(), "{name}: the game plays nothing");
     }
 }
+
+/// Shadow Mario (voice status 2): Mario's own line, raised by `setPitch(1.2f)`, so it is
+/// heard but is not Mario's rendering of it.
+#[test]
+fn shadow_marios_voice_is_marios_line_pitched_up() {
+    let Some(data) = data() else { eprintln!("SKIP: no assets/"); return };
+    let name = "MSD_SE_MV15_EXERT_INST_01";
+    let mario = voice(&data, VoiceSet::Mario, name).expect("Mario's line");
+    let shadow = voice(&data, VoiceSet::Shadow, name).expect("Shadow Mario's line");
+    assert!(energy(&shadow) > 0.0, "it should be heard");
+    let diff: f64 = mario.iter().zip(&shadow).map(|(a, b)| ((a - b) as f64).powi(2)).sum::<f64>().sqrt();
+    assert!(diff > 0.05 * energy(&mario), "pitched up, it should not render as Mario's");
+}

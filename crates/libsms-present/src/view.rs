@@ -418,6 +418,8 @@ impl Skin {
     pub const fn voice_set(self) -> VoiceSet {
         match self {
             Skin::Piantissimo => VoiceSet::Piantissimo,
+            // `TMario::getVoiceStatus`: PLAYER_TYPE_SHADOW_MARIO answers 2.
+            Skin::Shadow => VoiceSet::Shadow,
             _ => VoiceSet::Mario,
         }
     }

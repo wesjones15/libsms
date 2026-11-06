@@ -16,7 +16,7 @@ use std::path::Path;
 use libsms::FixedClock;
 use libsms::goop::{GoopEvent, GoopField, GoopKind, GoopOp};
 use libsms::goop_critters::{CritterEvent, CritterKind, Critters, PiranhaState, ShotKind, StuState, Target};
-use libsms::koopajr::{Form, JrEvent, KoopaJr};
+use libsms::koopajr::{Brush, Form, JrEvent, KoopaJr};
 use libsms::{Enemy, Vec3};
 
 use crate::{FfiHost, SmsHost, SmsSim, SmsVec3};
@@ -109,7 +109,9 @@ pub struct SmsJrState {
     /// `koopajr::jr_clip`.
     pub jr_clip: u8,
     pub paint_kind: u8,
-    pub _pad: [u8; 3],
+    /// The brush attack: 0 none, 1 the stroke, 2 the spray ([`sms_jr_brush_frame`] its pose).
+    pub brush: u8,
+    pub _pad: [u8; 2],
     /// `mWaterCounter`.
     pub water: u32,
     pub sign_timer: u32,
@@ -130,6 +132,9 @@ pub mod op {
     pub const SEED: u8 = 5;
     /// A stomp or pound on critter `id`.
     pub const STOMP: u8 = 6;
+    /// Shadow Mario's brush blob from `pos` at `vel`, gravity `a`, splat radius `b` of `goop`
+    /// kind, damage share `attack` hundredths, shooter `id`.
+    pub const PAINT_SHOT: u8 = 8;
     /// FLUDD's water on critter `id` at `pos` with `attack`.
     pub const WATER: u8 = 7;
 }
@@ -213,20 +218,26 @@ impl SmsGoop {
 
     /// On a mirror, a shot a sim just made goes to the server instead (its critters aren't
     /// stepped here).
-    fn shot_to_server(&mut self, id: u64) {
+    pub(crate) fn shot_to_server(&mut self, id: u64) {
         if self.mirror.is_none() {
             return;
         }
         let Some(i) = self.critters.shots.iter().position(|x| x.id == id) else { return };
         let x = self.critters.shots.remove(i);
-        let seed = x.kind == ShotKind::Seed;
         self.ops.push(SmsGoopOp {
             id: x.owner,
             pos: x.pos.into(),
             vel: x.vel.into(),
             a: x.gravity,
             b: x.splat,
-            kind: if seed { op::SEED } else { op::GOOP_SHOT },
+            kind: match x.kind {
+                ShotKind::Seed => op::SEED,
+                ShotKind::Goop => op::GOOP_SHOT,
+                ShotKind::Paint => op::PAINT_SHOT,
+            },
+            goop: x.goop.map_or(0, |k| k as u8),
+            // The damage share in hundredths.
+            attack: (x.damage * 100.0).round().clamp(0.0, 1000.0) as i16,
             ..Default::default()
         });
     }
@@ -274,9 +285,12 @@ impl SmsGoop {
                 CritterEvent::Spawned { id, kind, pos } => {
                     self.push(ev::SPAWNED, (kind == CritterKind::Piranha) as i32, id, pos, 0.0, None)
                 }
-                CritterEvent::Hit { id, target, mario, pos, kind } => {
+                CritterEvent::Hit { id, target, mario, pos, kind, scale } => {
                     let k = libsms::DamageKind::ALL.iter().position(|d| *d == kind).unwrap_or(0);
-                    self.push(ev::HIT, mario as i32, target, pos, k as f32, None);
+                    // `a`: bit 0 a Mario was hit; above it the damage share in hundredths
+                    // (0 = all of it).
+                    let share = if (scale - 1.0).abs() < 1e-3 { 0 } else { (scale * 100.0).round().clamp(1.0, 1000.0) as i32 };
+                    self.push(ev::HIT, mario as i32 | (share << 8), target, pos, k as f32, None);
                     if let Some(last) = self.events.last_mut() {
                         last.from = id;
                     }
@@ -284,7 +298,7 @@ impl SmsGoop {
                 CritterEvent::Died { id, pos, melted } => self.push(ev::DIED, melted as i32, id, pos, 0.0, None),
                 CritterEvent::Burst { id, pos, coins } => self.push(ev::BURST, coins as i32, id, pos, 0.0, None),
                 CritterEvent::Shot { id, from, kind } => {
-                    self.push(ev::SHOT, (kind == ShotKind::Seed) as i32, id, from, 0.0, None)
+                    self.push(ev::SHOT, match kind { ShotKind::Goop => 0, ShotKind::Seed => 1, ShotKind::Paint => 2 }, id, from, 0.0, None)
                 }
                 CritterEvent::Splat { id, pos, radius } => self.push(ev::SPLAT, 0, id, pos, radius, None),
                 CritterEvent::Sound { name, pos } => self.push(ev::SOUND, 0, 0, pos, 1.0, Some(name)),
@@ -566,6 +580,11 @@ pub unsafe extern "C" fn sms_goop_apply_ops(
                 }
                 op::GOOP_SHOT if fast_ok && o.a.abs() <= 100.0 && o.b >= 0.0 && o.b <= 4096.0 => {
                     s.critters.shoot_goop(pos, vel, o.a, o.b, owner);
+                    true
+                }
+                op::PAINT_SHOT if fast_ok && o.a.abs() <= 100.0 && o.b >= 0.0 && o.b <= 4096.0 => {
+                    let damage = (o.attack as f32 / 100.0).clamp(0.0, 10.0);
+                    s.critters.shoot_paint(pos, vel, o.a, o.b, kind, damage, owner);
                     true
                 }
                 op::SEED if fast_ok => {
@@ -902,8 +921,10 @@ pub unsafe extern "C" fn sms_goop_critters(g: *const SmsGoop, out: *mut SmsCritt
             });
         }
         for x in &c.shots {
+            let scale = if x.kind == ShotKind::Paint { (x.splat / 200.0).clamp(0.3, 1.5) } else { 1.0 };
             all.push(SmsCritter {
-                id: x.id, pos: x.pos.into(), yaw: x.vel.x.atan2(x.vel.z), scale: 1.0, squash: 1.0,
+                id: x.id, pos: x.pos.into(), yaw: x.vel.x.atan2(x.vel.z), scale, squash: 1.0,
+                // A brush blob is drawn as a goop ball sized by its splat.
                 lean: x.spin.to_radians(), clip_time: 0, kind: if x.kind == ShotKind::Seed { 3 } else { 2 },
                 clip: 0, state: 0, _pad: 0, tint: [0; 4],
             });
@@ -1202,6 +1223,54 @@ pub unsafe extern "C" fn sms_jr_set_paint_kind(sim: *mut SmsSim, kind: u8) {
     })
 }
 
+/// Where the player aims, for Shadow Mario's brush blobs (`on` 0: straight ahead along the
+/// sim's aim). Send before each step, like `sms_sim_set_aim`.
+///
+/// # Safety
+/// `sim` from `sms_sim_new`; `at` readable when `on`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_jr_set_aim(sim: *mut SmsSim, on: u8, at: *const SmsVec3) {
+    libcommon::ffi::guard("sms_jr_set_aim", (), || {
+        // SAFETY: as documented.
+        let Some(s) = (unsafe { sim.as_mut() }) else { return };
+        let Some(jr) = s.jr.as_mut() else { return };
+        let at = if on != 0 { unsafe { at.as_ref() }.map(|p| Vec3::new(p.x, p.y, p.z)) } else { None };
+        jr.aim_at = at.filter(|p| p.is_finite());
+    })
+}
+
+/// The brush stroke's pose this tick: `ma_draw`'s frame over his upper body, or -1 when he
+/// isn't attacking.
+///
+/// # Safety
+/// `sim` from `sms_sim_new`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_jr_brush_frame(sim: *const SmsSim) -> f32 {
+    libcommon::ffi::guard("sms_jr_brush_frame", -1.0, || {
+        // SAFETY: as documented.
+        unsafe { sim.as_ref() }.and_then(|s| s.jr.as_ref()).and_then(|j| j.brush_frame()).unwrap_or(-1.0)
+    })
+}
+
+/// Puts a sim's upper body in the brush stroke's pose (`ma_draw` at `frame`) until its next
+/// step: for a host's copy of another player's Shadow Mario, before `sms_view_update`. A
+/// negative frame does nothing.
+///
+/// # Safety
+/// `sim` from `sms_sim_new`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_sim_pose_brush(sim: *mut SmsSim, frame: f32) {
+    libcommon::ffi::guard("sms_sim_pose_brush", (), || {
+        // SAFETY: as documented.
+        if let Some(s) = unsafe { sim.as_mut() }
+            && frame >= 0.0
+            && frame.is_finite()
+        {
+            libsms::koopajr::pose_brush(&mut s.sim.mario, frame);
+        }
+    })
+}
+
 /// Bowser Jr.'s state; 0 if the sim isn't him.
 ///
 /// # Safety
@@ -1218,7 +1287,12 @@ pub unsafe extern "C" fn sms_jr_state(sim: *const SmsSim, out: *mut SmsJrState) 
             painting: jr.painting as u8,
             jr_clip: jr.jr_clip(&s.sim.mario),
             paint_kind: jr.paint_kind as u8,
-            _pad: [0; 3],
+            brush: match jr.brush {
+                Brush::Idle => 0,
+                Brush::Swing { .. } => 1,
+                Brush::Spray { .. } => 2,
+            },
+            _pad: [0; 2],
             water: jr.water,
             sign_timer: jr.sign_timer,
             shot_timer: jr.shot_timer,

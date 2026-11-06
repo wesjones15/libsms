@@ -397,7 +397,17 @@ pub enum VoiceSet {
     Piantissimo,
     /// Piantissimo exactly as the game has him: the jump voice and nothing else.
     PiantissimoStrict,
+    /// Shadow Mario (status 2): Mario's own lines with none of the random `MSD_SE_MA_VO_*`
+    /// alternates (each is behind `param_3 != 2`), the tired ones still by his health, every
+    /// voice played at [`SHADOW_VOICE_PITCH`] and [`SHADOW_VOICE_VOLUME`] with port 11 set to 1.
+    Shadow,
 }
+
+/// `MSound::startMarioVoice` for status 2: `setPitch(1.2f)`, `setVolume(0.9f)`,
+/// `setPortData(11, 1)`.
+pub const SHADOW_VOICE_PITCH: f32 = 1.2;
+pub const SHADOW_VOICE_VOLUME: f32 = 0.9;
+const SHADOW_VOICE_PORT: usize = 11;
 
 /// The cue standing in for each Mario jump voice when the voice set is Piantissimo's
 /// (`MSound::startMarioVoice`, `param_3 == 6`).
@@ -1407,7 +1417,7 @@ impl SoundSystem {
             }
             self.fire_voice = None;
         }
-        if self.voice_set != VoiceSet::Mario {
+        if matches!(self.voice_set, VoiceSet::Piantissimo | VoiceSet::PiantissimoStrict) {
             if PIANTISSIMO_JUMP_VOICES.contains(&name) {
                 if let Some(sid) = self.id(PIANTISSIMO_JUMP_CUE) {
                     let h = self.play_se(sid, Some(self.player), 0x4D41_5249)?;
@@ -1419,7 +1429,9 @@ impl SoundSystem {
             }
         }
         let health = self.health;
-        let mut r = |p: f32| self.rng.ufloat_1() < p;
+        let shadow = self.voice_set == VoiceSet::Shadow;
+        // Shadow Mario never takes an alternate (`param_3 != 2 && getRandom_0_1() < p`).
+        let mut r = |p: f32| !shadow && self.rng.ufloat_1() < p;
         let tired = health <= 2;
         let pick = match name {
             "MSD_SE_MV01_DAMAGE_BIG_01" if r(0.25) => "MSD_SE_MA_VO_DAMAGE_BIG",
@@ -1457,6 +1469,11 @@ impl SoundSystem {
         let sid = self.id(pick).or_else(|| self.id(name))?;
         let h = self.play_se(sid, Some(self.player), 0x4D41_5249)?;
         self.voice = Some(h);
+        if shadow {
+            self.set_port(h, SHADOW_VOICE_PORT, 1);
+            self.set_pitch(h, SHADOW_VOICE_PITCH, 0, 0);
+            self.set_volume(h, SHADOW_VOICE_VOLUME, 0, 0);
+        }
         if matches!(name, "MSD_SE_MV05_DAMAGE_FIRE_01" | "MSD_SE_MV05_DAMAGE_FIRE_02") {
             self.fire_voice = Some(h);
         }

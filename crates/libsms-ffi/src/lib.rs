@@ -1036,6 +1036,10 @@ pub unsafe extern "C" fn sms_sim_step(
                             j.params.sign_half = *half;
                         }
                         j.step(mario, &*h, &mut g.field, brush);
+                        // His brush attacks (the stroke's blob, the spray), after the feet trail.
+                        for id in j.brush_step(mario, &mut g.critters, brush) {
+                            g.shot_to_server(id);
+                        }
                         g.take_jr_events(j);
                     }
                     g.drain_field_events();
@@ -2293,10 +2297,24 @@ mod tests {
             assert!(painted > 0, "the brush painted the mirror");
             let mut ops = vec![goop::SmsGoopOp::default(); 4096];
             let n = goop::sms_goop_take_ops(client, ops.as_mut_ptr(), 4096) as usize;
-            assert!(n > 0 && ops[..n].iter().all(|o| o.kind == goop::op::STAMP), "stamps logged: {n}");
+            // The feet trail's stamps, and the brush's stroke and spray (held R) as blobs.
+            assert!(
+                n > 0 && ops[..n].iter().all(|o| o.kind == goop::op::STAMP || o.kind == goop::op::PAINT_SHOT),
+                "stamps and blobs logged: {n}"
+            );
+            assert!(ops[..n].iter().any(|o| o.kind == goop::op::PAINT_SHOT && o.id == 7), "his blobs, his id");
             assert_eq!(goop::sms_goop_take_ops(client, ops.as_mut_ptr(), 4096), 0, "taken once");
-            // The server redoes them: the same chunks.
-            assert_eq!(goop::sms_goop_apply_ops(server, &host, ops.as_ptr(), n as u32, 0x2_0000_0005) as usize, n);
+            // The server redoes the stamps: the same chunks (the blobs are checked below).
+            let stamps: Vec<_> = ops[..n].iter().filter(|o| o.kind == goop::op::STAMP).copied().collect();
+            assert_eq!(
+                goop::sms_goop_apply_ops(server, &host, stamps.as_ptr(), stamps.len() as u32, 0x2_0000_0005) as usize,
+                stamps.len()
+            );
+            let blob = ops[..n].iter().find(|o| o.kind == goop::op::PAINT_SHOT).copied().unwrap();
+            let check = goop::sms_goop_new();
+            assert_eq!(goop::sms_goop_apply_ops(check, &host, &blob, 1, 0x2_0000_0005), 1, "a blob is redone");
+            assert_eq!(goop::sms_goop_critters(check, std::ptr::null_mut(), 0), 1);
+            goop::sms_goop_free(check);
             let mut server_keys = [0i32; 64];
             assert_eq!(goop::sms_goop_chunk_list(server, server_keys.as_mut_ptr(), std::ptr::null_mut(), 32), painted);
             // A chunk the server sends back replaces the mirror's.

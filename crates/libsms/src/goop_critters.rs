@@ -395,6 +395,10 @@ pub enum ShotKind {
     Goop,
     /// A Piranha seed: a Piranha grows where it lands.
     Seed,
+    /// Shadow Mario's brush blob (a host attack; the disc's Shadow Mario only paints at his
+    /// feet): flies to what the player aims at and splats its own goop kind on whatever it
+    /// touches first, a target, the ground or a wall.
+    Paint,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -408,6 +412,10 @@ pub struct Shot {
     pub owner: u64,
     /// Goop it splats, radius.
     pub splat: f32,
+    /// The goop kind it splats (the critters' own when None).
+    pub goop: Option<GoopKind>,
+    /// Its hit's share of a critter hit's damage (1 = a goop ball's).
+    pub damage: f32,
     /// `TPakkunSeed`'s spin about Z (degrees, `unk170`).
     pub spin: f32,
     age: u32,
@@ -426,7 +434,8 @@ pub enum CritterKind {
 pub enum CritterEvent {
     Spawned { id: u64, kind: CritterKind, pos: Vec3 },
     /// `HIT_MESSAGE_ATTACK` on `target`: the host deals it (`kind` for a Mario).
-    Hit { id: u64, target: u64, mario: bool, pos: Vec3, kind: DamageKind },
+    /// `scale`: the share of a critter hit's damage (a spray blob's is small).
+    Hit { id: u64, target: u64, mario: bool, pos: Vec3, kind: DamageKind, scale: f32 },
     Died { id: u64, pos: Vec3, melted: bool },
     /// A Piranha burst from water: `coins` to drop (`generateItem`).
     Burst { id: u64, pos: Vec3, coins: u8 },
@@ -643,7 +652,9 @@ impl Critters {
     pub fn throw_seed(&mut self, from: Vec3, vel: Vec3, owner: u64) -> u64 {
         let id = self.id();
         let g = self.piranha_params.seed_gravity_c;
-        self.shots.push(Shot { id, pos: from, vel, gravity: g, kind: ShotKind::Seed, owner, splat: 0.0, spin: 0.0, age: 0, rest: 0 });
+        self.shots.push(Shot {
+            id, pos: from, vel, gravity: g, kind: ShotKind::Seed, owner, splat: 0.0, goop: None, damage: 1.0, spin: 0.0, age: 0, rest: 0,
+        });
         self.events.push(CritterEvent::Shot { id, from, kind: ShotKind::Seed });
         id
     }
@@ -651,9 +662,24 @@ impl Critters {
     /// Fires a goop ball (`TPakkunSeed` shot straight: `onShootLiner`).
     pub fn shoot_goop(&mut self, from: Vec3, vel: Vec3, gravity: f32, splat: f32, owner: u64) -> u64 {
         let id = self.id();
-        self.shots.push(Shot { id, pos: from, vel, gravity, kind: ShotKind::Goop, owner, splat, spin: 0.0, age: 0, rest: 0 });
+        self.shots.push(Shot {
+            id, pos: from, vel, gravity, kind: ShotKind::Goop, owner, splat, goop: None, damage: 1.0, spin: 0.0, age: 0, rest: 0,
+        });
         self.events.push(CritterEvent::Shot { id, from, kind: ShotKind::Goop });
         self.sound("MSD_SE_EN_PAKKUN_SEED_FLY", from);
+        id
+    }
+
+    /// Fires one of Shadow Mario's brush blobs ([`ShotKind::Paint`]): `kind` goop of `splat`
+    /// radius where it lands, `damage` of a critter hit to what it hits. No sound of its own
+    /// (the swing has its whoosh).
+    #[allow(clippy::too_many_arguments)]
+    pub fn shoot_paint(&mut self, from: Vec3, vel: Vec3, gravity: f32, splat: f32, kind: GoopKind, damage: f32, owner: u64) -> u64 {
+        let id = self.id();
+        self.shots.push(Shot {
+            id, pos: from, vel, gravity, kind: ShotKind::Paint, owner, splat, goop: Some(kind), damage, spin: 0.0, age: 0, rest: 0,
+        });
+        self.events.push(CritterEvent::Shot { id, from, kind: ShotKind::Paint });
         id
     }
 
@@ -887,6 +913,7 @@ impl Critters {
                                 mario: t.mario,
                                 pos: s.pos,
                                 kind: DamageKind::Namekuri,
+                                scale: 1.0,
                             });
                             s.state = StuState::Die { melted: false };
                             s.clip = stu_clip::DOWN;
@@ -1076,13 +1103,44 @@ impl Critters {
                 s.vel.y = (s.vel.y - s.gravity).max(-40.0);
             }
             let mut next = s.pos + s.vel;
-            if s.kind == ShotKind::Goop
+            let kind = s.goop.unwrap_or(self.goop_kind);
+            if s.kind != ShotKind::Seed
                 && let Some(t) = targets.iter().find(|t| t.id != s.owner && t.reached_by(next, 20.0, 20.0))
             {
-                self.events.push(CritterEvent::Hit { id: s.id, target: t.id, mario: t.mario, pos: next, kind: DamageKind::EnemyCommon });
+                self.events.push(CritterEvent::Hit {
+                    id: s.id, target: t.id, mario: t.mario, pos: next, kind: DamageKind::EnemyCommon, scale: s.damage,
+                });
                 if s.splat > 0.0 {
                     let ground = host.ground(next + Vec3::Y * 50.0).map_or(next.y, |g| g.height);
-                    goop.stamp(host, Vec3::new(next.x, ground, next.z), s.splat * 0.5, self.goop_kind);
+                    goop.stamp(host, Vec3::new(next.x, ground, next.z), s.splat * 0.5, kind);
+                }
+                gone.push(s.id);
+                continue;
+            }
+            if s.kind == ShotKind::Paint {
+                // Splats on the first thing it touches.
+                let ground = host.ground(next + Vec3::Y * 20.0).filter(|g| next.y <= g.height + 0.05);
+                let mut walls = Vec::new();
+                let pushed = host.walls(next + Vec3::Y * 10.0, 20.0, 1, &mut walls);
+                let landed = match (ground, walls.first()) {
+                    (Some(g), _) if !g.flags.has(SurfaceFlags::WATER_SURFACE) => Some(Vec3::new(next.x, g.height, next.z)),
+                    (Some(_), _) => None,
+                    (None, Some(_)) => {
+                        // A wall: the goop runs down it to the floor below.
+                        let at = Vec3::new(pushed.x, next.y, pushed.z);
+                        Some(host.ground(at + Vec3::Y * 20.0).map_or(at, |g| Vec3::new(at.x, g.height, at.z)))
+                    }
+                    (None, None) if s.age > 240 => None,
+                    (None, None) => {
+                        s.pos = next;
+                        continue;
+                    }
+                };
+                if let Some(at) = landed
+                    && s.splat > 0.0
+                {
+                    goop.stamp(host, at, s.splat, kind);
+                    self.events.push(CritterEvent::Splat { id: s.id, pos: at, radius: s.splat });
                 }
                 gone.push(s.id);
                 continue;
@@ -1104,6 +1162,7 @@ impl Critters {
                         gone.push(s.id);
                         continue;
                     }
+                    ShotKind::Paint => unreachable!("paint shots are handled above"),
                     ShotKind::Goop if s.rest == 0 && s.vel.y.abs() >= 1.0 && !water => {
                         // `behaveToHitGround` for a straight shot: skips along the ground.
                         s.vel.x *= 0.8;
@@ -1121,7 +1180,7 @@ impl Critters {
                         s.rest += 1;
                         if s.rest > rest_time || water {
                             if s.splat > 0.0 && !water {
-                                goop.stamp(host, next, s.splat, self.goop_kind);
+                                goop.stamp(host, next, s.splat, kind);
                                 self.events.push(CritterEvent::Splat { id: s.id, pos: next, radius: s.splat });
                             }
                             self.events.push(CritterEvent::Sound { name: "MSD_SE_EN_PAKKUN_SEED_SINK", pos: next });
