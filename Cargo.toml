@@ -4,6 +4,7 @@ members = ["crates/libsms", "crates/libsms-assets", "crates/libsms-audio", "crat
 default-members = ["crates/libsms", "crates/libsms-assets", "crates/libsms-audio", "crates/libsms-present", "crates/libsms-ffi"]
 
 [workspace.package]
+license = "CC0-1.0"
 version = "0.1.0"
 edition = "2024"
 publish = false

@@ -73,3 +73,11 @@ Shift spray, X swap nozzle, 1-4 pick nozzle, arrows orbit the camera, R respawn.
 cargo test
 cargo run -p libsms --example report
 ```
+
+## License and credits
+
+Original contributions by **wesleyasaurus** are dedicated to the public domain under
+[CC0 1.0 Universal](LICENSE), to the extent wesleyasaurus owns the relevant rights.
+Attribution for those contributions is appreciated but not required. Third-party software
+and original game content retain their respective rights and terms.
+See [CREDITS.md](CREDITS.md) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
