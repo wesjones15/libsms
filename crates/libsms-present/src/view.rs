@@ -65,7 +65,7 @@ pub use entrance::{Entrance, entrance_fall, entrance_pose, entrance_fast_pose, E
 
 #[path = "luigi_skin.rs"]
 mod luigi_skin;
-pub use luigi_skin::{HsdBatch, Luigi, LUIGI_HANG_OFFSET, LUIGI_ROD_SHAPE};
+pub use luigi_skin::{HsdBatch, Luigi, LUIGI_HANG_OFFSET, LUIGI_ROD_SHAPE, extract_melee_files as extract_luigi_melee_files, melee_files_complete as luigi_melee_files_complete};
 
 #[path = "yoshi_skin.rs"]
 mod yoshi_skin;

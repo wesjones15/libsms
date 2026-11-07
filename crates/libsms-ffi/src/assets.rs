@@ -40,6 +40,43 @@ pub unsafe extern "C" fn sms_assets_complete(dir: *const c_char) -> u8 {
     .unwrap_or(0)
 }
 
+/// Whether `melee_dir` holds the Luigi skin's Melee files (Melee Luigi's whole asset set).
+///
+/// # Safety
+/// `melee_dir` must be null or a nul-terminated string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_luigi_melee_complete(melee_dir: *const c_char) -> u8 {
+    crate::caught("sms_luigi_melee_complete", || {
+        // SAFETY: as documented.
+        unsafe { path_arg(melee_dir) }.is_some_and(|p| libsms_present::view::luigi_melee_files_complete(&p)) as u8
+    })
+    .unwrap_or(0)
+}
+
+/// Extracts the Luigi skin's Melee files from the player's own Melee disc (GALE01 revision 2) into
+/// `melee_dir`, for a host without the Melee plugin. Returns 1 on success; `msg` receives the error.
+///
+/// # Safety
+/// `disc` and `melee_dir` must be null or nul-terminated strings; `msg` null or writable for `msg_len` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_luigi_melee_extract(disc: *const c_char, melee_dir: *const c_char, msg: *mut u8, msg_len: u32) -> u8 {
+    let result = crate::caught("sms_luigi_melee_extract", || -> Result<String, String> {
+        // SAFETY: as documented.
+        let out = unsafe { path_arg(melee_dir) }.ok_or("missing Melee asset directory")?;
+        let disc = unsafe { path_arg(disc) }.ok_or("missing Melee disc path")?;
+        libsms_present::view::extract_luigi_melee_files(&disc, &out)?;
+        Ok(format!("Luigi's Melee files extracted into {}", out.display()))
+    });
+    let (ok, text) = match result {
+        Ok(Ok(text)) => (1, text),
+        Ok(Err(text)) => (0, text),
+        Err(_) => (0, "the extractor panicked".into()),
+    };
+    // SAFETY: as documented.
+    unsafe { write_str(&text, msg, msg_len) };
+    ok
+}
+
 /// Find the user's Sunshine ISO/GCM/CISO via `$SMS_DISC`, then `;`-separated directories.
 /// Writes a nul-terminated UTF-8 path; returns 0 if absent or the buffer is too small.
 ///

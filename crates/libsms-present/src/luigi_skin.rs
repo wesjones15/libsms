@@ -353,3 +353,15 @@ impl Luigi {
         (first_vertex, first_color)
     }
 }
+
+/// Whether `melee_dir` holds every Melee file the Luigi skin reads (Melee Luigi's whole asset set, the
+/// same set the Melee plugin's own Luigi uses, so neither plugin extracts it twice).
+pub fn melee_files_complete(melee_dir: &Path) -> bool {
+    libssbm_assets::fighter::LUIGI.complete(melee_dir)
+}
+
+/// Extracts Luigi's Melee files from the player's own Melee disc (GALE01 revision 2) into `melee_dir`,
+/// through libssbm's allowlisted extractor. For a host that has the Sunshine plugin but not the Melee one.
+pub fn extract_melee_files(disc: &Path, melee_dir: &Path) -> Result<(), String> {
+    libssbm_assets::disc::extract_for(disc, melee_dir, &libssbm_assets::fighter::LUIGI).map_err(|e| e.to_string())
+}
