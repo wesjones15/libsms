@@ -2318,9 +2318,19 @@ impl View {
         // cache never loaded.
         let mut luigi_world: Option<Vec<Mat4>> = None;
         let mut luigi_chest: Option<Mat4> = None;
+        // A pose override (the Melee A attacks on Mario's rig) replaces the clip, so Luigi takes
+        // it from the drawn joints rather than the sim's clip, as Yoshi's retarget does.
+        let overridden = self
+            .pose_override
+            .as_ref()
+            .is_some_and(|p| p.len() == joints.len());
         if self.skin == Skin::Luigi
             && let Some(luigi) = self.luigi.as_mut()
-            && let Some(mut world) = luigi.pose(m.anim.clip, m.anim.frame_before(back))
+            && let Some(mut world) = if overridden {
+                Some(luigi.pose_joints(&joints))
+            } else {
+                luigi.pose(m.anim.clip, m.anim.frame_before(back))
+            }
         {
             // Luigi's rig carries Mario's clip as rotations only, so it loses the root motion
             // the clips carry (the dive's drop, the hang's drop, the idle's bob). Anchor his
@@ -3194,6 +3204,71 @@ mod tests {
         assert_eq!(texture_ids.len(), luigi.batches.len());
         assert!(positions.iter().all(|p| p.is_finite()), "skinned vertices are finite");
         assert!(positions.iter().any(|p| p.y.abs() > 10.0), "the body is not collapsed to a point");
+    }
+
+    /// The Melee A attacks replace Mario's drawn pose (`set_pose_override`); Luigi is drawn from that
+    /// pose too, not from the sim's clip underneath it. Renders a frame with and without an override
+    /// and checks Luigi's drawn vertices are the override's retarget, anchored as usual.
+    #[test]
+    fn luigi_follows_the_pose_override() {
+        let Some(dir) = libsms::assets::find(None) else {
+            eprintln!("SKIP: Sunshine assets absent");
+            return;
+        };
+        let Some(melee) = melee_dir() else {
+            eprintln!("SKIP: Melee cache absent");
+            return;
+        };
+        let mut v = View::load(&dir).unwrap();
+        if !v.set_luigi(&melee) {
+            eprintln!("SKIP: Luigi's Melee files absent");
+            return;
+        }
+        v.set_skin(Skin::Luigi);
+        let a = libsms::Assets::discover(None).unwrap();
+        let mut sim = Sim::new(a.params, a.anim_table, Vec3::ZERO, 0);
+        let mut host = libsms::FlatHost::default();
+        let pad = libsms::Pad::default();
+        for _ in 0..30 {
+            sim.advance(&mut host, &pad, i16::MIN, 1.0 / 60.0);
+        }
+        let luigi_verts = |v: &View| -> Vec<Vec3> {
+            let model = v.models.len() as u32;
+            let d = v.draws.iter().find(|d| d.model == model).expect("Luigi is drawn");
+            let n = v.luigi.as_ref().unwrap().vertex_count;
+            v.positions[d.first_vertex as usize..d.first_vertex as usize + n].to_vec()
+        };
+
+        v.update(&mut sim, 1.0 / 60.0);
+        let clip_pose = luigi_verts(&v);
+
+        // Mario's bind pose stands in for a ported attack: a full joint set unlike the idle clip.
+        let attack = v.skeleton.bind_world();
+        assert!(v.set_pose_override(Some(attack.clone())), "the override has Mario's joint count");
+        v.update(&mut sim, 1.0 / 60.0);
+        let drawn = luigi_verts(&v);
+        let moved = clip_pose.iter().zip(&drawn).map(|(a, b)| (*a - *b).length()).fold(0.0, f32::max);
+        assert!(moved > 5.0, "Luigi still shows the clip under the override (max move {moved})");
+
+        // The expected vertices: the override's retarget, skinned; the view only adds the anchor's
+        // vertical shift (the same for every vertex).
+        let luigi = v.luigi.as_ref().unwrap();
+        let world = luigi.pose_joints(&attack);
+        let (mut p, mut n, mut u, mut c, mut t) = (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        luigi.skin_into(&world, &mut p, &mut n, &mut u, &mut c, &mut t, false);
+        assert_eq!(p.len(), drawn.len());
+        let shift = drawn[0] - p[0];
+        assert!(shift.x.abs() < 1e-3 && shift.z.abs() < 1e-3, "only a vertical anchor: {shift:?}");
+        for (d, e) in drawn.iter().zip(&p) {
+            assert!((*d - *e - shift).length() < 1e-2, "vertex off the override's pose: {d:?} vs {e:?}");
+        }
+
+        // Cleared, he is back on the clip.
+        assert!(v.set_pose_override(None));
+        v.update(&mut sim, 1.0 / 60.0);
+        let back = luigi_verts(&v);
+        let off = clip_pose.iter().zip(&back).map(|(a, b)| (*a - *b).length()).fold(0.0, f32::max);
+        assert!(off < moved * 0.5, "Luigi didn't return to the clip (max off {off})");
     }
 
     fn shine() -> Option<View> {

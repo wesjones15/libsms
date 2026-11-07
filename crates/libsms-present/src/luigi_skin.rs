@@ -245,6 +245,20 @@ impl Luigi {
         Some(self.retarget.pose(&self.model, &self.rig, clip, frame))
     }
 
+    /// Luigi's joint matrices from Mario's drawn pose (one model-space matrix per Sunshine joint),
+    /// in Melee units: the same retarget as [`Self::pose`], fed the posed joints' rotations instead
+    /// of a clip's, so a pose the host replaced (the Melee A attacks) reaches Luigi too.
+    pub fn pose_joints(&self, joints: &[Mat4]) -> Vec<Mat4> {
+        let world: Vec<glam::Mat3> = joints
+            .iter()
+            .map(|m| {
+                let (_, r, _) = m.to_scale_rotation_translation();
+                glam::Mat3::from_quat(r)
+            })
+            .collect();
+        self.retarget.pose_world(&self.model, &world)
+    }
+
     /// The lowest skinned point of a pose from [`Self::pose`], in Luigi's model units.
     pub fn lowest(&self, world: &[Mat4]) -> f32 {
         let mut low = f32::INFINITY;
