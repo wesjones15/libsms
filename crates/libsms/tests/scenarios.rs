@@ -4728,3 +4728,47 @@ fn spray_keeps_up_with_a_boosted_jump() {
     assert!(plain > 0.0, "{plain}");
     assert!(boosted > 8.0 * plain, "{plain} {boosted}");
 }
+
+/// Apex of the jump out of a pound from 1500, with or without a stick circle in the fall.
+fn spin_pound_jump_apex(circle: bool, spin_mult: f32) -> f32 {
+    let mut s: Scene<FlatHost> = Scene::flat();
+    s.sim.mario.options.pound_jump = 0.75;
+    s.sim.mario.options.spin_pound_jump = spin_mult;
+    s.sim.mario.pos = Vec3::new(0.0, 1500.0, 0.0);
+    s.step(2);
+    s.pad.l = true;
+    s.step(1);
+    s.pad.l = false;
+    let mut angle = 0.0f32;
+    for i in 0..3000 {
+        if circle && i < 40 {
+            angle += std::f32::consts::TAU / 12.0;
+            s.pad.stick = Vec2::new(angle.cos(), angle.sin());
+        } else {
+            s.pad.stick = Vec2::ZERO;
+        }
+        if s.mario().status == Status::HipAttackEnd {
+            break;
+        }
+        s.step(1);
+    }
+    s.pad.stick = Vec2::ZERO;
+    s.press_a();
+    assert_eq!(s.mario().status, Status::UltraJump);
+    let mut apex = 0.0f32;
+    while s.mario().vel.y > 0.0 || s.mario().pos.y > apex {
+        apex = apex.max(s.mario().pos.y);
+        s.step(1);
+    }
+    apex
+}
+
+#[test]
+fn a_spinning_pound_jumps_much_higher_than_a_plain_one() {
+    let plain = spin_pound_jump_apex(false, 2.5);
+    let spun = spin_pound_jump_apex(true, 2.5);
+    let spun_off = spin_pound_jump_apex(true, 1.0);
+    println!("pound jump apex: plain {plain:.0}, spun {spun:.0}, spun at x1 {spun_off:.0}");
+    assert!(spun > plain * 2.0, "{spun} vs {plain}");
+    assert!((spun_off - plain).abs() < plain * 0.1, "{spun_off} vs {plain}");
+}

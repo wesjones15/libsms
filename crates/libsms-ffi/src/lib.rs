@@ -31,7 +31,7 @@ use libsms::{
 use view::SmsView;
 
 /// ABI version, bumped when the C interface changes.
-pub const SMS_ABI_VERSION: u32 = 49;
+pub const SMS_ABI_VERSION: u32 = 50;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sms_abi_version() -> u32 {
@@ -412,6 +412,9 @@ pub struct SmsTuning {
     /// is merely out of its dead zone. See `Options::corkscrew_hold_degrees`; not the game's
     /// (host extension).
     pub corkscrew_hold_degrees: f32,
+    /// A on a spinning ground pound's landing leaps this many times as high as `pound_jump`
+    /// gives (0 or 1: no difference).
+    pub spin_pound_jump: f32,
 }
 
 /// A host's own limits on FLUDD and the slide ([`libsms::Limits`]), for games that bill them
@@ -1773,6 +1776,11 @@ pub unsafe extern "C" fn sms_sim_set_tuning(sim: *mut SmsSim, tuning: *const Sms
                 t.corkscrew_hold_degrees.clamp(0.0, 360.0)
             } else {
                 60.0
+            };
+            o.spin_pound_jump = if t.spin_pound_jump.is_finite() {
+                t.spin_pound_jump.clamp(1.0, 10.0)
+            } else {
+                1.0
             };
         }
     })

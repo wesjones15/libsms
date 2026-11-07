@@ -294,6 +294,9 @@ pub struct Options {
     /// stick is merely out of its dead zone. Default 60. The game has no corkscrew (host
     /// extension).
     pub corkscrew_hold_degrees: f32,
+    /// A on a *spinning* ground pound's landing leaps this many times as high as
+    /// [`Options::pound_jump`] gives (1: no difference). Host extension.
+    pub spin_pound_jump: f32,
 }
 
 /// Ticks either side of a stomp in which A counts for [`Options::stomp_jump`].
@@ -327,6 +330,7 @@ impl Default for Options {
             host_fire_reaction: false,
             yoshi_skin: false,
             corkscrew_hold_degrees: 60.0,
+            spin_pound_jump: 1.0,
         }
     }
 }
@@ -488,6 +492,8 @@ pub struct Mario {
     pub(crate) wet_ground: bool,
     /// Units the last ground pound fell, for [`Options::pound_jump`].
     pub(crate) last_pound_drop: f32,
+    /// Whether that pound was a spinning one (for [`Options::spin_pound_jump`]).
+    pub(crate) last_pound_spin: bool,
     /// A pound jump's drop, consumed by its take-off.
     pub(crate) pound_rebound: Option<f32>,
     /// Ticks since A was pressed, and a stomp's late-press window ([`Options::stomp_jump`]):
@@ -636,6 +642,7 @@ impl Mario {
             water_underfoot: false,
             wet_ground: false,
             last_pound_drop: 0.0,
+            last_pound_spin: false,
             pound_rebound: None,
             a_age: u32::MAX,
             air_ticks: 0,
@@ -1673,7 +1680,8 @@ impl Mario {
         // at `v` under `g` a tick, moving `v / 4` a tick, is about `v^2 / 8g`.
         let pound = self.pound_rebound.take();
         if let Some(drop) = pound {
-            let h = drop * self.options.pound_jump;
+            let spin = if self.last_pound_spin { self.options.spin_pound_jump.max(1.0) } else { 1.0 };
+            let h = drop * self.options.pound_jump * spin;
             let v = (8.0 * self.params.jump.gravity * h).sqrt();
             self.vel.y = self.vel.y.max(v);
         }
