@@ -3956,7 +3956,10 @@ mod tests {
     /// rotation as well it pooled about his middle.
     #[test]
     fn the_rockets_exhaust_leaves_the_nozzle_on_his_back_as_he_climbs() {
-        let dir = libsms::assets::find(None).expect("assets not found (set SMS_ASSETS)");
+        let Some(dir) = libsms::assets::find(None) else {
+            eprintln!("skipped: needs extracted Sunshine assets (SMS_ASSETS)");
+            return;
+        };
         let a = libsms::Assets::discover(None).unwrap();
         for only in ["ms_m_rocket_a", "ms_m_rocket_b", "ms_m_rocket_b2"] {
             let mut v = View::load(&dir).unwrap();
@@ -4073,7 +4076,10 @@ mod tests {
 
     #[test]
     fn the_burning_mario_wears_the_hot_face() {
-        let dir = libsms::assets::find(None).expect("assets not found (set SMS_ASSETS)");
+        let Some(dir) = libsms::assets::find(None) else {
+            eprintln!("skipped: needs extracted Sunshine assets (SMS_ASSETS)");
+            return;
+        };
         let v = View::load(&dir).unwrap();
         let wink = v.wink.as_ref().expect("no blink pattern");
         assert_eq!(v.faces.len(), FACE_PATTERNS.len(), "a hot face pattern did not load");
@@ -4133,7 +4139,10 @@ mod tests {
 
     #[test]
     fn the_turbo_dash_draws_the_water_boost_cone_and_its_particles() {
-        let dir = libsms::assets::find(None).expect("assets not found (set SMS_ASSETS)");
+        let Some(dir) = libsms::assets::find(None) else {
+            eprintln!("skipped: needs extracted Sunshine assets (SMS_ASSETS)");
+            return;
+        };
         let mut v = View::load(&dir).unwrap();
         assert!(v.models.len() > models::WATERBOOST as usize, "the cone didn't load");
         let a = libsms::Assets::discover(None).unwrap();
@@ -4190,7 +4199,10 @@ mod tests {
     /// see-through path, not as an opaque shell.
     #[test]
     fn the_water_boost_cone_is_translucent_not_an_opaque_shell() {
-        let dir = libsms::assets::find(None).expect("assets not found (set SMS_ASSETS)");
+        let Some(dir) = libsms::assets::find(None) else {
+            eprintln!("skipped: needs extracted Sunshine assets (SMS_ASSETS)");
+            return;
+        };
         let v = View::load(&dir).unwrap();
         let m = &v.models[models::WATERBOOST as usize];
         for (i, b) in m.batches.iter().enumerate() {
@@ -4211,7 +4223,10 @@ mod tests {
     /// game frame): the `_out` clip's 21 frames take eleven game frames, not twenty-one.
     #[test]
     fn the_water_boost_cone_plays_its_clips_in_real_time() {
-        let dir = libsms::assets::find(None).expect("assets not found (set SMS_ASSETS)");
+        let Some(dir) = libsms::assets::find(None) else {
+            eprintln!("skipped: needs extracted Sunshine assets (SMS_ASSETS)");
+            return;
+        };
         let v = View::load(&dir).unwrap();
         let mut b = v.boost.expect("the cone's files are there");
         b.step(true);
@@ -4529,7 +4544,10 @@ mod tests {
     /// pelvis and have hands, in the same model space as the draws.
     #[test]
     fn item_anchors_sit_on_every_skins_body() {
-        let dir = libsms::assets::find(None).expect("assets not found (set SMS_ASSETS)");
+        let Some(dir) = libsms::assets::find(None) else {
+            eprintln!("skipped: needs extracted Sunshine assets (SMS_ASSETS)");
+            return;
+        };
         for skin in [Skin::Mario, Skin::Luigi, Skin::Piantissimo, Skin::Yoshi] {
             let a = libsms::Assets::discover(None).unwrap();
             let mut sim = Sim::new(a.params, a.anim_table, Vec3::ZERO, 0);

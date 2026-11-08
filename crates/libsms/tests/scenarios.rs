@@ -413,6 +413,9 @@ fn dive_then_belly_slide() {
 
 #[test]
 fn spray_can_start_or_continue_through_a_b_dive_and_belly_slide() {
+    if need_disc() {
+        return;
+    }
     for already_spraying in [false, true] {
         let mut s = Scene::flat();
         s.sim.mario.give_fludd();
@@ -478,6 +481,9 @@ fn spray_can_start_and_stop_during_a_belly_slide() {
 
 #[test]
 fn the_pack_pumps_while_spraying_in_a_dive_or_belly_slide() {
+    if need_disc() {
+        return;
+    }
     // `spray_during_dive` lets the Spray fire where no arm pump clip exists (`sldct`'s
     // `gMarioAnimeData` row is 0xC8): Mario keeps his pose, but FLUDD's pack still pulses —
     // `TWaterGun::calcAnimation` mirrors the pump frame onto `wg_pump`.
@@ -1304,6 +1310,9 @@ fn ledge_scene(top: f32, z: f32, y: f32) -> Scene<LedgeHost> {
 
 #[test]
 fn a_jump_against_a_ledge_catches_it_and_climbs_up() {
+    if need_disc() {
+        return;
+    }
     let mut s = ledge_scene(300.0, 40.0, 0.0);
     s.step(2);
     s.pad.stick = Vec2::new(0.0, 0.5);
@@ -1329,6 +1338,9 @@ fn a_jump_against_a_ledge_catches_it_and_climbs_up() {
 
 #[test]
 fn b_lets_go_of_a_ledge() {
+    if need_disc() {
+        return;
+    }
     let mut s = ledge_scene(300.0, 40.0, 0.0);
     s.step(2);
     s.pad.stick = Vec2::new(0.0, 0.5);
@@ -1346,6 +1358,9 @@ fn b_lets_go_of_a_ledge() {
 
 #[test]
 fn walking_slowly_off_an_edge_lowers_mario_to_hang() {
+    if need_disc() {
+        return;
+    }
     // On the block, walking slowly toward its edge (-Z).
     let mut s = ledge_scene(300.0, 200.0, 300.0);
     s.step(2);
@@ -2224,6 +2239,9 @@ fn a_dive_is_not_knocked_out_of() {
 
 #[test]
 fn knockdown_cancel_gets_him_up_once_the_slide_is_spent() {
+    if need_disc() {
+        return;
+    }
     let stood_after = |cancel: bool, stick: bool| {
         let mut s = Scene::flat();
         s.sim.mario.options.knockdown_cancel = cancel;
@@ -2899,6 +2917,9 @@ fn limited_air_uses_spend_the_free_one_then_extras_then_refuse() {
 
 #[test]
 fn a_granted_extra_use_starts_another_hover_in_the_same_jump() {
+    if need_disc() {
+        return;
+    }
     // The game allows one Rocket or Hover start per jump; each use the host grants is another.
     let mut s = Scene::flat();
     s.sim.mario.limits.air_uses = true;
@@ -2921,6 +2942,9 @@ fn a_granted_extra_use_starts_another_hover_in_the_same_jump() {
 
 #[test]
 fn rocket_after_rocket_in_one_jump_needs_and_spends_a_granted_use() {
+    if need_disc() {
+        return;
+    }
     // From the ground: the first Rocket is the jump's free use; each Rocket after it in the air is one of the extras.
     let run = |extra: u32| {
         let mut s = Scene::flat();
@@ -2955,6 +2979,9 @@ fn rocket_after_rocket_in_one_jump_needs_and_spends_a_granted_use() {
 
 #[test]
 fn a_rocket_from_the_ground_is_the_jumps_free_use() {
+    if need_disc() {
+        return;
+    }
     let mut s = Scene::flat();
     s.sim.mario.limits.air_uses = true;
     s.sim.mario.limits.air_extra = 0;
@@ -3186,6 +3213,9 @@ fn slide_length(limits: libsms::Limits, wet: bool) -> (f32, usize) {
 
 #[test]
 fn a_wet_slide_charge_makes_any_slide_glide_once() {
+    if need_disc() {
+        return;
+    }
     use libsms::{Limits, WetSlide};
     let charged = |ready, anywhere, max_ticks| Limits {
         wet_slide: Some(WetSlide {
@@ -3222,6 +3252,9 @@ fn a_wet_slide_charge_makes_any_slide_glide_once() {
 
 #[test]
 fn timed_wet_slides_use_actual_surface_wetness_and_go_on_while_it_stays_wet() {
+    if need_disc() {
+        return;
+    }
     struct Floor(bool);
     impl Host for Floor {
         fn ground(&self, pos: Vec3) -> Option<libsms::GroundHit> {
@@ -3396,6 +3429,9 @@ fn a_move_waits_for_the_pad_to_throw_him_before_it_breaks_the_flight() {
 
 #[test]
 fn the_rocket_and_the_turbo_break_a_pad_flight() {
+    if need_disc() {
+        return;
+    }
     let rocket = |nozzle: libsms::params::NozzleKind| {
         let mut s = Scene::flat();
         s.sim.mario.give_fludd();
@@ -3777,6 +3813,9 @@ fn dive_slide(shallow_wets: bool, water: Option<f32>) -> f32 {
 
 #[test]
 fn shallow_water_wets_a_slide_only_when_the_host_asks() {
+    if need_disc() {
+        return;
+    }
     let dry = dive_slide(false, None);
     let off = dive_slide(false, Some(15.0));
     let on = dive_slide(true, Some(15.0));
@@ -3857,6 +3896,9 @@ fn voices(events: &[Event], name: &str) -> usize {
 
 #[test]
 fn the_rocket_launches_with_its_voice_and_burst_and_exhaust() {
+    if need_disc() {
+        return;
+    }
     let e = nozzle_events(NozzleKind::Rocket);
     assert!(voices(&e, "MSD_SE_MV24_JUMP_SPECIAL_01") >= 1, "no launch voice");
     for burst in ["ms_m_rocket_d", "ms_m_rocket_c", "ms_hipdrop_a"] {
@@ -3873,6 +3915,9 @@ fn the_rocket_launches_with_its_voice_and_burst_and_exhaust() {
 
 #[test]
 fn the_turbo_and_the_hover_start_with_their_own_voices_and_no_rocket_effects() {
+    if need_disc() {
+        return;
+    }
     // The Turbo's start voice is the Rocket status's too, which the Turbo never enters (its
     // `mRocketType` isn't 1), so only the Hover has one.
     for (nozzle, voice, muzzles) in [
@@ -3909,6 +3954,9 @@ fn the_spray_smokes_its_muzzle_only_while_water_leaves() {
 /// starts `MSD_SE_PO_SNIPER_TRIGGER` on himself, then `MSD_SE_PO_SPREAD` every tick of the dash.
 #[test]
 fn the_turbo_dash_has_its_start_sound_and_its_spread_sound_every_tick() {
+    if need_disc() {
+        return;
+    }
     let mut s = Scene::flat();
     s.sim.mario.give_fludd();
     {
@@ -3931,6 +3979,9 @@ fn the_turbo_dash_has_its_start_sound_and_its_spread_sound_every_tick() {
 /// Turbo is let go in the air the dash is over, and B dives like out of any other nozzle's jump.
 #[test]
 fn letting_go_of_the_turbo_in_a_dash_jump_ends_the_dash_and_allows_a_dive() {
+    if need_disc() {
+        return;
+    }
     let mut s = Scene::flat();
     s.sim.mario.give_fludd();
     {
@@ -3967,6 +4018,9 @@ fn letting_go_of_the_turbo_in_a_dash_jump_ends_the_dash_and_allows_a_dive() {
 /// its own length and then upright in the plain dive (host extension).
 #[test]
 fn a_stick_circle_in_a_turbo_dash_jump_is_a_corkscrew_dive() {
+    if need_disc() {
+        return;
+    }
     let mut s = Scene::flat();
     s.sim.mario.give_fludd();
     {
@@ -4129,6 +4183,9 @@ fn corkscrew_scene(enemies: Vec<(Vec3, f32, f32)>) -> Scene<Enemies> {
 /// second.
 #[test]
 fn a_slow_gentle_circle_holds_the_corkscrew() {
+    if need_disc() {
+        return;
+    }
     let mut s = corkscrew_scene(vec![]);
     assert_eq!(s.sim.mario.status, Status::JumpCatch, "the circle didn't start the dive");
     // Half the stick, 90 degrees every 12 ticks: a full circle takes 0.4 s (48 ticks), twice
@@ -4153,6 +4210,9 @@ fn a_slow_gentle_circle_holds_the_corkscrew() {
 /// grace window, so the same slow circle drops the roll.
 #[test]
 fn a_whole_circle_rule_drops_a_slow_corkscrew() {
+    if need_disc() {
+        return;
+    }
     let mut s = corkscrew_scene(vec![]);
     s.sim.mario.options.corkscrew_hold_degrees = 360.0;
     assert_eq!(s.sim.mario.status, Status::JumpCatch);
@@ -4175,6 +4235,9 @@ fn a_whole_circle_rule_drops_a_slow_corkscrew() {
 /// flight and down, whatever the host aims at.
 #[test]
 fn the_spray_in_a_corkscrew_turns_with_the_roll_as_spin_water() {
+    if need_disc() {
+        return;
+    }
     let mut s = corkscrew_scene(vec![]);
     assert_eq!(s.sim.mario.status, Status::JumpCatch);
     {
@@ -4214,6 +4277,9 @@ fn the_spray_in_a_corkscrew_turns_with_the_roll_as_spin_water() {
 /// Mario back over.
 #[test]
 fn a_corkscrew_spun_for_one_second_burns_and_its_hit_bonks_him() {
+    if need_disc() {
+        return;
+    }
     let mut s = corkscrew_scene(vec![]);
     assert_eq!(s.sim.mario.status, Status::JumpCatch);
     let start = s.sim.mario.pos;
@@ -4322,6 +4388,9 @@ fn a_spin_out_of_the_rockets_climb_doubles_it_and_hits_what_is_above() {
 /// A burning corkscrew lands in a slide that keeps its speed and its fire for two seconds, then is a plain wet slide.
 #[test]
 fn a_burning_corkscrew_lands_in_a_blazing_slide_for_two_seconds() {
+    if need_disc() {
+        return;
+    }
     let mut s = corkscrew_scene(vec![]);
     let mut angle = 0.0f32;
     // Spin four seconds and a bit, then let go and land.
@@ -4353,6 +4422,9 @@ fn a_burning_corkscrew_lands_in_a_blazing_slide_for_two_seconds() {
 /// The blazing slide hits like the corkscrew, not like a plain slide.
 #[test]
 fn the_blazing_slide_hits_as_a_corkscrew() {
+    if need_disc() {
+        return;
+    }
     let mut s = corkscrew_scene(vec![]);
     let (mut angle, mut landed) = (0.0f32, None);
     for i in 0..1500 {
@@ -4393,6 +4465,9 @@ fn the_blazing_slide_hits_as_a_corkscrew() {
 /// A full stick circle in a plain dive is a corkscrew at the dive's own speed, once per dive, for as long as the stick circles.
 #[test]
 fn a_stick_circle_in_a_plain_dive_is_a_normal_speed_corkscrew() {
+    if need_disc() {
+        return;
+    }
     let mut s = Scene::flat();
     s.pad.stick = Vec2::new(0.0, 1.0);
     s.pad.a = true;
@@ -4430,6 +4505,9 @@ fn a_stick_circle_in_a_plain_dive_is_a_normal_speed_corkscrew() {
 
 #[test]
 fn both_corkscrews_follow_camera_yaw_and_only_relative_pitch() {
+    if need_disc() {
+        return;
+    }
     fn steer<H:Host>(s:&mut Scene<H>) {
         // A tilted starting camera must still launch level. Raise well above terrain
         // to measure the downward steering without ending the roll on the floor.
