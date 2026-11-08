@@ -12,13 +12,36 @@
 use std::path::Path;
 
 use glam::Vec3;
-use libsms::water::{SLOTS, State, WaterEvent, WaterManager};
+use libsms::water::{SLOTS, Particle, State, WaterEvent, WaterManager};
 use libsms_assets::texture::read_bti;
 
 mod surface;
 
 /// `unk5D18`: how far the stretched quad reaches along the velocity.
 const STRETCH: f32 = 4.0;
+
+/// Asset-independent flight shape shared by the textured quads and primitive hosts.
+/// `calcDrawVtx` stretch and nozzle clipping affect presentation only.
+#[derive(Debug, Clone, Copy)]
+pub struct FlightShape { pub center: Vec3, pub half: f32, pub stretch: Vec3, pub back: f32 }
+impl FlightShape {
+    pub fn ends(self) -> (Vec3, Vec3) {
+        let axis=self.stretch.normalize_or(Vec3::Z);
+        let reach=self.stretch.length()+self.half;
+        (self.center+axis*reach,self.center-axis*reach*self.back)
+    }
+}
+pub fn flight_shape(water: &WaterManager, p: &Particle, frac: f32, nozzle: Option<Vec3>) -> Option<FlightShape> {
+    if !water.drawn(p) { return None; }
+    let mut center=p.pos+p.velocity()*frac.clamp(-1.,1.);
+    let heading=p.vel.normalize_or_zero();
+    let mut came=(center-p.spawn).dot(heading);
+    if came<0. {center-=heading*came;came=0.;}
+    if let Some(n)=nozzle.filter(|_|!p.body_drip){came=came.min((center-n).dot(heading).max(0.));}
+    let half=1.414*0.5*p.size;
+    let stretch=p.velocity()*water.extension(p)*STRETCH;
+    Some(FlightShape{center,half,stretch,back:(came/(stretch.length()+half).max(1.)).min(1.)})
+}
 
 /// One corner of a water quad. Quads are 4 corners in order (a fan from the first).
 #[repr(C)]
@@ -199,33 +222,16 @@ impl WaterLook {
             let half = 1.414 * 0.5 * p.size;
             let corners = match p.state {
                 State::Flying => {
-                    if !water.drawn(p) {
-                        continue;
-                    }
-                    let velocity = p.velocity();
-                    let mut c = p.pos + velocity * frac;
-                    // A drop is never drawn behind where it left the nozzle: the host draws a little
-                    // behind the sim (negative `frac`), which would put a young drop inside FLUDD, and
-                    // the tail of its stretched quad reaches back too. How far it has come bounds both.
-                    let heading = p.vel.normalize_or_zero();
-                    let mut came = (c - p.spawn).dot(heading);
-                    if came < 0.0 {
-                        c -= heading * came;
-                        came = 0.0;
-                    }
-                    // Nor behind the nozzle as it is drawn now.
-                    if let Some(n) = self.nozzle.filter(|_| !p.body_drip) {
-                        came = came.min((c - n).dot(heading).max(0.0));
-                    }
+                    let Some(shape)=flight_shape(water,p,frac,self.nozzle) else {continue};
+                    let c=shape.center;
                     let (right, up) = if self.per_drop_facing { facing_axes(eye, c, right, up) } else { (right, up) };
                     let at = |x: f32, y: f32| c + right * x + up * y;
-                    let v = velocity * water.extension(p);
+                    let v = shape.stretch / STRETCH;
                     let (vx, vy) = (v.dot(right), v.dot(up));
                     let len = (vx * vx + vy * vy).sqrt();
                     if len > 1.0 {
                         let (nx, ny) = (vx / len * half, vy / len * half);
-                        let tail = (v.length() * STRETCH + half).max(1.0);
-                        let back = (came / tail).min(1.0);
+                        let back = shape.back;
                         [
                             at(nx + vx * STRETCH, ny + vy * STRETCH),
                             at(ny, -nx),
@@ -333,6 +339,28 @@ impl WaterLook {
 mod tests {
     use super::*;
     use libsms::{FlatHost, NozzleKind, Params, WaterEmit};
+
+    #[test]
+    fn primitive_spans_match_textured_spray_and_burst_tips() {
+        for burst in [false,true] {
+            let mut water=WaterManager::new(&Params::default());
+            let muzzle=Vec3::new(0.,150.,40.);
+            water.emit(&WaterEmit { nozzle:NozzleKind::Spray,pos:muzzle,dir:Vec3::Z,power:40.,count:1,attack:1,
+                hit_radius:50.,hit_height:80.,inherit:Vec3::ZERO,size:if burst{70.}else{50.},size_tremble:0.,
+                dir_tremble:0.,pow_tremble:0.,particle_type:0,burst,spin:false });
+            let mut look=WaterLook::default();look.nozzle=Some(muzzle);let mut compared=false;
+            for _ in 0..8 {
+                water.step(&FlatHost::default(),Vec3::ZERO);
+                look.build(&water,-0.5,Vec3::new(500.,150.,40.),Vec3::Z,Vec3::Y,0);
+                let Some(shape)=water.particles.first().and_then(|p|flight_shape(&water,p,-0.5,Some(muzzle))) else{continue};
+                let (head,tail)=shape.ends();
+                assert!(head.distance(look.vertices[0].pos)<0.001,"primitive shortened the textured water head");
+                assert!(tail.distance(look.vertices[2].pos)<0.001,"primitive shortened the textured water tail");
+                assert!(tail.z>=muzzle.z-0.01,"primitive water extends behind FLUDD");compared=true;
+            }
+            assert!(compared,"no flying water was checked");
+        }
+    }
 
     #[test]
     fn a_drop_is_never_drawn_behind_where_it_left_the_nozzle() {

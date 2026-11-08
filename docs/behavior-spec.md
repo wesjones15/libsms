@@ -9,6 +9,18 @@ opacity without a view or texture. A host can use a generated radial mask; the
 export does not create a second wetness simulation. Empty-cache boundary checks
 require finite emitters and actual wet geometry after sustained spraying.
 
+ABI 54 adds `sms_sim_water_segments` and `sms_sim_nozzle_charge` for primitive hosts.
+The textured water and cylinder spans now share `water::flight_shape`: extension
+times four (`TModelWaterManager::calcDrawVtx`, Player/ModelWaterManager.cpp), half
+size, interpolated center, and tail clipping at the current drawn muzzle. Their
+head/tail positions match in side-view tests, for both ordinary Spray and a light
+burst. The host keeps thin normal cylinders and permits the burst's own size.
+Burst counts, direction spread and lifetime remain WaterManager's actual particles;
+no presentation-only burst changes hit/damage rules. The normalized Rocket charge
+comes from the same `Fludd::pressure` used by the original HUD. The basic gauge is
+authored geometry (circle, rectangular water level, nozzle letter and ascending
+orange charge), with no game picture or effect ID.
+
 Enemy water-hit feedback: JPA emitter 0xE7 (`ms_enm_wathit`) and sound 0x6802
 (`MSD_SE_EN_COMMON_W_HIT_OK`) now share the native contact path and remote replay.
 Source, viewer proof, checks and approximations: [Enemy water hit](enemy-water-hit.md).

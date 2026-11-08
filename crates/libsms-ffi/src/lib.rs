@@ -31,7 +31,7 @@ use libsms::{
 use view::SmsView;
 
 /// ABI version, bumped when the C interface changes.
-pub const SMS_ABI_VERSION: u32 = 53;
+pub const SMS_ABI_VERSION: u32 = 54;
 
 #[cfg(test)]
 mod builtin_tests {
@@ -52,6 +52,29 @@ mod builtin_tests {
             assert!((*sim).last_spray.emits > 0);
             assert!(sms_sim_water_particles(sim, std::ptr::null_mut(), 0) > 0);
             assert!((*sim).sim.mario.fludd.as_ref().unwrap().water < initial);
+            sms_sim_free(sim);
+        }
+    }
+    #[test]
+    fn primitive_spans_preserve_light_burst_and_expose_actual_rocket_charge() {
+        unsafe {
+            let dir=CString::new("").unwrap();let sim=sms_sim_new(dir.as_ptr(),&SmsVec3::default(),0);
+            let mut host:SmsHost=std::mem::zeroed();host.ground=Some(floor);
+            let mut saw_burst=false;
+            for frame in 0..60 {
+                let pad=SmsPad{r_analog:if frame<10{12}else{0},..Default::default()};
+                sms_sim_step(sim,&host,&pad,0,1./60.,std::ptr::null_mut());
+                let total=sms_sim_water_segments(sim,1.,std::ptr::null_mut(),0);
+                let mut spans=vec![SmsWaterSegment::default();total as usize+1];
+                spans[total as usize].flags=0xDEADBEEF;
+                sms_sim_water_segments(sim,1.,spans.as_mut_ptr(),total);
+                assert_eq!(spans[total as usize].flags,0xDEADBEEF,"water copy exceeded capacity");
+                saw_burst|=spans[..total as usize].iter().any(|s|s.flags&1!=0);
+            }
+            assert!(saw_burst,"short Spray burst had no primitive representation");
+            sms_sim_select_nozzle(sim,3);let mut highest=0f32;
+            for _ in 0..50 {sms_sim_step(sim,&host,&SmsPad{r:1,r_analog:255,..Default::default()},0,1./120.,std::ptr::null_mut());highest=highest.max(sms_sim_nozzle_charge(sim));}
+            assert!(highest>0.2&&highest<=1.,"no live Rocket charge for procedural gauge: {highest}");
             sms_sim_free(sim);
         }
     }
@@ -130,6 +153,39 @@ mod builtin_tests {
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct SmsWaterParticle { pub pos: SmsVec3, pub velocity: SmsVec3, pub radius: f32 }
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct SmsWaterSegment { pub head: SmsVec3, pub tail: SmsVec3, pub radius: f32, pub flags: u32 }
+pub(crate) fn water_draw_nozzle(s: &SmsSim, lag: f32) -> Option<Vec3> {
+    s.sim.mario.muzzle_world(0).map(|m|m+Vec3::new(s.sim.mario.vel.x,0.,s.sim.mario.vel.z)*(0.25*(s.sim.alpha()-lag)))
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_sim_nozzle_charge(sim: *const SmsSim) -> f32 {
+    libcommon::ffi::guard("sms_sim_nozzle_charge",0.,|| {
+        let Some(s)=(unsafe{sim.as_ref()}) else{return 0.};
+        s.sim.mario.fludd.as_ref().and_then(|f|f.pressure(&s.sim.mario.params)).map_or(0.,|(n,d)|if d>0.{(n/d).clamp(0.,1.)}else{0.})
+    })
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn sms_water_segment_size() -> u32 { std::mem::size_of::<SmsWaterSegment>() as u32 }
+/// View-independent textured-water flight span, including burst size and muzzle clipping.
+/// Copies at most max entries; returns total drawn segments. Null output queries size.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_sim_water_segments(sim: *const SmsSim, lag: f32, out: *mut SmsWaterSegment, max: u32) -> u32 {
+    libcommon::ffi::guard("sms_sim_water_segments",0,|| {
+        let Some(s)=(unsafe{sim.as_ref()}) else{return 0};if s.poisoned{return 0;}
+        let lag=if lag.is_finite(){lag.clamp(0.,16.)}else{0.};
+        let frac=(s.water_ticks as f32+s.sim.alpha()-lag)/4.;
+        let nozzle=water_draw_nozzle(s,lag);
+        let mut n=0;
+        for p in &s.water.particles {
+            let Some(shape)=libsms_present::water::flight_shape(&s.water,p,frac,nozzle) else{continue};
+            let (head,tail)=shape.ends();
+            if !out.is_null()&&n<max {unsafe{out.add(n as usize).write(SmsWaterSegment{head:head.into(),tail:tail.into(),radius:shape.half,flags:u32::from(p.burst)|(u32::from(p.spin)<<1)})}}
+            n+=1;
+        }n
+    })
+}
 #[unsafe(no_mangle)]
 pub extern "C" fn sms_water_particle_size() -> u32 { std::mem::size_of::<SmsWaterParticle>() as u32 }
 /// Gameplay muzzle, independent of a view. Both drawing and emission use this contract.
