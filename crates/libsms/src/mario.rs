@@ -335,6 +335,16 @@ impl Default for Options {
     }
 }
 
+/// Pose cues for hosts that draw a stand-in body (bits in [`Mario::pose`]). The native view
+/// poses itself, so these only say which of the game's silhouettes a simple body should show.
+pub const POSE_DIVE: u8 = 1 << 0;
+/// Belly slide: horizontal, lower than a dive.
+pub const POSE_SLIDE: u8 = 1 << 1;
+/// Ground pound or its get-up: squashed.
+pub const POSE_POUND: u8 = 1 << 2;
+/// Spin jump or spinning pound: the core is wider than the body.
+pub const POSE_SPIN: u8 = 1 << 3;
+
 #[derive(Debug, Clone)]
 pub struct Mario {
     pub params: Params,
@@ -906,6 +916,37 @@ impl Mario {
             (Status::HipAttackEnd, _) => 3,
             _ => 0,
         }
+    }
+
+    /// Which stand-in poses to draw: a belly-flop dive, a belly slide, a ground pound and a
+    /// spin. A host that draws Mario itself can replace the native silhouette with these
+    /// without duplicating the status table.
+    pub fn pose(&self) -> u8 {
+        let mut pose = 0;
+        if self.status == Status::JumpCatch {
+            pose |= POSE_DIVE;
+        }
+        if matches!(
+            self.status,
+            Status::Catch
+                | Status::CatchDown
+                | Status::CatchLost
+                | Status::OilSlip
+                | Status::OilSlope
+        ) {
+            pose |= POSE_SLIDE;
+        }
+        if self.pounding() != 0 {
+            pose |= POSE_POUND;
+        }
+        if matches!(
+            self.status,
+            Status::LeftRotateJump | Status::RightRotateJump
+        ) || self.pound_spin
+        {
+            pose |= POSE_SPIN;
+        }
+        pose
     }
 
     /// The Turbo's dash is on (`MARIO_FLAG_FLUDD_EMITTING`): `TMarioEffect` draws the water-boost

@@ -867,3 +867,9 @@ coverage, not proof of every action's parity or in-game verification.
 `sms_sim_water_particles` exposes the real water manager's positions, velocity and size
 without a presentation/audio handle. Rust and real-DLL C# checks exercise spraying,
 water consumption, Hover/Rocket lift and Turbo travel with no assets. Not yet played.
+`SmsState::pose` (ABI 52) gives hosts that draw a procedural body the existing silhouettes:
+bit 1 a `JumpCatch` dive, 2 a `Catch`/`CatchDown`/`CatchLost`/`OilSlip`/`OilSlope` belly
+slide, 4 `pounding()` (a pound or its get-up), and 8 a spin jump or a spinning pound.
+`Mario::pose` only maps the status table the native view already uses, so a stand-in cannot
+show a different action. The scenario and C ABI tests drive a dive, slide, pound and spin
+and check each bit.

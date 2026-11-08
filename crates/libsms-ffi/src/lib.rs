@@ -31,7 +31,7 @@ use libsms::{
 use view::SmsView;
 
 /// ABI version, bumped when the C interface changes.
-pub const SMS_ABI_VERSION: u32 = 51;
+pub const SMS_ABI_VERSION: u32 = 52;
 
 #[cfg(test)]
 mod builtin_tests {
@@ -55,6 +55,52 @@ mod builtin_tests {
             sms_sim_free(sim);
         }
     }
+    #[test]
+    fn stand_in_pose_cues_cross_the_abi() {
+        unsafe {
+            let dir = CString::new("").unwrap();
+            let mut host: SmsHost = std::mem::zeroed(); host.ground = Some(floor);
+            let mut st = SmsState::default();
+
+            // Run up, jump, then dive: the stand-in body should lie along the dive.
+            let sim = sms_sim_new(dir.as_ptr(), &SmsVec3::default(), 0);
+            assert!(!sim.is_null());
+            let run = SmsPad { stick_y: 1., ..SmsPad::default() };
+            for _ in 0..120 { sms_sim_step(sim, &host, &run, 0, 1. / 120., std::ptr::null_mut()); }
+            let jump = SmsPad { a: 1, ..run };
+            for _ in 0..10 { sms_sim_step(sim, &host, &jump, 0, 1. / 120., std::ptr::null_mut()); }
+            assert_eq!(sms_sim_state(sim, &mut st), 1);
+            assert_eq!(st.pose, 0, "a jump already posed as a dive or slide");
+            let dive = SmsPad { b: 1, ..run };
+            sms_sim_step(sim, &host, &dive, 0, 1. / 120., std::ptr::null_mut());
+            sms_sim_state(sim, &mut st);
+            assert_eq!(st.pose & libsms::POSE_DIVE, libsms::POSE_DIVE, "{st:?}");
+            let mut slid = false;
+            for _ in 0..600 {
+                sms_sim_step(sim, &host, &run, 0, 1. / 120., std::ptr::null_mut());
+                sms_sim_state(sim, &mut st);
+                if st.pose & libsms::POSE_SLIDE != 0 { slid = true; break; }
+            }
+            assert!(slid, "the dive never reached a slide pose");
+            assert_eq!(st.pose & libsms::POSE_DIVE, 0);
+            sms_sim_free(sim);
+
+            // A ground pound is the squashed pose; it is not a spin without a stick circle.
+            let sim = sms_sim_new(dir.as_ptr(), &SmsVec3::default(), 0);
+            assert!(!sim.is_null());
+            let jump = SmsPad { a: 1, ..SmsPad::default() };
+            for _ in 0..40 { sms_sim_step(sim, &host, &jump, 0, 1. / 120., std::ptr::null_mut()); }
+            let pound = SmsPad { l: 1, ..SmsPad::default() };
+            sms_sim_step(sim, &host, &pound, 0, 1. / 120., std::ptr::null_mut());
+            // `pounding` is the fall, after the pound's 60-tick hover.
+            for _ in 0..65 { sms_sim_step(sim, &host, &SmsPad::default(), 0, 1. / 120., std::ptr::null_mut()); }
+            sms_sim_state(sim, &mut st);
+            assert_eq!(st.pose & libsms::POSE_POUND, libsms::POSE_POUND, "{st:?}");
+            assert_eq!(st.pose & libsms::POSE_SPIN, 0, "a plain pound spun");
+            sms_sim_free(sim);
+        }
+    }
+
     #[test]
     fn builtin_nozzles_produce_thrust_without_models() {
         unsafe {
@@ -423,6 +469,10 @@ pub struct SmsState {
     pub win_demo: u8,
     /// The fitted nozzle: 0 without FLUDD, else `NozzleKind` + 1 (1 Spray, 2 Rocket, 5 Hover, 6 Turbo).
     pub nozzle: u8,
+    /// Stand-in pose cues: bit 1 a dive, 2 a belly slide, 4 a ground pound (or its get-up),
+    /// 8 a spin jump or spinning pound. Native views pose themselves; hosts that draw a
+    /// procedural body use these so it follows the same action.
+    pub pose: u8,
 }
 
 /// Host tuning that departs from the game on purpose ([`libsms::Options`]); zeroes and ones
@@ -1262,6 +1312,7 @@ pub unsafe extern "C" fn sms_sim_state(sim: *const SmsSim, out: *mut SmsState) -
                 m.is_win_demo() as u8
             },
             nozzle: m.fludd.as_ref().map_or(0, |f| f.nozzle as u8 + 1),
+            pose: m.pose(),
         };
         1
     })
@@ -2440,7 +2491,7 @@ mod tests {
         assert_eq!(
             &sizes[..n],
             &[
-                12, 20, 8, 16, 32, 72, 24, 52, 40, 24, 12, 64, 48, 64, 24, 28, 24, 36, 16, 12, 32,
+                12, 20, 8, 16, 32, 72, 24, 56, 40, 24, 12, 64, 48, 64, 24, 28, 24, 36, 16, 12, 32,
                 36, 72, 40, 52, 16, 40, 48, 40, 56, 20, 48
             ]
         );

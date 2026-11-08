@@ -52,7 +52,9 @@ pub use glam::{Vec2, Vec3};
 pub use host::{Enemy, FlatHost, Fruit, GroundHit, Host, RoofHit, SurfaceFlags, WallHit};
 pub use input::{Input, Pad};
 pub use limits::{Limits, WetSlide};
-pub use mario::{Mario, Options, Status, UpperState};
+pub use mario::{
+    Mario, Options, POSE_DIVE, POSE_POUND, POSE_SLIDE, POSE_SPIN, Status, UpperState,
+};
 pub use params::{NozzleKind, Params};
 pub use skeleton::{Clip, ClipLibrary, MtxCalc, Skeleton, Srt, calc_joints};
 pub use yoshi::{YoshiLook, YoshiState};

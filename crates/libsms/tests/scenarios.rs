@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use libsms::{
     AnimTable, Event, FlatHost, Host, Mario, NozzleKind, Pad, Params, Sim, Status, TICK_HZ, Vec2,
-    Vec3, WaterEmit,
+    Vec3, WaterEmit, POSE_DIVE, POSE_POUND, POSE_SLIDE, POSE_SPIN,
 };
 
 /// The git-ignored `assets/` folder built by `tools/extract_assets.py`, if present.
@@ -606,6 +606,80 @@ fn a_fresh_b_can_redive_from_both_slide_jump_recoveries() {
             assert!(s.until(600, |m| m.status == if enabled { Status::Catch } else { Status::Wait }));
         }
     }
+}
+
+/// The stand-in pose cues follow the native silhouettes: horizontal for a dive and a slide,
+/// squashed for a pound, and a wider core for a spin.
+#[test]
+fn stand_in_pose_cues_follow_dive_slide_pound_and_spin() {
+    // A B dive is horizontal; landing runs it into the belly slide, also horizontal.
+    let mut s = Scene::flat();
+    s.run_forward();
+    s.secs(1.0);
+    s.press_a();
+    s.step(10);
+    s.pad.b = true;
+    s.step(1);
+    s.pad.b = false;
+    assert_eq!(s.mario().status, Status::JumpCatch);
+    assert_eq!(s.mario().pose() & POSE_DIVE, POSE_DIVE);
+    assert_eq!(s.mario().pose() & POSE_SLIDE, 0);
+    assert!(s.until(600, |m| m.status == Status::Catch));
+    assert_eq!(s.mario().pose() & POSE_SLIDE, POSE_SLIDE);
+    assert_eq!(s.mario().pose() & POSE_DIVE, 0);
+
+    // A ground pound is squashed; a stick circle during its fall adds the spin.
+    let mut s = Scene::flat();
+    s.sim.mario.pos = Vec3::new(0.0, 1500.0, 0.0);
+    s.step(2);
+    s.pad.l = true;
+    s.step(1);
+    s.pad.l = false;
+    // The pound hovers for 60 ticks before it falls; only the fall is `pounding`.
+    s.step(65);
+    assert_eq!(s.mario().status, Status::HipDrop);
+    assert_eq!(s.mario().pose() & POSE_POUND, POSE_POUND);
+    assert_eq!(s.mario().pose() & POSE_SPIN, 0, "a plain pound spun");
+    let mut angle = 0.0f32;
+    for _ in 0..40 {
+        angle += std::f32::consts::TAU / 12.0;
+        s.pad.stick = Vec2::new(angle.cos(), angle.sin());
+        s.step(1);
+    }
+    assert_eq!(s.mario().status, Status::HipDrop);
+    assert_eq!(s.mario().pose() & POSE_POUND, POSE_POUND);
+    assert_eq!(
+        s.mario().pose() & POSE_SPIN,
+        POSE_SPIN,
+        "the pound's circle did not spin"
+    );
+
+    // A stick circle in an ordinary jump is a spin jump: a spin without a pound.
+    let mut s = Scene::flat();
+    s.press_a();
+    s.step(10);
+    let mut angle = 0.0f32;
+    for _ in 0..24 {
+        angle += std::f32::consts::TAU / 12.0;
+        s.pad.stick = Vec2::new(angle.cos(), angle.sin());
+        s.step(1);
+        if matches!(
+            s.mario().status,
+            Status::LeftRotateJump | Status::RightRotateJump
+        ) {
+            break;
+        }
+    }
+    assert!(
+        matches!(
+            s.mario().status,
+            Status::LeftRotateJump | Status::RightRotateJump
+        ),
+        "{:?}",
+        s.mario().status
+    );
+    assert_eq!(s.mario().pose() & POSE_SPIN, POSE_SPIN);
+    assert_eq!(s.mario().pose() & POSE_POUND, 0);
 }
 
 #[test]
