@@ -3147,6 +3147,11 @@ mod tests {
         })
     }
 
+    /// The Melee cache, only when it holds all of Luigi's files (a cache directory can exist and be empty or partial).
+    fn luigi_melee_dir() -> Option<std::path::PathBuf> {
+        melee_dir().filter(|dir| libssbm_assets::fighter::LUIGI.complete(dir))
+    }
+
     #[test]
     fn yoshi_skin_loads_his_rig_and_poses_his_own_ground_clips() {
         let Some(dir) = libsms::assets::find(None) else {
@@ -3178,8 +3183,8 @@ mod tests {
             eprintln!("SKIP: Sunshine assets absent");
             return;
         };
-        let Some(melee) = melee_dir() else {
-            eprintln!("SKIP: Melee cache absent");
+        let Some(melee) = luigi_melee_dir() else {
+            eprintln!("SKIP: Luigi's Melee files absent");
             return;
         };
         let mut v = View::load(&dir).unwrap();
@@ -4007,7 +4012,7 @@ mod tests {
     #[test]
     fn the_burning_luigi_wears_the_pained_eye() {
         let Some(dir) = libsms::assets::find(None) else { eprintln!("SKIP: no assets/"); return };
-        let Some(melee) = melee_dir() else { eprintln!("SKIP: Melee cache absent"); return };
+        let Some(melee) = luigi_melee_dir() else { eprintln!("SKIP: Luigi's Melee files absent"); return };
         let mut v = View::load(&dir).unwrap();
         assert!(v.set_luigi(&melee));
         let luigi = v.luigi.as_mut().unwrap();
