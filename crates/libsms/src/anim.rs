@@ -77,9 +77,27 @@ pub struct ClipInfo {
 #[derive(Debug, Clone, Default)]
 pub struct AnimTable {
     clips: HashMap<String, ClipInfo>,
+    builtin: bool,
 }
 
 impl AnimTable {
+    /// Authored fallback clocks, not extracted animation data. Finite actions must
+    /// finish even when no BCK exists (MarioMain.cpp animation-driven transitions).
+    pub fn builtin() -> Self {
+        let mut table = Self { builtin: true, ..Self::default() };
+        for name in [clip::WAIT, clip::RUN1, clip::RUN2, clip::SSTEP,
+            clip::WALL_SLIDE, clip::SLIDE_FORE, clip::PUMP, clip::TURBO_DASH] {
+            table.insert(name, Self::FALLBACK);
+        }
+        table
+    }
+    /// Retain supplied clips while making missing state-machine clocks finite.
+    pub fn with_builtin_fallback(mut self) -> Self {
+        let defaults = Self::builtin();
+        self.builtin = true;
+        for (name, info) in defaults.clips { self.clips.entry(name).or_insert(info); }
+        self
+    }
     pub const FALLBACK: ClipInfo = ClipInfo {
         frames: 30.0,
         mode: LoopMode::Loop,
@@ -102,7 +120,9 @@ impl AnimTable {
             .get(name)
             .copied()
             .or_else(|| crate::fludd_anim::default_info(name))
-            .unwrap_or(Self::FALLBACK)
+            .unwrap_or(if self.builtin {
+                ClipInfo { frames: 30.0, mode: LoopMode::Once }
+            } else { Self::FALLBACK })
     }
 
     /// Reads the length and loop mode out of a BCK file (`J3D1bck1`, first chunk `ANK1`).

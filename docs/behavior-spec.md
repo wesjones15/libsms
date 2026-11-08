@@ -851,3 +851,12 @@ Holding the roll no longer repeats the whole-circle test every tick: it asks the
 to keep turning `Options::corkscrew_hold_degrees` (60 by default) the same way round
 inside the grace (`Mario::corkscrew_turning`, host extension; 360 is the strict
 reading). A whole circle still starts it.
+## Optional asset runtime (2026-11-07)
+
+`sms_sim_new` accepts missing caches; an empty path explicitly selects the authored
+built-in profile without discovery. `Params::builtin` supplies resource costs and
+usable nozzle thrust; `AnimTable::builtin` gives finite action clocks without BCKs.
+These are approximate host defaults, not claimed disc tuning or original clip lengths.
+`sms_sim_water_particles` exposes the real water manager's positions, velocity and size
+without a presentation/audio handle. Rust and real-DLL C# checks exercise spraying,
+water consumption, Hover/Rocket lift and Turbo travel with no assets. Not yet played.

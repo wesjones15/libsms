@@ -31,7 +31,77 @@ use libsms::{
 use view::SmsView;
 
 /// ABI version, bumped when the C interface changes.
-pub const SMS_ABI_VERSION: u32 = 50;
+pub const SMS_ABI_VERSION: u32 = 51;
+
+#[cfg(test)]
+mod builtin_tests {
+    use super::*;
+    unsafe extern "C" fn floor(_: *mut c_void, _: *const SmsVec3, out: *mut SmsGroundHit) -> u8 {
+        unsafe { out.write(SmsGroundHit { height: 0., normal: Vec3::Y.into(), flags: 0 }); } 1
+    }
+    #[test]
+    fn empty_path_runs_and_sprays_without_a_view() {
+        unsafe {
+            let dir = CString::new("").unwrap();
+            let sim = sms_sim_new(dir.as_ptr(), &SmsVec3::default(), 0);
+            assert!(!sim.is_null());
+            let mut host: SmsHost = std::mem::zeroed(); host.ground = Some(floor);
+            let mut pad = SmsPad::default(); pad.r = 1; pad.r_analog = 255;
+            let initial = (*sim).sim.mario.fludd.as_ref().unwrap().water;
+            for _ in 0..180 { assert!(sms_sim_step(sim, &host, &pad, 0, 1. / 60., std::ptr::null_mut()) > 0); }
+            assert!((*sim).last_spray.emits > 0);
+            assert!(sms_sim_water_particles(sim, std::ptr::null_mut(), 0) > 0);
+            assert!((*sim).sim.mario.fludd.as_ref().unwrap().water < initial);
+            sms_sim_free(sim);
+        }
+    }
+    #[test]
+    fn builtin_nozzles_produce_thrust_without_models() {
+        unsafe {
+            for slot in 2..=4 {
+                let dir = CString::new("").unwrap();
+                let sim = sms_sim_new(dir.as_ptr(), &SmsVec3::default(), 0);
+                assert!(!sim.is_null());
+                assert_eq!(sms_sim_select_nozzle(sim, slot), 1);
+                let mut host: SmsHost = std::mem::zeroed(); host.ground = Some(floor);
+                let mut pad = SmsPad::default(); pad.r = 1; pad.r_analog = 255;
+                let mut max_height: f32 = 0.;
+                for frame in 0..240 {
+                    pad.a = ((slot == 2) && frame < 6) as u8;
+                    sms_sim_step(sim, &host, &pad, 0, 1. / 60., std::ptr::null_mut());
+                    max_height = max_height.max((*sim).sim.mario.pos.y);
+                }
+                assert!((*sim).last_spray.emits > 0, "slot {slot} never emitted");
+                if slot == 4 { assert!((*sim).sim.mario.pos.z.abs() > 10., "Turbo had no thrust"); }
+                else { assert!(max_height > 50., "slot {slot} had no lift: {max_height}"); }
+                sms_sim_free(sim);
+            }
+        }
+    }
+}
+
+/// Read-only drawing state from the authoritative water manager. No view required.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct SmsWaterParticle { pub pos: SmsVec3, pub velocity: SmsVec3, pub radius: f32 }
+#[unsafe(no_mangle)]
+pub extern "C" fn sms_water_particle_size() -> u32 { std::mem::size_of::<SmsWaterParticle>() as u32 }
+/// Returns total particle count; copies at most `max` particles. Null output queries size.
+/// # Safety
+/// A live sim and `max` writable elements, or null output. Main thread only.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_sim_water_particles(sim: *const SmsSim, out: *mut SmsWaterParticle, max: u32) -> u32 {
+    libcommon::ffi::guard("sms_sim_water_particles", 0, || {
+        let Some(s) = (unsafe { sim.as_ref() }) else { return 0 };
+        if s.poisoned { return 0; }
+        if !out.is_null() {
+            for (i, p) in s.water.particles.iter().take(max as usize).enumerate() {
+                unsafe { out.add(i).write(SmsWaterParticle { pos: p.pos.into(), velocity: p.velocity().into(), radius: p.size.max(1.) }); }
+            }
+        }
+        s.water.particles.len() as u32
+    })
+}
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sms_abi_version() -> u32 {
@@ -881,8 +951,10 @@ fn jump_index(k: JumpKind) -> i32 {
 }
 
 /// Creates a Mario with FLUDD at `*pos` facing `yaw`, tuned and animated from the extracted
-/// disc files in `assets_dir` (UTF-8, the folder holding `params_mario/`). Returns null if that
-/// folder has no `params_mario/`. Free with [`sms_sim_free`].
+/// disc files in `assets_dir` (UTF-8, the folder holding `params_mario/`). Missing
+/// or incomplete gameplay parameters select the authored built-in profile instead.
+/// An empty path explicitly selects built-in gameplay without reading a cache.
+/// Free with [`sms_sim_free`].
 ///
 /// # Safety
 /// `assets_dir` must be a valid nul-terminated string and `pos` readable.
@@ -905,11 +977,14 @@ pub unsafe extern "C" fn sms_sim_new(
         .into_owned();
     let made = crate::caught("sms_sim_new", || {
         let dir = Path::new(&dir);
-        if !dir.join("params_mario").is_dir() {
-            return None;
-        }
-        let a = Assets::load(dir);
-        let mut sim = Sim::new(a.params, a.anim_table, pos.into(), yaw);
+        let (params, anims) = if !dir.as_os_str().is_empty() && libsms::Params::gameplay_files_present(&dir.join("params_mario")) {
+            let a = Assets::load(dir);
+            (a.params, a.anim_table.with_builtin_fallback())
+        } else {
+            (libsms::Params::builtin(), libsms::AnimTable::builtin())
+        };
+        if !Vec3::from(pos).is_finite() { return None; }
+        let mut sim = Sim::new(params, anims, pos.into(), yaw);
         sim.mario.give_fludd();
         // RoR2 permits the primary Spray while B-diving or belly sliding.
         sim.mario.options.spray_during_dive = true;

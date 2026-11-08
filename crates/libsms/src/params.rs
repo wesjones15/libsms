@@ -494,6 +494,30 @@ pub struct Params {
     pub graffito: Graffito,
 }
 
+impl Params {
+    /// Authored playable no-disc profile. Unlike the decomp constructor defaults,
+    /// water has a nonzero resource cost even without the shipped PRM overrides.
+    pub fn builtin() -> Self {
+        let mut params = Self::default();
+        for nozzle in &mut params.nozzles { nozzle.dec_rate = 1; }
+        let hover = &mut params.nozzles[NozzleKind::Hover as usize];
+        hover.rocket_type = 1;
+        hover.reaction_y = 0.0125;
+        hover.trigger_time = 240;
+        let rocket = &mut params.nozzles[NozzleKind::Rocket as usize];
+        rocket.rocket_type = 1;
+        rocket.reaction_y = 0.1;
+        rocket.trigger_time = 24;
+        rocket.inside_pressure_dec = 50.;
+        let turbo = &mut params.nozzles[NozzleKind::Turbo as usize];
+        turbo.reaction_pow = 0.015;
+        turbo.reaction_pow_min = 0.015;
+        turbo.trigger_time = 120;
+        turbo.inside_pressure_dec = 50.;
+        params
+    }
+}
+
 impl Default for Params {
     fn default() -> Self {
         let slip = Slip {
@@ -703,6 +727,14 @@ impl Params {
     /// Convenience: read from a directory laid out like the extracted `params.szs:mario/`.
     pub fn from_dir(dir: &std::path::Path) -> (Params, usize) {
         Params::from_files(|rel| std::fs::read(dir.join(rel)).ok())
+    }
+
+    /// Gameplay requirements are independent of models and sound. A partial or
+    /// corrupt parameter set selects the complete authored fallback profile.
+    pub fn gameplay_files_present(dir: &std::path::Path) -> bool {
+        [files::RUN, files::JUMP, files::MARIO, files::CONTROLLER, files::WATER_GUN]
+            .into_iter().chain(files::NOZZLES).all(|name|
+                std::fs::read(dir.join(name)).ok().and_then(|b| Prm::parse(&b).ok()).is_some())
     }
 
     pub fn nozzle(&self, kind: NozzleKind) -> &Nozzle {
