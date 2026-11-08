@@ -4,6 +4,7 @@
 //! running max 45 vs 80...). `Default` here is the code default; [`Params::from_files`]
 //! layers the disc values on top.
 
+use crate::damage::DamageKind;
 use crate::prm::Prm;
 use glam::Vec3;
 
@@ -495,10 +496,14 @@ pub struct Params {
 }
 
 impl Params {
-    /// Code-only gameplay baseline. Constructor defaults are not a playable
-    /// reference: MarioJump.cpp::doJumping multiplies stick magnitude by the
-    /// acceleration, and WaterGun.cpp::movement advances the spray pressure gate
-    /// every tick. Keep these behavioral constants independent of artwork.
+    /// Code-only gameplay baseline. It carries the same simulation inputs the asset path
+    /// uses for locomotion, slides, pounds, water and knockdown reactions, so RoR2's
+    /// tuning, health, damage and items act on the same base action with or without the
+    /// disc. Damage amounts, goop accumulation and nozzle visuals stay at their authored
+    /// defaults: the host owns RoR2 damage and effects. Constructor defaults are not a
+    /// playable reference (MarioJump.cpp::doJumping multiplies stick magnitude by the
+    /// acceleration, and WaterGun.cpp::movement advances the spray pressure gate every
+    /// tick), so the values below are the playable ones.
     pub fn builtin() -> Self {
         let mut params = Self::default();
         for nozzle in &mut params.nozzles { nozzle.dec_rate = 1; }
@@ -522,10 +527,39 @@ impl Params {
         params.jump.ultra_jump_xz_mult = 1.;
         params.jump.clash_angle = 12000;
         params.jump.jump_jump_catch_sp = 80.;
+        // The asset path's pound: same fall speed and super-pound timing in RoR2.
+        params.jump.hip_attack_speed_y = -80.;
+        params.jump.super_hip_attack_ct = 80;
+        params.jump.fire_down_force = 50.;
+        params.jump.fire_down_control = 0.;
+        params.jump.fire_back_velocity = 8.;
+        params.jump.get_off_yoshi_y = 60.;
         params.mario.running_max = 80.;
         params.mario.dash_max = 80.;
         params.mario.dash_brake = 0.1;
         params.mario.dash_start_time = 0;
+        // The asset path's turn rates, reach, throw power and impact thresholds: the same
+        // steering, grabs, throws and knockdowns in RoR2.
+        params.mario.waiting_rot_sp = 220;
+        params.mario.running_rot_sp_min = 1500;
+        params.mario.running_rot_sp_max = 1500;
+        params.mario.pumping_rot_sp_min = 300;
+        params.mario.pumping_rot_sp_max = 600;
+        params.mario.pushup_radius = 60.;
+        params.mario.pushup_height = 180.;
+        params.mario.hipdrop_radius = 100.;
+        params.mario.trample_pow_step1 = 35.;
+        params.mario.trample_pow_step2 = 45.;
+        params.mario.trample_pow_step3 = 70.;
+        params.mario.jump_wall_height = 500.;
+        params.mario.slip_start = 0.4;
+        params.mario.was_on_water_slip = 0.985;
+        params.mario.force_slip_angle = 0.4;
+        params.mario.clash_speed = 40.;
+        params.mario.damage_fall_height = 1500.;
+        params.mario.feel_deep = 800.;
+        params.mario.hold_radius = 80.;
+        params.mario.throw_power = 2.8;
         params.controller.start_to_walk_level = 1.;
         params.controller.stick_rotate_time = 40;
         params.controller.length_mult_times = 2;
@@ -541,6 +575,148 @@ impl Params {
         params.run.in_water_brake = 0.95;
         params.run.pumping_slide_sp = 0.12;
         params.run.dash_rot_sp = 60;
+        // The asset path's hanging, pumping, Yoshi and underwater control.
+        params.upper_body.pump_wait_time = 5;
+        params.upper_body.pump_anm_speed = 0.015;
+        params.upper_body.hover_head_angle = 5294;
+        params.hanging.move_sp = 0.06;
+        params.hanging.anm_rate = 0.8;
+        params.diving.rot_sp = 90;
+        params.diving.gravity = 2.;
+        params.diving.accel_control = 0.01;
+        params.diving.sea_brake = 0.995;
+        params.diving.sea_brake_y = 0.9;
+        params.yoshi.jump_yoshi_mult = 1.2;
+        params.yoshi.rot_yoshi_mult = 2.;
+        params.yoshi.head_front = 120.;
+        params.yoshi.head_radius = 10.;
+        params.yoshi.hold_out_acc_ctrl_f = 0.001;
+        params.yoshi.hold_out_acc_ctrl_b = 0.02;
+        // The asset path's slide: the same friction, acceleration and stop rates make the
+        // belly slide cover the same ground in RoR2, on dry ground, wet ground, slopes and
+        // Yoshi.
+        params.slip_normal.slip_friction = 0.97;
+        params.slip_normal.slide_accele_down = 1.5;
+        params.slip_normal.slide_stop_normal = 1.;
+        params.slip_normal.slide_stop_catch = 1.;
+        params.slip_normal.slide_angle_y_sp = 100;
+        params.slip_normal.stick_slide_mult = 0.005;
+        params.slip_all.slip_friction = 0.95;
+        params.slip_all.slope_accele_up = 4.5;
+        params.slip_all.slope_accele_down = 2.;
+        params.slip_all.slide_accele_up = 4.;
+        params.slip_all.slide_accele_down = 5.;
+        params.slip_all.slide_stop_normal = 1.;
+        params.slip_all.slide_stop_catch = 1.;
+        params.slip_all.jump_enable = 0;
+        params.slip_all.miss_jump = 1;
+        params.slip_all.slide_angle_y_sp = 0;
+        params.slip_all.stick_slide_mult = 0.;
+        params.slip_all_slider.slip_friction = 0.975;
+        params.slip_all_slider.slide_accele_up = 4.5;
+        params.slip_all_slider.slide_accele_down = 2.;
+        params.slip_all_slider.slide_stop_normal = 3.;
+        params.slip_all_slider.slide_stop_catch = 3.;
+        params.slip_all_slider.stick_slide_mult = 0.025;
+        params.slip_45.slip_friction = 0.93;
+        params.slip_45.slope_accele_up = 1.;
+        params.slip_45.slope_accele_down = 0.021972656;
+        params.slip_45.slide_accele_down = 1.5;
+        params.slip_45.slide_stop_normal = 0.;
+        params.slip_45.slide_stop_catch = 0.;
+        params.slip_45.slide_angle_y_sp = 100;
+        params.slip_45.stick_slide_mult = 0.005;
+        params.slip_water_ground.slip_friction = 0.985;
+        params.slip_water_ground.slide_accele_up = 5.;
+        params.slip_water_ground.slide_accele_down = 2.;
+        params.slip_water_ground.slide_stop_normal = 5.;
+        params.slip_water_ground.slide_stop_catch = 5.;
+        params.slip_water_ground.stick_slide_mult = 0.;
+        params.slip_water_slope.slip_friction = 0.98;
+        params.slip_water_slope.slide_accele_up = 5.;
+        params.slip_water_slope.slide_accele_down = 2.;
+        params.slip_water_slope.slide_stop_normal = 5.;
+        params.slip_water_slope.slide_stop_catch = 5.;
+        params.slip_water_slope.stick_slide_mult = 0.1;
+        params.slip_yoshi.slip_friction = 0.97;
+        params.slip_yoshi.slide_accele_up = 0.1;
+        params.slip_yoshi.slide_accele_down = 1.;
+        params.slip_yoshi.slide_stop_normal = 10.;
+        params.slip_yoshi.slide_stop_catch = 10.;
+        params.slip_yoshi.stick_slide_mult = 0.005;
+        // The asset path's water: the same droplet arcs, lifetimes and body drips, so FLUDD
+        // reaches and wets the same ground in RoR2.
+        params.wet_emit.count = 3;
+        params.wet_emit.alive = 128;
+        params.wet_emit.particle_type = 1;
+        params.water_particles[0].extension = 0.7;
+        params.water_particles[0].magnify = 0.4;
+        params.water_particles[0].clean_size = 18.;
+        params.water_particles[1].extension = 1.;
+        params.water_particles[1].magnify = 0.5;
+        params.water_particles[1].clean_size = 6.;
+        params.water_particles[1].gravity = -0.5;
+        params.water_particles[2].extension = 0.8;
+        params.water_particles[2].clean_size = 24.;
+        params.water_particles[2].gravity = -0.2;
+        params.water_particles[2].alive = 100.;
+        params.water_particles[3].extension = 0.6;
+        params.water_particles[3].clean_size = 25.;
+        params.water_particles[3].gravity = -10.;
+        params.water_particles[4].clean_size = 8.;
+        params.water_particles[4].gravity = -5.;
+        params.water_particles[5].extension = 0.7;
+        params.water_particles[5].magnify = 1.;
+        params.water_particles[5].clean_size = 28.;
+        params.water_particles[6].extension = 1.;
+        params.water_particles[6].clean_size = 5.;
+        params.water_particles[7].extension = 1.3;
+        params.water_particles[7].magnify = 0.1;
+        params.water_particles[7].clean_size = 0.5;
+        params.water_particles[7].gravity = 1.;
+        params.water_particles[7].alive = 120.;
+        params.water_particles[8].extension = 0.8;
+        params.water_particles[8].clean_size = 25.;
+        params.water_particles[8].gravity = 0.01;
+        params.water_particles[10].clean_size = 5.;
+        params.water_particles[10].gravity = -0.2;
+        params.water_particles[11].extension = 3.;
+        params.water_particles[11].clean_size = 16.;
+        params.water_particles[13].extension = 1.;
+        params.water_particles[13].clean_size = 10.;
+        params.water_particles[13].gravity = 0.;
+        params.water_particles[13].alive = 3.;
+        params.water_particles[15].clean_size = 20.;
+        params.water_particles[15].gravity = -1.;
+        // The knockdown reactions (how Mario falls, how far he slides, how long he can't be
+        // hit again). RoR2 still supplies the health and damage; these are the sim's reaction.
+        let enemy = DamageKind::EnemyCommon as usize;
+        params.damage[enemy].min_speed = 30.;
+        let stu = DamageKind::Hamukuri as usize;
+        params.damage[stu].down_type = 0;
+        params.damage[stu].min_speed = 30.;
+        params.damage[stu].motor = 8;
+        let swoopin = DamageKind::Namekuri as usize;
+        params.damage[swoopin].down_type = 0;
+        params.damage[swoopin].min_speed = 20.;
+        params.damage[swoopin].motor = 6;
+        params.damage[DamageKind::BossEel as usize].down_type = 3;
+        params.damage[DamageKind::Killer as usize].min_speed = 50.;
+        params.damage[DamageKind::LampTrapIron as usize].invincible_time = 20;
+        params.damage[DamageKind::LampTrapSpike as usize].invincible_time = 20;
+        params.damage[DamageKind::EnemyMario as usize].down_type = 2;
+        params.damage[DamageKind::EnemyMario as usize].invincible_time = 120;
+        let fire_goop = DamageKind::GraffitoFire as usize;
+        params.damage[fire_goop].down_type = 0;
+        params.damage[fire_goop].min_speed = 0.;
+        params.damage[fire_goop].invincible_time = 50;
+        params.damage[fire_goop].motor = 10;
+        params.damage[DamageKind::GraffitoElec as usize].down_type = 0;
+        params.damage[DamageKind::GraffitoElec as usize].motor = 10;
+        params.damage[DamageKind::GraffitoPoison as usize].down_type = 0;
+        params.damage[DamageKind::GraffitoPoison as usize].motor = 10;
+        params.damage[DamageKind::GraffitoLava as usize].down_type = 0;
+        params.damage[DamageKind::GraffitoLava as usize].motor = 10;
         params.hover.rot_sp = 200;
         params.hover.accel_rate = 0.02;
         params.hover.brake = 0.985;

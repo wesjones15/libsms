@@ -857,13 +857,17 @@ reading). A whole circle still starts it.
 built-in profile without discovery. `Params::builtin` supplies resource costs and
 usable nozzle thrust; `AnimTable::builtin` gives finite action clocks without BCKs.
 Animation clocks remain approximate without the clips. The code-only movement/FLUDD
-baseline now corrects constructor-default air acceleration (the free forward burst),
-spray gate rate (premature cutoff), tank capacities and Hover/Rocket/Turbo behavior.
-`tests/builtin_gameplay.rs` requires an ordinary run/jump to have no free speed boost
-and spray to continue past five seconds then reset on release. An optional local-cache
-comparison checks the same run/jump trace and all four nozzles' emission timing, lift,
-travel and water consumption; the tested traces match. This is bounded reference
-coverage, not proof of every action's parity or in-game verification.
+baseline now uses the same simulation inputs as the asset path for run/jump, turning,
+dive and belly-slide friction/stop rates, ground-pound fall and super-pound timing,
+grabs and throws, slip thresholds, water droplet arcs and the knockdown reactions; the
+host's RoR2 tuning, health, damage and items still sit on top. `tests/builtin_gameplay.rs`
+requires an ordinary run/jump to have no free speed boost and spray to continue past
+five seconds then reset on release. An optional local-cache comparison checks the same
+run/jump, dive and belly-slide distance, ground-pound timing and all four nozzles'
+emission timing, lift, travel and water consumption; the tested traces match. The
+clip-driven get-up after a slide is still longer with the disc's clips: animation
+clocks remain approximate. This is bounded reference coverage, not proof of every
+action's parity or in-game verification.
 `sms_sim_water_particles` exposes the real water manager's positions, velocity and size
 without a presentation/audio handle. Rust and real-DLL C# checks exercise spraying,
 water consumption, Hover/Rocket lift and Turbo travel with no assets. Not yet played.
