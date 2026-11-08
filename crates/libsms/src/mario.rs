@@ -939,11 +939,7 @@ impl Mario {
         if self.pounding() != 0 {
             pose |= POSE_POUND;
         }
-        if matches!(
-            self.status,
-            Status::LeftRotateJump | Status::RightRotateJump
-        ) || self.pound_spin
-        {
+        if self.spinning() || self.pound_spin {
             pose |= POSE_SPIN;
         }
         pose

@@ -853,6 +853,9 @@ inside the grace (`Mario::corkscrew_turning`, host extension; 360 is the strict
 reading). A whole circle still starts it.
 ## Optional asset runtime (2026-11-07)
 
+Stand-in pose cues use the same spin predicate as FLUDD, including grounded spins
+and corkscrew dives, as well as the spinning pound. They change presentation only.
+
 `sms_sim_new` accepts missing caches; an empty path explicitly selects the authored
 built-in profile without discovery. `Params::builtin` supplies resource costs and
 usable nozzle thrust; `AnimTable::builtin` gives finite action clocks without BCKs.
