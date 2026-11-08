@@ -945,6 +945,21 @@ impl Mario {
         pose
     }
 
+    /// A single procedural somersault, timed by the same clip clock as the move.
+    /// MarioJump.cpp uses TJMP1 (0xBF) for the U-turn and ROLL (0x6F) for the triple jump.
+    pub fn stand_in_jump_pitch(&self) -> Angle {
+        let direction = match (self.status, self.anim.clip) {
+            (Status::UTurnJump, clip::UTURN_JUMP) => -1.0,
+            (Status::UltraJump, clip::ROLL) => 1.0,
+            _ => return 0,
+        };
+        if self.anim.finished_once {
+            return 0;
+        }
+        let progress = (self.anim.frame / self.anim.length().max(1.0)).clamp(0.0, 1.0);
+        (direction * progress * 65536.0).round() as i32 as Angle
+    }
+
     /// The Turbo's dash is on (`MARIO_FLAG_FLUDD_EMITTING`): `TMarioEffect` draws the water-boost
     /// cone and binds `ms_watboost_a/b` to FLUDD's muzzle while it lasts.
     pub fn dashing(&self) -> bool {

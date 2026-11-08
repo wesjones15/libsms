@@ -1,5 +1,12 @@
 # Mario locomotion and FLUDD: behavior spec
 
+ABI 55 adds `SmsState.flip_pitch` for procedural bodies. `TMario::uTurnJumping`
+selects `TJMP1` (0xBF) and `TMario::ultraJumping` selects `ROLL` (0x6F) in
+`Player/MarioJump.cpp`. The stand-in uses the active clip's clock for one authored
+backward or forward somersault, respectively, around the body center. Completion
+or interruption restores an upright pose. `viewer --example fallback_flips`
+captures the generated body, face mark and backpack through both rotations.
+
 Asset-independent presentation, ABI 53: `sms_sim_emitter` exposes the same
 `Mario::water_emitter` calculation used to emit gameplay droplets (authored/no-view
 offsets or the supplied posed emitters, plus aim and corkscrew). The procedural

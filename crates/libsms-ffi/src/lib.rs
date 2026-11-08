@@ -31,7 +31,7 @@ use libsms::{
 use view::SmsView;
 
 /// ABI version, bumped when the C interface changes.
-pub const SMS_ABI_VERSION: u32 = 54;
+pub const SMS_ABI_VERSION: u32 = 55;
 
 #[cfg(test)]
 mod builtin_tests {
@@ -79,6 +79,36 @@ mod builtin_tests {
         }
     }
     #[test]
+    fn stand_in_jump_pitch_follows_each_jump_and_finishes_upright() {
+        use libsms::Status;
+        unsafe {
+            let dir = CString::new("").unwrap();
+            let mut host: SmsHost = std::mem::zeroed();
+            host.ground = Some(floor);
+            let pad = SmsPad { a: 1, ..Default::default() };
+            for (status, direction) in [(Status::UTurnJump, -1), (Status::UltraJump, 1)] {
+                let sim = sms_sim_new(dir.as_ptr(), &SmsVec3::default(), 0);
+                assert!(!sim.is_null());
+                (*sim).sim.mario.change_status(status, 0, true);
+                let mut state = SmsState::default();
+                let mut inverted = false;
+                for tick in 0..65 {
+                    sms_sim_step(sim, &host, &pad, 0, 1. / 120., std::ptr::null_mut());
+                    assert_eq!(sms_sim_state(sim, &mut state), 1);
+                    if tick == 10 {
+                        assert_eq!(state.flip_pitch.signum(), direction);
+                    }
+                    inverted |= state.flip_pitch.unsigned_abs() > 32000;
+                }
+                assert!(inverted, "{status:?} never flipped upside down");
+                assert_eq!((*sim).sim.mario.status, status);
+                assert_eq!(state.flip_pitch, 0, "completed flip did not finish upright");
+                sms_sim_free(sim);
+            }
+        }
+    }
+
+    #[test]
     fn stand_in_pose_cues_cross_the_abi() {
         unsafe {
             let dir = CString::new("").unwrap();
@@ -94,6 +124,7 @@ mod builtin_tests {
             for _ in 0..10 { sms_sim_step(sim, &host, &jump, 0, 1. / 120., std::ptr::null_mut()); }
             assert_eq!(sms_sim_state(sim, &mut st), 1);
             assert_eq!(st.pose, 0, "a jump already posed as a dive or slide");
+            assert_eq!(st.flip_pitch, 0, "a normal jump started a somersault");
             let dive = SmsPad { b: 1, ..run };
             sms_sim_step(sim, &host, &dive, 0, 1. / 120., std::ptr::null_mut());
             sms_sim_state(sim, &mut st);
@@ -552,6 +583,8 @@ pub struct SmsState {
     /// 8 a spin jump or spinning pound. Native views pose themselves; hosts that draw a
     /// procedural body use these so it follows the same action.
     pub pose: u8,
+    /// Procedural side/triple jump pitch in signed angle units (65536 per turn).
+    pub flip_pitch: i16,
 }
 
 /// Host tuning that departs from the game on purpose ([`libsms::Options`]); zeroes and ones
@@ -1392,6 +1425,7 @@ pub unsafe extern "C" fn sms_sim_state(sim: *const SmsSim, out: *mut SmsState) -
             },
             nozzle: m.fludd.as_ref().map_or(0, |f| f.nozzle as u8 + 1),
             pose: m.pose(),
+            flip_pitch: m.stand_in_jump_pitch(),
         };
         1
     })
