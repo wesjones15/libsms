@@ -495,25 +495,95 @@ pub struct Params {
 }
 
 impl Params {
-    /// Authored playable no-disc profile. Unlike the decomp constructor defaults,
-    /// water has a nonzero resource cost even without the shipped PRM overrides.
+    /// Code-only gameplay baseline. Constructor defaults are not a playable
+    /// reference: MarioJump.cpp::doJumping multiplies stick magnitude by the
+    /// acceleration, and WaterGun.cpp::movement advances the spray pressure gate
+    /// every tick. Keep these behavioral constants independent of artwork.
     pub fn builtin() -> Self {
         let mut params = Self::default();
         for nozzle in &mut params.nozzles { nozzle.dec_rate = 1; }
+        params.jump.gravity = 1.;
+        params.jump.jump_accel_control = 0.008;
+        params.jump.jump_slide_control = 0.3;
+        params.jump.spin_jump_gravity = 0.35;
+        params.jump.turn_jump_force = 70.;
+        params.jump.broad_jump_force = 60.;
+        params.jump.broad_jump_force_y = 70.;
+        params.jump.rotate_jump_force_y = 70.;
+        params.jump.back_jump_force = -18.;
+        params.jump.back_jump_force_y = 70.;
+        params.jump.rot_broad_jump_force = 55.;
+        params.jump.rot_broad_jump_force_y = 38.;
+        params.jump.sec_jump_enable_sp = 0.;
+        params.jump.sec_jump_speed_mult = 0.25;
+        params.jump.tri_jump_enable_sp = 25.;
+        params.jump.ultra_jump_force = 75.;
+        params.jump.ultra_jump_speed_mult = 0.15;
+        params.jump.ultra_jump_xz_mult = 1.;
+        params.jump.clash_angle = 12000;
+        params.jump.jump_jump_catch_sp = 80.;
+        params.mario.running_max = 80.;
+        params.mario.dash_max = 80.;
+        params.mario.dash_brake = 0.1;
+        params.mario.dash_start_time = 0;
+        params.controller.start_to_walk_level = 1.;
+        params.controller.stick_rotate_time = 40;
+        params.controller.length_mult_times = 2;
+        params.controller.length_mult = 0.78;
+        params.controller.analog_lr_to_zero_val = 10;
+        params.controller.analog_lr_to_middle_val = 60;
+        params.controller.analog_lr_to_max_val = 150;
+        params.controller.analog_lr_middle_level = 0.5;
+        params.run.dec_brake = 5.;
+        params.run.soft_to_walk = 13.;
+        params.run.walk_to_soft = 8.;
+        params.run.swim_depth = 110.;
+        params.run.in_water_brake = 0.95;
+        params.run.pumping_slide_sp = 0.12;
+        params.run.dash_rot_sp = 60;
+        params.hover.rot_sp = 200;
+        params.hover.accel_rate = 0.02;
+        params.hover.brake = 0.985;
+        params.water_gun.rocket_height = 100.;
+        params.water_gun.hover_height = 230.;
+        params.water_gun.nozzle_angle_y_speed = 100.;
+        params.water_gun.nozzle_angle_y_brake = 0.99;
+        params.water_gun.hover_rot_max = 0;
+        params.water_gun.hover_smooth = 0.03;
+        let spray = &mut params.nozzles[NozzleKind::Spray as usize];
+        spray.amount_max = 10_000;
+        spray.trigger_rate = 50;
+        spray.num = 0.8;
         let hover = &mut params.nozzles[NozzleKind::Hover as usize];
         hover.rocket_type = 1;
-        hover.reaction_y = 0.0125;
-        hover.trigger_time = 240;
+        hover.amount_max = 10_000;
+        hover.emit_pow = 37.5;
+        hover.reaction_pow = 0.005;
+        hover.reaction_y = 0.;
+        hover.emit_ctrl = 0.;
+        hover.l_angle_base = 0;
+        hover.side_angle_max_side = 5000;
+        hover.side_angle_max_front = 0;
+        hover.side_angle_max_back = 8000;
+        hover.l_angle_chase = 0.5;
+        hover.trigger_rate = 0;
+        hover.inside_pressure_dec = 0.;
+        hover.inside_pressure_max = 1.;
+        hover.trigger_time = 360;
         let rocket = &mut params.nozzles[NozzleKind::Rocket as usize];
         rocket.rocket_type = 1;
-        rocket.reaction_y = 0.1;
-        rocket.trigger_time = 24;
-        rocket.inside_pressure_dec = 50.;
+        rocket.emit_pow = 50.;
+        rocket.reaction_y = 0.7;
+        rocket.dec_rate = 35;
+        rocket.num_min = 0.;
+        rocket.trigger_rate = 0;
+        rocket.trigger_time = 5;
+        rocket.inside_pressure_max = 8000.;
+        rocket.inside_pressure_dec = 105.;
         let turbo = &mut params.nozzles[NozzleKind::Turbo as usize];
-        turbo.reaction_pow = 0.015;
-        turbo.reaction_pow_min = 0.015;
-        turbo.trigger_time = 120;
-        turbo.inside_pressure_dec = 50.;
+        turbo.reaction_pow = 0.002;
+        turbo.reaction_y = 0.002;
+        turbo.trigger_time = i16::MAX;
         params
     }
 }
