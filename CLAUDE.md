@@ -112,7 +112,9 @@ Workspace:
 - **The sim runs at 120 Hz** (`TMarDirector::direct`: 5-unit ticks, 600/vsync units per frame),
   not the 30 fps the game renders at. Constants are per tick; position advances `0.25 * vel`.
 - Decomp units (about 1 cm; player character is 160 tall). Unit and axis conversion lives in host adapters.
-- **Tuning values come from the disc, not the code defaults.** `Params::from_dir` reads the `.prm`
+- **Disc-backed tuning comes from the disc.** The explicit no-assets profile uses
+  `Params::builtin` and `AnimTable::builtin`, with authored approximate values/clocks.
+  `Params::from_dir` reads the `.prm`
   files; `Default` is the code default and differs (gravity 0.8 vs 1.0, run max 45 vs 80,...).
 - No Nintendo data in git: no discs, no extracted `.prm`/`.bck`/`.bmd`. Everything comes from
   `assets/`, which only the extractor fills, from the user's own disc. Hosts call `Assets::ensure`
