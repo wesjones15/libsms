@@ -352,6 +352,52 @@ impl Fludd {
 const AIM_DROOP: f32 = 1500.0;
 
 impl Mario {
+    /// The exact gameplay emitter, shared by particle emission and asset-free hosts.
+    pub fn water_emitter(&self, index: usize) -> Option<(Vec3, Vec3)> {
+        let kind = self.fludd.as_ref()?.nozzle;
+        let (pos, dir) = match self.fludd.as_ref().and_then(|f| f.emitter(index)) {
+            _ if self.on_yoshi() => self.yoshi.mouth_world(),
+            Some((p, d)) => (
+                self.model_to_world(p),
+                self.rotate_model(d).try_normalize().unwrap_or(Vec3::Z),
+            ),
+            None => (
+                self.nozzle_pos(kind, index),
+                self.nozzle_pitch_dir(kind, index),
+            ),
+        };
+        // A host aim (the lock-on) sends the water where it points, whichever way Mario faces
+        // or runs; not in the game, where the camera turns Mario instead. Its heading and
+        // pitch, whether or not the drawn head has swung that far yet.
+        let dir = match self.aim_now() {
+            Some(a) if !self.on_yoshi() => {
+                let pitch = a.pitch as f32 * (std::f32::consts::PI / 32768.0);
+                Vec3::new(
+                    pitch.cos() * sin(a.yaw),
+                    pitch.sin(),
+                    pitch.cos() * cos(a.yaw),
+                )
+            }
+            _ => dir,
+        };
+        let face = self.face_yaw;
+        // Host extension: in a corkscrew the Spray turns with him about the line of flight, as a spin jump's
+        // turns about his height: it comes out of his belly (down, flat as he is) and goes round with the
+        // roll, so a pass carpets what is below and to either side.
+        let dir = if kind == NozzleKind::Spray
+            && self.status == Status::JumpCatch
+            && self.corkscrew > 0
+            && !self.on_yoshi()
+        {
+            let roll = (self.model_roll as u16) as f32 * (std::f32::consts::TAU / 65536.0);
+            let right = Vec3::new(cos(face), 0.0, -sin(face));
+            (Vec3::NEG_Y * roll.cos() + right * roll.sin()).normalize()
+        } else {
+            dir
+        };
+        Some((pos, dir))
+    }
+
     pub(crate) fn nozzle_pitch_dir(&self, kind: NozzleKind, index: usize) -> Vec3 {
         let f = self.fludd.as_ref().expect("fludd");
         let face = self.face_yaw;
@@ -842,46 +888,8 @@ impl Mario {
         let rate = self.limit_spray_rate(kind);
         // `getEmitPosDirSpeed`: the drawn muzzle when the host reported it; riding, Yoshi's
         // tongue joint (`getEmitMtx`).
-        let (pos, dir) = match self.fludd.as_ref().and_then(|f| f.emitter(index)) {
-            _ if self.on_yoshi() => self.yoshi.mouth_world(),
-            Some((p, d)) => (
-                self.model_to_world(p),
-                self.rotate_model(d).try_normalize().unwrap_or(Vec3::Z),
-            ),
-            None => (
-                self.nozzle_pos(kind, index),
-                self.nozzle_pitch_dir(kind, index),
-            ),
-        };
-        // A host aim (the lock-on) sends the water where it points, whichever way Mario faces
-        // or runs; not in the game, where the camera turns Mario instead. Its heading and
-        // pitch, whether or not the drawn head has swung that far yet.
-        let dir = match self.aim_now() {
-            Some(a) if !self.on_yoshi() => {
-                let pitch = a.pitch as f32 * (std::f32::consts::PI / 32768.0);
-                Vec3::new(
-                    pitch.cos() * sin(a.yaw),
-                    pitch.sin(),
-                    pitch.cos() * cos(a.yaw),
-                )
-            }
-            _ => dir,
-        };
+        let (pos, dir) = self.water_emitter(index).expect("FLUDD emission");
         let face = self.face_yaw;
-        // Host extension: in a corkscrew the Spray turns with him about the line of flight, as a spin jump's
-        // turns about his height: it comes out of his belly (down, flat as he is) and goes round with the
-        // roll, so a pass carpets what is below and to either side.
-        let dir = if kind == NozzleKind::Spray
-            && self.status == Status::JumpCatch
-            && self.corkscrew > 0
-            && !self.on_yoshi()
-        {
-            let roll = (self.model_roll as u16) as f32 * (std::f32::consts::TAU / 65536.0);
-            let right = Vec3::new(cos(face), 0.0, -sin(face));
-            (Vec3::NEG_Y * roll.cos() + right * roll.sin()).normalize()
-        } else {
-            dir
-        };
         let inherit = if self.juice_mouth && kind == NozzleKind::Spray {
             // The skin's juice keeps Yoshi's full carried motion (`emit_carried` exempts it
             // from the droplet speed cap); ordinary spray keeps vanilla's eighth.

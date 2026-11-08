@@ -1,5 +1,14 @@
 # Mario locomotion and FLUDD: behavior spec
 
+Asset-independent presentation, ABI 53: `sms_sim_emitter` exposes the same
+`Mario::water_emitter` calculation used to emit gameplay droplets (authored/no-view
+offsets or the supplied posed emitters, plus aim and corkscrew). The procedural
+backpack/nozzle must follow this origin rather than shift only drawn water.
+`sms_sim_wet_vertices` exports WaterManager's existing terrain patches and drying
+opacity without a view or texture. A host can use a generated radial mask; the
+export does not create a second wetness simulation. Empty-cache boundary checks
+require finite emitters and actual wet geometry after sustained spraying.
+
 Enemy water-hit feedback: JPA emitter 0xE7 (`ms_enm_wathit`) and sound 0x6802
 (`MSD_SE_EN_COMMON_W_HIT_OK`) now share the native contact path and remote replay.
 Source, viewer proof, checks and approximations: [Enemy water hit](enemy-water-hit.md).

@@ -31,7 +31,7 @@ use libsms::{
 use view::SmsView;
 
 /// ABI version, bumped when the C interface changes.
-pub const SMS_ABI_VERSION: u32 = 52;
+pub const SMS_ABI_VERSION: u32 = 53;
 
 #[cfg(test)]
 mod builtin_tests {
@@ -132,6 +132,29 @@ mod builtin_tests {
 pub struct SmsWaterParticle { pub pos: SmsVec3, pub velocity: SmsVec3, pub radius: f32 }
 #[unsafe(no_mangle)]
 pub extern "C" fn sms_water_particle_size() -> u32 { std::mem::size_of::<SmsWaterParticle>() as u32 }
+/// Gameplay muzzle, independent of a view. Both drawing and emission use this contract.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_sim_emitter(sim: *const SmsSim, index: u32, pos: *mut SmsVec3, dir: *mut SmsVec3) -> u8 {
+    libcommon::ffi::guard("sms_sim_emitter",0,|| {
+        let Some(s)=(unsafe {sim.as_ref()}) else{return 0};
+        let Some((p,d))=s.sim.mario.water_emitter(index.min(1) as usize) else{return 0};
+        if !pos.is_null(){unsafe{pos.write(p.into())}} if !dir.is_null(){unsafe{dir.write(d.into())}} 1
+    })
+}
+/// Same sampled wet footprint and drying opacity as the full view, without textures/audio.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_sim_wet_vertices(sim: *const SmsSim, out: *mut view::SmsWaterVertex, max: u32) -> u32 {
+    libcommon::ffi::guard("sms_sim_wet_vertices",0,|| {
+        let Some(s)=(unsafe {sim.as_ref()}) else{return 0}; let mut n=0;
+        for patch in &s.water.wet_patches { let alpha=(patch.life/patch.duration.min(60.)).clamp(0.,1.);
+            for y in 0..2 {for x in 0..2 {if let Some(corners)=patch.cell(x,y){
+                for (p,uv) in corners.into_iter().zip([[x as f32*0.5,y as f32*0.5],[(x+1) as f32*0.5,y as f32*0.5],[(x+1) as f32*0.5,(y+1) as f32*0.5],[x as f32*0.5,(y+1) as f32*0.5]]) {
+                    if !out.is_null() && n<max {unsafe{out.add(n as usize).write(view::SmsWaterVertex{pos:p.into(),uv,alpha})}} n+=1;
+                }
+            }}}
+        } n
+    })
+}
 /// Returns total particle count; copies at most `max` particles. Null output queries size.
 /// # Safety
 /// A live sim and `max` writable elements, or null output. Main thread only.
