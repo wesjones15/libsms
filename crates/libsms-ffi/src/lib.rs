@@ -39,6 +39,13 @@ mod builtin_tests {
     unsafe extern "C" fn floor(_: *mut c_void, _: *const SmsVec3, out: *mut SmsGroundHit) -> u8 {
         unsafe { out.write(SmsGroundHit { height: 0., normal: Vec3::Y.into(), flags: 0 }); } 1
     }
+    unsafe extern "C" fn observe_splash(user: *mut c_void, event: *const SmsEvent) {
+        let event = unsafe { &*event };
+        if event.kind == SmsEventKind::WaterSplash as u32 && Vec3::from(event.pos).is_finite() {
+            unsafe { user.cast::<bool>().write(true) };
+        }
+    }
+
     #[test]
     fn empty_path_runs_and_sprays_without_a_view() {
         unsafe {
@@ -46,10 +53,14 @@ mod builtin_tests {
             let sim = sms_sim_new(dir.as_ptr(), &SmsVec3::default(), 0);
             assert!(!sim.is_null());
             let mut host: SmsHost = std::mem::zeroed(); host.ground = Some(floor);
+            let mut saw_splash = false;
+            host.user = (&mut saw_splash as *mut bool).cast();
+            host.event = Some(observe_splash);
             let mut pad = SmsPad::default(); pad.r = 1; pad.r_analog = 255;
             let initial = (*sim).sim.mario.fludd.as_ref().unwrap().water;
             for _ in 0..180 { assert!(sms_sim_step(sim, &host, &pad, 0, 1. / 60., std::ptr::null_mut()) > 0); }
             assert!((*sim).last_spray.emits > 0);
+            assert!(saw_splash, "spray hitting the floor should report a visual splash without a view");
             assert!(sms_sim_water_particles(sim, std::ptr::null_mut(), 0) > 0);
             assert!((*sim).sim.mario.fludd.as_ref().unwrap().water < initial);
             sms_sim_free(sim);
@@ -482,6 +493,8 @@ pub enum SmsEventKind {
     /// Presentation-only water contact, including native flower targets. Never apply damage
     /// from this event; WaterHit/BurstHit/SpinHit remain the host's damage messages.
     WaterImpact = 26,
+    /// The first visual splash in a water step. `pos` is its world position.
+    WaterSplash = 27,
 }
 
 /// An enemy the host reports ([`libsms::Enemy`]): a standing cylinder.
@@ -1116,8 +1129,8 @@ impl Host for FfiHost<'_> {
     }
 }
 
-/// The water's enemy hits, to the host's event callback.
-fn water_hits(host: &SmsHost, events: &[WaterEvent]) {
+/// The water's hits and a visual splash, to the host's event callback.
+fn water_events(host: &SmsHost, events: &[WaterEvent]) {
     let Some(f) = host.event else {
         return;
     };
@@ -1156,6 +1169,17 @@ fn water_hits(host: &SmsHost, events: &[WaterEvent]) {
             // SAFETY: the caller of `sms_sim_step` promised a valid callback.
             unsafe { f(host.user, &e) };
         }
+    }
+    if let Some(pos) = events.iter().find_map(|event| match *event {
+        WaterEvent::Splash(pos) => Some(pos),
+        _ => None,
+    }) {
+        let splash = SmsEvent {
+            kind: SmsEventKind::WaterSplash as u32, arg: 0, value: 0.,
+            pos: pos.into(), name: std::ptr::null(),
+        };
+        // SAFETY: the caller of `sms_sim_step` promised a valid callback.
+        unsafe { f(host.user, &splash) };
     }
 }
 
@@ -1430,7 +1454,7 @@ pub unsafe extern "C" fn sms_sim_step(
             } else {
                 s.water.cleans.clear();
             }
-            water_hits(host, &s.water.events);
+            water_events(host, &s.water.events);
             // SAFETY: as above.
             unsafe {
                 view::with_view(view, (), |v| {

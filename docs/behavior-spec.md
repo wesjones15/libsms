@@ -48,6 +48,10 @@ orange charge), with no game picture or effect ID.
 Enemy water-hit feedback: JPA emitter 0xE7 (`ms_enm_wathit`) and sound 0x6802
 (`MSD_SE_EN_COMMON_W_HIT_OK`) now share the native contact path and remote replay.
 Source, viewer proof, checks and approximations: [Enemy water hit](enemy-water-hit.md).
+An optional host can also consume the first `WaterEvent::Splash` from each
+water step as `SmsEventKind::WaterSplash`. The cue carries the splash position
+without an enemy or damage payload. RoR2 uses it to render its stock splash
+on the receiving machine when the Sunshine effects are missing.
 
 Heat-haze presentation: the source `TShimmer` model, indirect map and BTK
 scroll are exposed through ABI 32 for Mario's camera in every skin.
