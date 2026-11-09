@@ -514,6 +514,28 @@ fn the_rocket_and_the_turbo_fire_level_in_a_dive_and_a_slide_and_the_flag_switch
     }
 }
 
+/// Both FLUDD gauges draw `Mario::nozzle_gauge`: for the Turbo it fills with the dash wind-up too, and is
+/// only full once the dash is ready.
+#[test]
+fn the_turbo_gauge_fills_with_the_dash_wind_up() {
+    let mut s = Scene::flat();
+    s.sim.mario.give_fludd();
+    {
+        let p = s.sim.mario.params.clone();
+        let f = s.sim.mario.fludd.as_mut().unwrap();
+        f.change_nozzle(NozzleKind::Turbo, false, &p);
+        f.refill(&p);
+    }
+    assert!(s.mario().nozzle_gauge().is_none(), "a gauge with nothing built");
+    s.pad.r_analog = 255;
+    s.step(10);
+    let early = s.mario().nozzle_gauge().map_or(0.0, |(n, d)| n / d);
+    assert!(early < 0.5, "full too early: {early}");
+    s.step(150);
+    let (n, d) = s.mario().nozzle_gauge().expect("no gauge");
+    assert!((n / d - 1.0).abs() < 1e-3, "not full once wound up: {}", n / d);
+}
+
 #[test]
 fn spray_can_start_and_stop_during_a_belly_slide() {
     let mut s = Scene::flat();

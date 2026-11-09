@@ -267,7 +267,7 @@ pub(crate) fn water_draw_nozzle(s: &SmsSim, lag: f32) -> Option<Vec3> {
 pub unsafe extern "C" fn sms_sim_nozzle_charge(sim: *const SmsSim) -> f32 {
     libcommon::ffi::guard("sms_sim_nozzle_charge",0.,|| {
         let Some(s)=(unsafe{sim.as_ref()}) else{return 0.};
-        s.sim.mario.fludd.as_ref().and_then(|f|f.pressure(&s.sim.mario.params)).map_or(0.,|(n,d)|if d>0.{(n/d).clamp(0.,1.)}else{0.})
+        s.sim.mario.nozzle_gauge().map_or(0.,|(n,d)|if d>0.{(n/d).clamp(0.,1.)}else{0.})
     })
 }
 #[unsafe(no_mangle)]

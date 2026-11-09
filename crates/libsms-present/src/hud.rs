@@ -49,7 +49,7 @@ impl Gauge {
         Some(Gauge {
             fill: fill.clamp(0.0, 1.0),
             nozzle: f.nozzle,
-            pressure: f.pressure(&m.params),
+            pressure: m.nozzle_gauge(),
         })
     }
 }

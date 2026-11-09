@@ -352,6 +352,22 @@ impl Fludd {
 const AIM_DROOP: f32 = 1500.0;
 
 impl Mario {
+    /// What both FLUDD gauges draw as the trigger nozzle's charge, as (value, maximum): the nozzle's pressure, and
+    /// for the Turbo the slower of that and its dash wind-up (`dash_speed` to 32), so a full gauge means the
+    /// dash is ready, not only that the trigger has built pressure (host extension; the game's gauge
+    /// shows the pressure alone). None while nothing is built.
+    pub fn nozzle_gauge(&self) -> Option<(f32, f32)> {
+        let f = self.fludd.as_ref()?;
+        let pressure = f.pressure(&self.params);
+        if f.nozzle != NozzleKind::Turbo {
+            return pressure;
+        }
+        let (fill, max) = pressure.map_or((0.0, 1.0), |(n, d)| (n, d.max(1e-3)));
+        let wind = (self.dash_speed / 32.0).clamp(0.0, 1.0);
+        let level = (fill / max).clamp(0.0, 1.0).min(wind);
+        (level > 0.0).then_some((level * max, max))
+    }
+
     /// A B dive or a belly slide (dry or wet) with `Options::slide_dive_nozzles` on: the poses where the
     /// Rocket and Turbo push him along level instead of upward (host extension).
     pub(crate) fn horizontal_exhaust_pose(&self) -> bool {
