@@ -4198,6 +4198,42 @@ fn a_stick_circle_in_a_plain_jump_with_the_turbo_held_is_the_corkscrew() {
     assert_eq!(s.sim.mario.model_pitch, 0x4000, "it isn't the corkscrew");
 }
 
+/// Host extension `Options::turbo_air_thrust`: a Turbo held in a standing jump pushes him forward
+/// once its wind-up is full; with the flag off (the game's) it adds nothing.
+fn turbo_air_speed(thrust: bool) -> f32 {
+    let mut s = Scene::flat();
+    s.sim.mario.options.turbo_air_thrust = thrust;
+    s.sim.mario.give_fludd();
+    {
+        let p = s.sim.mario.params.clone();
+        let f = s.sim.mario.fludd.as_mut().unwrap();
+        f.change_nozzle(NozzleKind::Turbo, false, &p);
+        f.refill(&p);
+    }
+    s.press_a();
+    s.step(5);
+    s.pad.r_analog = 255;
+    // Peak speed while his feet are off the ground.
+    let mut peak = 0.0f32;
+    let mut aloft = 0;
+    for _ in 0..60 {
+        s.step(1);
+        if s.sim.mario.pos.y > 1.0 {
+            aloft += 1;
+            peak = peak.max(s.sim.mario.forward_vel);
+        }
+    }
+    assert!(aloft > 10, "never left the ground");
+    peak
+}
+
+#[test]
+fn the_held_turbo_thrusts_in_the_air_and_the_flag_switches_it_back() {
+    let off = turbo_air_speed(false);
+    let on = turbo_air_speed(true);
+    assert!(on > off + 5.0, "no air thrust: on {on}, off {off}");
+}
+
 /// The stick turns Mario in the rocket's thrust and in the climb after it, not only pushes him along.
 #[test]
 fn the_stick_turns_him_after_the_rocket() {

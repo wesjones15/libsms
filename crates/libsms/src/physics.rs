@@ -621,6 +621,17 @@ impl Mario {
         if self.forward_vel < -16.0 {
             self.forward_vel += 0.4;
         }
+        // Host extension (`Options::turbo_air_thrust`): the held Turbo pushes in the air, after the
+        // brakes above so they cannot eat it. It ramps in with the dash wind-up (`dash_speed` to its 32
+        // ceiling, about half a second, as long as a jump) and stops at the dash's `mDashMax`.
+        if self.options.turbo_air_thrust && self.turbo_held && !self.on_yoshi() {
+            let cap = self.params.mario.dash_max;
+            if self.forward_vel < cap {
+                let ramp = (self.dash_speed / 32.0).clamp(0.0, 1.0);
+                self.forward_vel =
+                    (self.forward_vel + crate::mario::TURBO_AIR_ACCEL * ramp).min(cap);
+            }
+        }
 
         let f = self.face_yaw;
         self.slide_x = self.forward_vel * sin(f) + side_vel * sin(f.wrapping_add(0x4000));

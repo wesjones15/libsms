@@ -299,7 +299,15 @@ pub struct Options {
     /// A on a *spinning* ground pound's landing leaps this many times as high as
     /// [`Options::pound_jump`] gives (1: no difference). Host extension.
     pub spin_pound_jump: f32,
+    /// Host extension: the Turbo holds thrust in the air. A held Turbo pushes him forward along his
+    /// facing even with his feet off the ground, ramping in with the dash wind-up, up to `mDashMax`.
+    /// The game's dash only exists while running
+    /// (`TMario::checkController` clears it outside `Run`), so false is the game's: no air thrust.
+    pub turbo_air_thrust: bool,
 }
+
+/// Forward speed the held Turbo adds each tick in the air (host extension, no disc value).
+pub const TURBO_AIR_ACCEL: f32 = 1.0;
 
 /// Ticks either side of a stomp in which A counts for [`Options::stomp_jump`].
 pub const STOMP_JUMP_WINDOW: u32 = 15;
@@ -333,6 +341,7 @@ impl Default for Options {
             yoshi_skin: false,
             corkscrew_hold_degrees: 60.0,
             spin_pound_jump: 1.0,
+            turbo_air_thrust: true,
         }
     }
 }
