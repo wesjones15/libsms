@@ -5,7 +5,7 @@
 //! (MarioJump), `physics.rs` (MarioPhysics and the slope/slide math in MarioRun), `fludd.rs`
 //! (WaterGun, nozzles, MarioUpper).
 
-use glam::Vec3;
+use glam::{Quat, Vec3};
 
 use crate::anim::{AnimState, AnimTable, clip};
 use crate::event::{Event, JumpKind};
@@ -20,6 +20,8 @@ use crate::params::Params;
 pub const ILLEGAL_FLOOR: f32 = -2.0e5;
 /// Mario's standing height (head clearance checks use `y + 160`).
 pub const HEIGHT: f32 = 160.0;
+/// The procedural cylinder leaves room for the Spray nozzle to arch over it.
+pub const STAND_IN_HEIGHT: f32 = 140.0;
 /// Highest ledge he walks up onto in one step.
 pub const STEP_UP: f32 = 100.0;
 /// Wall collision radius (`unk15C`).
@@ -958,6 +960,15 @@ impl Mario {
         }
         let progress = (self.anim.frame / self.anim.length().max(1.0)).clamp(0.0, 1.0);
         (direction * progress * 65536.0).round() as i32 as Angle
+    }
+
+    /// The model root for the mod's corkscrew tilt, shared by every renderer.
+    pub fn model_root_pose(feet: Vec3, yaw: Quat, pitch: Angle, roll: Angle) -> (Vec3, Quat) {
+        let angle = std::f32::consts::PI / 32768.0;
+        let tilt = Quat::from_rotation_x(f32::from(pitch) * angle)
+            * Quat::from_rotation_y(f32::from(roll) * angle);
+        let middle = Vec3::Y * (HEIGHT * 0.35);
+        (feet + yaw * (middle - tilt * middle), yaw * tilt)
     }
 
     /// The Turbo's dash is on (`MARIO_FLAG_FLUDD_EMITTING`): `TMarioEffect` draws the water-boost

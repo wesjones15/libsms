@@ -29,11 +29,23 @@ fn segment(a:Vec3,b:Vec3,r:f32){
    if (frame*2+tick)%4==3{waters[i].step(&FlatHost::default(),sims[i].mario.pos);}
   }}
   clear_background(Color::from_rgba(23,29,40,255));set_camera(&Camera3D{position:vec3(11.,8.,11.),target:vec3(0.,1.,3.),up:Vec3::Y,..Default::default()});draw_grid(20,1.,GRAY,DARKGRAY);
-  for i in 0..2{let feet=point(sims[i].mario.pos)*0.01;draw_cylinder(feet+Vec3::Y*0.8,0.35,0.35,1.6,None,RED);
-   let muzzle=sims[i].mario.muzzle_world(0);
-   for drop in &waters[i].particles{if let Some(shape)=flight_shape(&waters[i],drop,0.,muzzle){let(a,b)=shape.ends();segment(point(a)*0.01,point(b)*0.01,shape.half*0.01);}}
+  for i in 0..2 {
+   let mario = &sims[i].mario;
+   draw_cylinder(point(mario.pos)*0.01, 0.35, 0.35, libsms::mario::STAND_IN_HEIGHT*0.01, None, RED);
+   let (tank, rotation) = mario.stand_in_tank_pose();
+   draw_cylinder(point(tank)*0.01-Vec3::Y*0.4, 0.175, 0.175, 0.8, None, YELLOW);
+   let muzzle = mario.water_emitter(0).map(|(pos, _)| pos);
+   if let Some(tip) = muzzle {
+    segment(point(tank + rotation * GVec3::Y * 40.0)*0.01, point(tip)*0.01, 0.07);
+   }
+   for drop in &waters[i].particles {
+    if let Some(shape) = flight_shape(&waters[i], drop, 0., muzzle) {
+     let (head, tail) = shape.ends();
+     segment(point(tail.lerp(head, 0.5)) * 0.01, point(tail) * 0.01, shape.half * 0.01);
+    }
+   }
   }
-  set_default_camera();draw_text("PROCEDURAL FLUDD | shared flight span, live Spray and short-burst emissions",24.,36.,22.,WHITE);
+  set_default_camera();draw_text("PROCEDURAL FLUDD | half-length spans, live Spray and short-burst emissions",24.,36.,22.,WHITE);
   draw_text("Left: held Spray. Right: light press, then release. No original assets/effects.",24.,65.,21.,LIGHTGRAY);
   for (i,charge) in [0.,0.5,1.].into_iter().enumerate(){let x=760.+i as f32*110.;let y=570.;let r=44.;draw_circle(x,y,r,DARKGRAY);
    for row in 0..88{let dy=row as f32-r;let span=(r*r-dy*dy).max(0.).sqrt();if dy>r-2.*r*charge{draw_line(x-span,y+dy,x+span,y+dy,1.,ORANGE);}}

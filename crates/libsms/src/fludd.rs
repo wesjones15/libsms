@@ -426,24 +426,46 @@ impl Mario {
         }
     }
 
-    /// Where the nozzle's water leaves, if the host doesn't supply a skeleton pose. Approximate:
-    /// chest height, a little in front of Mario for forward nozzles.
-    pub(crate) fn nozzle_pos(&self, kind: NozzleKind, index: usize) -> Vec3 {
-        let face = self.face_yaw;
-        match kind {
-            NozzleKind::Hover | NozzleKind::Underwater => {
-                let side = if index == 0 { -35.0 } else { 35.0 };
-                self.pos
-                    + Vec3::new(
-                        side * cos(face) - 5.0 * sin(face),
-                        65.0,
-                        -side * sin(face) - 5.0 * cos(face),
-                    )
-            }
-            NozzleKind::Rocket => self.pos + Vec3::new(-20.0 * sin(face), 50.0, -20.0 * cos(face)),
-            NozzleKind::Turbo => self.pos + Vec3::new(-30.0 * sin(face), 90.0, -30.0 * cos(face)),
-            _ => self.pos + Vec3::new(40.0 * sin(face), 85.0, 40.0 * cos(face)),
+    /// The procedural tank mount in world space, also used to place the fallback emitters.
+    pub fn stand_in_tank_pose(&self) -> (Vec3, glam::Quat) {
+        use crate::mario::{POSE_DIVE, POSE_SLIDE, STAND_IN_HEIGHT};
+        use glam::Quat;
+        let angle = std::f32::consts::PI / 32768.0;
+        let mount = Vec3::new(0.0, 90.0, -35.0);
+        if self.model_pitch != 0 {
+            let yaw = Quat::from_rotation_y(f32::from(self.model_yaw) * angle);
+            let (root, rotation) = Self::model_root_pose(self.pos, yaw, self.model_pitch, self.model_roll);
+            return (root + rotation * mount, rotation);
         }
+        let yaw = Quat::from_rotation_y(f32::from(self.face_yaw) * angle);
+        if self.pose() & (POSE_DIVE | POSE_SLIDE) != 0 {
+            return (
+                self.pos + yaw * Vec3::new(0.0, 65.0, 20.0),
+                yaw * Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+            );
+        }
+        let rotation = yaw * Quat::from_rotation_x(f32::from(self.stand_in_jump_pitch()) * angle);
+        let middle = Vec3::Y * (STAND_IN_HEIGHT * 0.5);
+        (self.pos + middle + rotation * (mount - middle), rotation)
+    }
+
+    /// Authored approximations of `WaterGun.cpp::nozzleBmdData`'s muzzle joints
+    /// relative to the tank. The slide keeps a steady outlet above the belly.
+    pub(crate) fn nozzle_pos(&self, kind: NozzleKind, index: usize) -> Vec3 {
+        use crate::mario::{POSE_DIVE, POSE_SLIDE};
+        let (tank, rotation) = self.stand_in_tank_pose();
+        let sliding = self.model_pitch == 0 && self.pose() & (POSE_DIVE | POSE_SLIDE) != 0;
+        let outlet = match kind {
+            NozzleKind::Hover | NozzleKind::Underwater => {
+                let side = if index == 0 { -33.0 } else { 33.0 };
+                Vec3::new(side, 29.0, -8.0)
+            }
+            NozzleKind::Rocket => Vec3::new(0.0, 10.0, -24.0),
+            NozzleKind::Turbo => Vec3::new(0.0, 54.0, -15.0),
+            _ if sliding => Vec3::new(0.0, 72.0, -5.0),
+            _ => Vec3::new(0.0, 60.0, 47.0),
+        };
+        tank + rotation * outlet
     }
 
     pub(crate) fn emitter_count(kind: NozzleKind) -> usize {

@@ -7,6 +7,22 @@ backward or forward somersault, respectively, around the body center. Completion
 or interruption restores an upright pose. `viewer --example fallback_flips`
 captures the generated body, face mark and backpack through both rotations.
 
+ABI 56 exposes `sms_sim_corkscrew_pose`, which uses `Mario::model_root_pose` just
+like the full view. The host extension tips the `SPIN_P` clip (0xF4) head first
+and rolls it along the flight axis (`air.rs::jump_catch`). The procedural body,
+face mark, pack and spin band share that transform. The viewer captures several
+phases of an active corkscrew.
+The RoR2 stand-in draws water cylinders at half the exported span, keeping the
+nozzle-side endpoint. The textured water still consumes the full span calculation.
+
+The authored nozzle mounts follow local reference captures of `wg_mdl1.bmd` and
+`WaterGun.cpp::nozzleBmdData`'s `null_G_muzzle` joints. `fludd_mounts` renders
+standing `WAIT` and grounded wet-slide `SLDCT` frames. Spray has a raised outlet
+over the shortened cylinder and a steady forward outlet on the horizontal tank
+during a wet slide. Hover's two outlets stay out to the sides. Rocket and Turbo
+retain their rear positions. `stand_in_tank_pose` drives both the procedural
+pack and the sim's fallback nozzle positions.
+
 Asset-independent presentation, ABI 53: `sms_sim_emitter` exposes the same
 `Mario::water_emitter` calculation used to emit gameplay droplets (authored/no-view
 offsets or the supplied posed emitters, plus aim and corkscrew). The procedural

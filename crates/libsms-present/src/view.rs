@@ -2479,10 +2479,8 @@ impl View {
 
         // The Turbo corkscrew dive: the spin jump's motion tipped head first and spun about his own length,
         // through about his middle.
-        let tilt = Quat::from_rotation_x(m.model_pitch as f32 * std::f32::consts::PI / 32768.0)
-            * Quat::from_rotation_y(m.model_roll as f32 * std::f32::consts::PI / 32768.0);
-        let middle = Vec3::new(0.0, libsms::mario::HEIGHT * 0.35, 0.0);
-        let root = Mat4::from_rotation_translation(rot * tilt, pos + rot * (middle - tilt * middle));
+        let (draw_pos, draw_rot) = Mario::model_root_pose(pos, rot, m.model_pitch, m.model_roll);
+        let root = Mat4::from_rotation_translation(draw_rot, draw_pos);
         // Hosts which only pose the view still get the state-driven super pound flames.
         if self.fx_ticks.is_empty() {
             self.fx_ticks.push(FxTick {
@@ -2500,12 +2498,8 @@ impl View {
         for tick in self.fx_ticks.drain(..) {
             // The same tip and roll as the drawn body (the spin swirl is born in the spin pose's frame).
             let yaw_q = Quat::from_rotation_y(tick.yaw as f32 * std::f32::consts::PI / 32768.0);
-            let tick_tilt = Quat::from_rotation_x(tick.pitch as f32 * std::f32::consts::PI / 32768.0)
-                * Quat::from_rotation_y(tick.roll as f32 * std::f32::consts::PI / 32768.0);
-            let tick_root = Mat4::from_rotation_translation(
-                yaw_q * tick_tilt,
-                tick.pos + yaw_q * (middle - tick_tilt * middle),
-            );
+            let (tick_pos, tick_rot) = Mario::model_root_pose(tick.pos, yaw_q, tick.pitch, tick.roll);
+            let tick_root = Mat4::from_rotation_translation(tick_rot, tick_pos);
             // Let-go emitters still follow their animation matrix, as in MarioParticle.cpp.
             let eye = self.vr_eye;
             for &(slot, at) in &self.fx_binds {
@@ -2739,8 +2733,6 @@ impl View {
         self.anchors = anchors;
 
         // The corkscrew tips and rolls the whole drawn body about his middle (as `root` does for the effects).
-        let draw_pos = pos + rot * (middle - tilt * middle);
-        let draw_rot = rot * tilt;
         for (model, root, js) in parts {
             let first_vertex = self.positions.len() as u32;
             let first_color = self.colors.len() as u32;

@@ -31,7 +31,7 @@ use libsms::{
 use view::SmsView;
 
 /// ABI version, bumped when the C interface changes.
-pub const SMS_ABI_VERSION: u32 = 55;
+pub const SMS_ABI_VERSION: u32 = 56;
 
 #[cfg(test)]
 mod builtin_tests {
@@ -105,6 +105,64 @@ mod builtin_tests {
                 assert_eq!(state.flip_pitch, 0, "completed flip did not finish upright");
                 sms_sim_free(sim);
             }
+        }
+    }
+
+    #[test]
+    fn stand_in_corkscrew_uses_native_pitch_and_roll() {
+        unsafe {
+            let dir = CString::new("").unwrap();
+            let feet = SmsVec3 { y: 450.0, ..Default::default() };
+            let sim = sms_sim_new(dir.as_ptr(), &feet, 0);
+            assert!(!sim.is_null());
+            (*sim).sim.mario.change_status(libsms::Status::JumpCatch, 0, true);
+            let mut host: SmsHost = std::mem::zeroed();
+            host.ground = Some(floor);
+            let mut high = false;
+            let mut low = false;
+            let mut pose = view::SmsDraw::default();
+            for tick in 0..48 {
+                let angle = tick as f32 * std::f32::consts::TAU / 12.0;
+                let pad = SmsPad { stick_x: angle.cos(), stick_y: angle.sin(), ..Default::default() };
+                sms_sim_step(sim, &host, &pad, 0, 1. / 120., std::ptr::null_mut());
+                if sms_sim_corkscrew_pose(sim, &mut pose) != 0 {
+                    let rotation = glam::Quat::from_array(pose.rot);
+                    assert!((rotation * Vec3::Y).y.abs() < 0.001, "level corkscrew was not head first");
+                    let marker = rotation * Vec3::X;
+                    high |= marker.y > 0.95;
+                    low |= marker.y < -0.95;
+                    let pivot = Vec3::Y * (libsms::mario::HEIGHT * 0.35);
+                    assert!((Vec3::from(pose.pos) + rotation * pivot).distance(pivot) < 0.001);
+                }
+            }
+            assert!(high && low, "the stand-in marker never rolled around the body axis");
+            for _ in 0..40 {
+                sms_sim_step(sim, &host, &SmsPad::default(), 0, 1. / 120., std::ptr::null_mut());
+            }
+            assert_eq!(sms_sim_corkscrew_pose(sim, &mut pose), 0, "corkscrew tilt persisted after release");
+            sms_sim_free(sim);
+        }
+    }
+
+    #[test]
+    fn stand_in_spray_outlet_clears_the_body_and_follows_the_wet_slide() {
+        unsafe {
+            let dir = CString::new("").unwrap();
+            let sim = sms_sim_new(dir.as_ptr(), &SmsVec3::default(), 0);
+            assert!(!sim.is_null());
+            let mut tank = view::SmsDraw::default();
+            let mut outlet = SmsVec3::default();
+            assert_eq!(sms_sim_stand_in_tank_pose(sim, &mut tank), 1);
+            assert_eq!(sms_sim_emitter(sim, 0, &mut outlet, std::ptr::null_mut()), 1);
+            assert!(tank.pos.z < 0.0 && outlet.y > libsms::mario::STAND_IN_HEIGHT);
+            assert!(outlet.z < 25.0, "standing outlet is floating in front of the tank");
+            (*sim).sim.mario.portrait_pose(libsms::Status::Catch, libsms::anim::clip::DIVE, 20.0, 1, true);
+            assert_eq!(sms_sim_stand_in_tank_pose(sim, &mut tank), 1);
+            assert_eq!(sms_sim_emitter(sim, 0, &mut outlet, std::ptr::null_mut()), 1);
+            let top = Vec3::from(tank.pos) + glam::Quat::from_array(tank.rot) * Vec3::Y * 40.0;
+            assert!(outlet.z > top.z && outlet.y >= top.y, "slide outlet detached from the top of the tank");
+            assert!(outlet.y < 90.0, "slide outlet stayed at standing height");
+            sms_sim_free(sim);
         }
     }
 
@@ -188,7 +246,9 @@ pub struct SmsWaterParticle { pub pos: SmsVec3, pub velocity: SmsVec3, pub radiu
 #[derive(Clone, Copy, Default)]
 pub struct SmsWaterSegment { pub head: SmsVec3, pub tail: SmsVec3, pub radius: f32, pub flags: u32 }
 pub(crate) fn water_draw_nozzle(s: &SmsSim, lag: f32) -> Option<Vec3> {
-    s.sim.mario.muzzle_world(0).map(|m|m+Vec3::new(s.sim.mario.vel.x,0.,s.sim.mario.vel.z)*(0.25*(s.sim.alpha()-lag)))
+    let mario = &s.sim.mario;
+    let muzzle = mario.muzzle_world(0).or_else(|| mario.water_emitter(0).map(|(pos, _)| pos))?;
+    Some(muzzle + Vec3::new(mario.vel.x, 0.0, mario.vel.z) * (0.25 * (s.sim.alpha() - lag)))
 }
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sms_sim_nozzle_charge(sim: *const SmsSim) -> f32 {
@@ -1427,6 +1487,49 @@ pub unsafe extern "C" fn sms_sim_state(sim: *const SmsSim, out: *mut SmsState) -
             pose: m.pose(),
             flip_pitch: m.stand_in_jump_pitch(),
         };
+        1
+    })
+}
+
+/// The same root transform as the full corkscrew view, relative to the host's drawn feet.
+/// Returns zero outside the corkscrew. Only `pos` and `rot` in the output are used.
+///
+/// # Safety
+/// `sim` is a live handle and `out` is writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_sim_corkscrew_pose(sim: *const SmsSim, out: *mut view::SmsDraw) -> u8 {
+    libcommon::ffi::guard("sms_sim_corkscrew_pose", 0, || {
+        let (Some(sim), Some(out)) = (unsafe { sim.as_ref() }, unsafe { out.as_mut() }) else {
+            return 0;
+        };
+        let mario = &sim.sim.mario;
+        if mario.status != libsms::Status::JumpCatch || mario.model_pitch == 0 {
+            return 0;
+        }
+        let yaw = f32::from(mario.model_yaw) * (std::f32::consts::PI / 32768.0);
+        let (pos, rot) = libsms::Mario::model_root_pose(Vec3::ZERO, glam::Quat::from_rotation_y(yaw), mario.model_pitch, mario.model_roll);
+        *out = view::SmsDraw { pos: pos.into(), rot: rot.to_array(), ..Default::default() };
+        1
+    })
+}
+
+/// The stand-in tank center and rotation relative to Mario's feet. Only `pos`
+/// and `rot` are used. The fallback emitter mounts are relative to this pose.
+///
+/// # Safety
+/// `sim` is a live handle and `out` is writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sms_sim_stand_in_tank_pose(sim: *const SmsSim, out: *mut view::SmsDraw) -> u8 {
+    libcommon::ffi::guard("sms_sim_stand_in_tank_pose", 0, || {
+        let (Some(sim), Some(out)) = (unsafe { sim.as_ref() }, unsafe { out.as_mut() }) else {
+            return 0;
+        };
+        let mario = &sim.sim.mario;
+        if mario.fludd.is_none() {
+            return 0;
+        }
+        let (center, rotation) = mario.stand_in_tank_pose();
+        *out = view::SmsDraw { pos: (center - mario.pos).into(), rot: rotation.to_array(), ..Default::default() };
         1
     })
 }
