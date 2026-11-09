@@ -31,7 +31,7 @@ use libsms::{
 use view::SmsView;
 
 /// ABI version, bumped when the C interface changes.
-pub const SMS_ABI_VERSION: u32 = 56;
+pub const SMS_ABI_VERSION: u32 = 57;
 
 #[cfg(test)]
 mod builtin_tests {
@@ -722,6 +722,18 @@ pub struct SmsTuning {
     /// A on a spinning ground pound's landing leaps this many times as high as `pound_jump`
     /// gives (0 or 1: no difference).
     pub spin_pound_jump: f32,
+    /// 1: a held Turbo thrusts in the air (`Options::turbo_air_thrust`); 0: the game's (host extension).
+    pub turbo_air_thrust: u8,
+    /// 1: a spinning ground pound falls faster (`Options::spin_pound_fast`); 0: the game's.
+    pub spin_pound_fast: u8,
+    /// 1: the Rocket and Turbo fire in a dive and belly slide (`Options::slide_dive_nozzles`); 0: the game's.
+    pub slide_dive_nozzles: u8,
+    /// 1: the experimental aimed alternate nozzles are on (`Options::aim_alt`, the master switch); 0: off.
+    pub aim_alt: u8,
+    /// With `aim_alt`: 1 each lets the Rocket precision shot, the aimed Turbo and the aimed Hover work.
+    pub aim_rocket: u8,
+    pub aim_turbo: u8,
+    pub aim_hover: u8,
 }
 
 /// A host's own limits on FLUDD and the slide ([`libsms::Limits`]), for games that bill them
@@ -2150,6 +2162,13 @@ pub unsafe extern "C" fn sms_sim_set_tuning(sim: *mut SmsSim, tuning: *const Sms
             } else {
                 1.0
             };
+            o.turbo_air_thrust = t.turbo_air_thrust != 0;
+            o.spin_pound_fast = t.spin_pound_fast != 0;
+            o.slide_dive_nozzles = t.slide_dive_nozzles != 0;
+            o.aim_alt = t.aim_alt != 0;
+            o.aim_rocket = t.aim_rocket != 0;
+            o.aim_turbo = t.aim_turbo != 0;
+            o.aim_hover = t.aim_hover != 0;
         }
     })
 }
@@ -2733,7 +2752,7 @@ mod tests {
         assert_eq!(
             &sizes[..n],
             &[
-                12, 20, 8, 16, 32, 72, 24, 56, 40, 24, 12, 64, 48, 64, 24, 28, 24, 36, 16, 12, 32,
+                12, 20, 8, 16, 32, 72, 24, 56, 40, 24, 12, 64, 48, 72, 24, 28, 24, 36, 16, 12, 32,
                 36, 72, 40, 52, 16, 40, 48, 40, 56, 20, 48
             ]
         );
