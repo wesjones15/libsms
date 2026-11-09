@@ -20,8 +20,8 @@ use crate::params::Params;
 pub const ILLEGAL_FLOOR: f32 = -2.0e5;
 /// Mario's standing height (head clearance checks use `y + 160`).
 pub const HEIGHT: f32 = 160.0;
-/// The procedural cylinder leaves room for the Spray nozzle to arch over it.
-pub const STAND_IN_HEIGHT: f32 = 140.0;
+/// The procedural cylinder leaves the tank top and Spray nozzle visible above it.
+pub const STAND_IN_HEIGHT: f32 = 110.0;
 /// Highest ledge he walks up onto in one step.
 pub const STEP_UP: f32 = 100.0;
 /// Wall collision radius (`unk15C`).

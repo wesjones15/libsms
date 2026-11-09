@@ -155,6 +155,8 @@ mod builtin_tests {
             assert_eq!(sms_sim_stand_in_tank_pose(sim, &mut tank), 1);
             assert_eq!(sms_sim_emitter(sim, 0, &mut outlet, std::ptr::null_mut()), 1);
             assert!(tank.pos.z < 0.0 && outlet.y > libsms::mario::STAND_IN_HEIGHT);
+            let top = Vec3::from(tank.pos) + glam::Quat::from_array(tank.rot) * Vec3::Y * 40.0;
+            assert!(top.y > libsms::mario::STAND_IN_HEIGHT, "standing cylinder obscures the tank top");
             assert!(outlet.z < 25.0, "standing outlet is floating in front of the tank");
             (*sim).sim.mario.portrait_pose(libsms::Status::Catch, libsms::anim::clip::DIVE, 20.0, 1, true);
             assert_eq!(sms_sim_stand_in_tank_pose(sim, &mut tank), 1);

@@ -17,11 +17,12 @@ nozzle-side endpoint. The textured water still consumes the full span calculatio
 
 The authored nozzle mounts follow local reference captures of `wg_mdl1.bmd` and
 `WaterGun.cpp::nozzleBmdData`'s `null_G_muzzle` joints. `fludd_mounts` renders
-standing `WAIT` and grounded wet-slide `SLDCT` frames. Spray has a raised outlet
-over the shortened cylinder and a steady forward outlet on the horizontal tank
-during a wet slide. Hover's two outlets stay out to the sides. Rocket and Turbo
-retain their rear positions. `stand_in_tank_pose` drives both the procedural
-pack and the sim's fallback nozzle positions.
+standing `WAIT` and grounded wet-slide `SLDCT` frames. The 110-unit cylinder
+leaves both the tank top and Spray outlet above its head. Spray has a steady
+forward outlet on the horizontal tank during a wet slide. Hover's two outlets
+stay out to the sides. Rocket and Turbo retain their rear positions.
+`stand_in_tank_pose` drives both the procedural pack and the sim's fallback
+nozzle positions.
 
 Asset-independent presentation, ABI 53: `sms_sim_emitter` exposes the same
 `Mario::water_emitter` calculation used to emit gameplay droplets (authored/no-view
