@@ -929,3 +929,22 @@ slide, 4 `pounding()` (a pound or its get-up), and 8 a spin jump or a spinning p
 `Mario::pose` only maps the status table the native view already uses, so a stand-in cannot
 show a different action. The scenario and C ABI tests drive a dive, slide, pound and spin
 and check each bit.
+
+## 10. FLUDD and spin-pound host extensions (2026-11-09)
+
+None of this is in Sunshine, so there are no disc values: every number is a marked constant
+(`mario.rs`, `fludd.rs`), and every behavior sits on top of the game's and is switched back by an
+`Options` flag (all in `SmsTuning`, ABI 57). Plan and decisions: `DOCS/FLUDD-COMBAT-PLAN-DRAFT.md`.
+
+| Flag (default) | What it adds |
+|---|---|
+| `turbo_air_thrust` (on) | A held Turbo pushes him forward without feet on the ground (`TURBO_AIR_ACCEL`, ramped with the dash wind-up, capped at `mDashMax`). The game's dash exists only in `Run`. Jumps (`do_jumping`), the plain dive, the belly slide (`push_along`) and the corkscrew (up to its flight cap). |
+| `spin_pound_fast` (on) | A spinning ground pound falls `SPIN_POUND_REGULAR_MULT` x the plain fall (and at least 1.1 x the flaming one); a spinning flaming pound `SPIN_POUND_FLAME_MULT` x. `fall_process`'s -75 terminal speed is waived for it. The flame clock (`pound_flame_clock`) runs at the same speed-up, so the flame starts at the same height. |
+| `slide_dive_nozzles` (on) | Rocket and Turbo pump in a B dive and a dry or wet belly slide; their outlets point level out the back along his travel, so the Turbo recoil and the Rocket's thrust term (`reaction_y`) drive him along. A slide's speed is `slide_x/z`, so `push_along` writes there. The disc exhaust (`rocketEffectStart`'s a, b, b2) is turned rearward (`FxAt::MuzzleFollowAlong`). Rocket repeats are allowed in a slide; in a dive it fires with any charge he holds. |
+| `aim_alt` (off) + `aim_rocket`/`aim_turbo`/`aim_hover` (on) | Experimental aimed alternate nozzles; need a valid LB target (the host passes the aim only when an enemy is locked). **Rocket:** a charge that fires with a target is one precision slug (`PRECISION_*`), no launch, a small kick opposite the shot; it takes priority over the horizontal boost. **Turbo:** an aimed rapid stream (`TURBO_AIM_*`) and thrust away from the target, in place of the forward boost. **Hover:** both jets aim, the lift stays (recoil from the unaimed direction). The Turbo and Hover decide at the R press; losing the target ends the hold until R is pressed again (`alt_aim_block`). Spray lock-on is independent. |
+
+Both FLUDD HUDs read `Mario::nozzle_gauge`: for the Turbo it is the slower of trigger pressure and the
+dash wind-up, so a full gauge means the dash is ready.
+
+Unverified: all of it. The tests (`scenarios.rs`) prove the sim, the flags and the replay inputs, not how
+it plays or feels.
