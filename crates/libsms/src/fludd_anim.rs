@@ -449,7 +449,7 @@ impl Mario {
             nozzle_clip: a.clip.and_then(|i| nozzle_clips(f.nozzle).get(i).copied()),
             nozzle_frame: a.ctrl.frame,
             gun_angle: f.gun_angle(),
-            aimed: self.aim_now().is_some(),
+            aimed: self.gameplay_aim().is_some(),
             aim_turn: self
                 .aim_now()
                 .map_or(0, |a| crate::math::diff(a.yaw, self.model_yaw)),

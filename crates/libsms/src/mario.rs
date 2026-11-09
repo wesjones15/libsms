@@ -312,6 +312,16 @@ pub struct Options {
     /// slide, pushing him along level (the Turbo also thrusts, and its corkscrew speeds up). The game
     /// offers only the Spray there (and only with [`Options::spray_during_dive`]). false: the game's.
     pub slide_dive_nozzles: bool,
+    /// Host extension, experimental: master switch for aiming the alternate nozzles (Rocket, Turbo, Hover) at the
+    /// host's lock-on target ([`Mario::aim`]). Off: they keep their movement behavior; the Spray's lock-on is
+    /// independent of it and of the three switches below.
+    pub aim_alt: bool,
+    /// With [`Options::aim_alt`]: a Rocket charge that fires with a valid target shoots one precision slug.
+    pub aim_rocket: bool,
+    /// With [`Options::aim_alt`]: a Turbo pressed with a valid target fires an aimed, rapid stream.
+    pub aim_turbo: bool,
+    /// With [`Options::aim_alt`]: a Hover pressed with a valid target steers both jets at it.
+    pub aim_hover: bool,
 }
 
 /// A spinning regular pound falls this many times the plain pound's speed, and at least a tenth faster than the
@@ -358,6 +368,10 @@ impl Default for Options {
             turbo_air_thrust: true,
             spin_pound_fast: true,
             slide_dive_nozzles: true,
+            aim_alt: false,
+            aim_rocket: true,
+            aim_turbo: true,
+            aim_hover: true,
         }
     }
 }
@@ -573,6 +587,16 @@ pub struct Mario {
     /// Fall ticks toward `mSuperHipAttackCt`, counted faster by the spin's speed-up so the flame starts at the
     /// same height (host extension, `Options::spin_pound_fast`).
     pub(crate) pound_flame_clock: f32,
+    /// This Rocket charge fired with a valid target: its one precision slug, no launch (`Options::aim_rocket`).
+    pub(crate) rocket_precision: bool,
+    /// The precision slug of this charge has left.
+    pub(crate) precision_fired: bool,
+    /// This press of the Turbo or Hover began with a valid target and the experiment on, so it stays aimed.
+    pub(crate) alt_aim_latched: bool,
+    /// An aimed stream lost its target: no pumping until R is let go (a held Spray that ran out, as it were).
+    pub(crate) alt_aim_block: bool,
+    /// R was down last tick (for the press edge of an aimed Turbo or Hover; the analog level, not the digital bit).
+    pub(crate) alt_aim_r_down: bool,
     /// Host extension: the disc's `mGravity` / `mSpinJumpGravity`, kept while a host scales them
     /// ([`Mario::set_gravity_scale`]).
     gravity_base: Option<(f32, f32)>,
@@ -700,6 +724,11 @@ impl Mario {
             pound_spin: false,
             pound_spin_age: 0,
             pound_flame_clock: 0.0,
+            rocket_precision: false,
+            precision_fired: false,
+            alt_aim_latched: false,
+            alt_aim_block: false,
+            alt_aim_r_down: false,
             gravity_base: None,
         }
     }

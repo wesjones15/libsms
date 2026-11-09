@@ -413,6 +413,10 @@ impl Mario {
         // Host extension: a use the host granted this press (`Limits::air_uses`) may start from the fall out of an
         // earlier Rocket or Hover too, which the game's own check refuses.
         let granted = self.limit_granted();
+        // Host extension (`Options::aim_rocket`): a charge that fired as a precision slug doesn't launch him.
+        if self.rocket_precision {
+            return false;
+        }
         if self.status == Status::Rocket
             || (self.status == Status::RocketLanding && !granted)
             || self.air_rocket_used

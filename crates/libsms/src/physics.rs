@@ -667,7 +667,8 @@ impl Mario {
     /// a belly slide, a corkscrew), `TURBO_AIR_ACCEL` ramped in with the dash wind-up (`dash_speed` to 32).
     /// 0 when the Turbo isn't held.
     pub(crate) fn turbo_thrust(&self) -> f32 {
-        if !self.turbo_held || self.on_yoshi() {
+        // An aimed Turbo stream has the priority: its own controlled thrust, not the forward boost.
+        if !self.turbo_held || self.on_yoshi() || self.gameplay_aim().is_some() {
             return 0.0;
         }
         crate::mario::TURBO_AIR_ACCEL * (self.dash_speed / 32.0).clamp(0.0, 1.0)

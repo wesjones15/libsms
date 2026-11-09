@@ -514,6 +514,138 @@ fn the_rocket_and_the_turbo_fire_level_in_a_dive_and_a_slide_and_the_flag_switch
     }
 }
 
+/// Jumps, then holds R with `nozzle` and a lock-on aim that points level, to the side, for `ticks`. Returns the
+/// emits of that nozzle (direction, attack, count), whether he ever rocketed, and the final vertical speed.
+fn aimed_burst(nozzle: NozzleKind, master: bool, switch: bool, aim_on: bool, ticks: u32) -> (Vec<(Vec3, i16, u32)>, bool, f32) {
+    let mut s = Scene::flat();
+    s.sim.mario.give_fludd();
+    s.sim.mario.options.pump_in_long_fall = true;
+    {
+        let o = &mut s.sim.mario.options;
+        o.aim_alt = master;
+        o.aim_rocket = switch;
+        o.aim_turbo = switch;
+        o.aim_hover = switch;
+        let p = s.sim.mario.params.clone();
+        let f = s.sim.mario.fludd.as_mut().unwrap();
+        f.change_nozzle(nozzle, false, &p);
+        f.refill(&p);
+    }
+    s.sim.mario.pos = Vec3::new(0.0, 12000.0, 0.0);
+    s.step(5);
+    if aim_on {
+        s.sim.mario.aim = Some(libsms::Aim { yaw: 0x4000, pitch: 0 });
+    }
+    s.pad.r_analog = 255;
+    let (mut emits, mut rocketed) = (vec![], false);
+    for _ in 0..ticks {
+        s.host.events.clear();
+        s.step(1);
+        rocketed |= s.mario().status == Status::Rocket;
+        for e in s.host.events.iter() {
+            if let Event::WaterEmit(w) = e {
+                if w.nozzle == nozzle {
+                    emits.push((w.dir, w.attack, w.count));
+                }
+            }
+        }
+    }
+    (emits, rocketed, s.mario().vel.y)
+}
+
+#[test]
+fn an_aimed_rocket_fires_one_precision_slug_and_does_not_launch_him() {
+    let (shots, rocketed, _) = aimed_burst(NozzleKind::Rocket, true, true, true, 300);
+    assert_eq!(shots.len(), 1, "expected one slug, got {}", shots.len());
+    let (dir, attack, count) = shots[0];
+    assert_eq!(count, 1);
+    assert!(dir.x > 0.99, "slug didn't go where aimed: {dir:?}");
+    assert!(!rocketed, "the slug launched him");
+    // A stronger single hit than the Spray's drop.
+    let (plain, plain_rocketed, _) = aimed_burst(NozzleKind::Rocket, false, true, true, 300);
+    assert!(plain_rocketed, "master off: the Rocket should launch as usual");
+    assert!(plain.len() > 1);
+    let spray = libsms::params::Params::default().nozzle(NozzleKind::Spray).attack;
+    assert!(attack > spray, "slug {attack} not stronger than a Spray drop {spray}");
+    // Each switch off is the movement behavior again.
+    let (_, rocketed_off, _) = aimed_burst(NozzleKind::Rocket, true, false, true, 300);
+    assert!(rocketed_off, "per-nozzle switch off: it should launch");
+    // No target at the discharge: the movement behavior.
+    let (_, rocketed_no_target, _) = aimed_burst(NozzleKind::Rocket, true, true, false, 300);
+    assert!(rocketed_no_target, "no target: it should launch");
+}
+
+#[test]
+fn the_aimed_turbo_streams_at_the_target_and_the_master_switch_gates_it() {
+    let (aimed, _, _) = aimed_burst(NozzleKind::Turbo, true, true, true, 200);
+    let (plain, _, _) = aimed_burst(NozzleKind::Turbo, false, true, true, 200);
+    assert!(!aimed.is_empty() && !plain.is_empty());
+    assert!(aimed.iter().all(|(d, _, _)| d.x > 0.99), "aimed stream off target");
+    assert!(plain.iter().all(|(d, _, _)| d.x < 0.5), "master off but the Turbo aimed");
+    let drops = |v: &[(Vec3, i16, u32)]| v.iter().map(|e| e.2).sum::<u32>();
+    assert!(drops(&aimed) > drops(&plain), "the aimed stream isn't faster");
+}
+
+#[test]
+fn an_aimed_hover_points_both_jets_at_the_target_and_keeps_its_lift() {
+    let (aimed, _, vy_aimed) = aimed_burst(NozzleKind::Hover, true, true, true, 60);
+    let (_, _, vy_plain) = aimed_burst(NozzleKind::Hover, false, true, true, 60);
+    assert!(aimed.len() >= 2, "both jets should fire");
+    assert!(aimed.iter().all(|(d, _, _)| d.x > 0.99), "jets off target");
+    assert!(vy_aimed > 0.0 && (vy_aimed - vy_plain).abs() < 1.0, "lift changed: {vy_aimed} vs {vy_plain}");
+}
+
+#[test]
+fn a_lost_target_ends_an_aimed_stream_until_r_is_pressed_again() {
+    let mut s = Scene::flat();
+    s.sim.mario.give_fludd();
+    s.sim.mario.options.pump_in_long_fall = true;
+    s.sim.mario.options.aim_alt = true;
+    {
+        let p = s.sim.mario.params.clone();
+        let f = s.sim.mario.fludd.as_mut().unwrap();
+        f.change_nozzle(NozzleKind::Turbo, false, &p);
+        f.refill(&p);
+    }
+    s.sim.mario.pos = Vec3::new(0.0, 12000.0, 0.0);
+    s.step(5);
+    s.sim.mario.aim = Some(libsms::Aim { yaw: 0x4000, pitch: 0 });
+    s.pad.r_analog = 255;
+    s.step(1);
+    let emits = |s: &mut Scene<FlatHost>, n: u32| {
+        let mut total = 0;
+        for _ in 0..n {
+            s.host.events.clear();
+            s.step(1);
+            total += s.event_count(|e| matches!(e, Event::WaterEmit(w) if w.nozzle == NozzleKind::Turbo));
+        }
+        total
+    };
+    // Run until the stream has just begun (it would otherwise be spent on its own), then break the lock.
+    let mut began = false;
+    for _ in 0..400 {
+        if emits(&mut s, 1) > 0 {
+            began = true;
+            break;
+        }
+    }
+    assert!(began, "no aimed stream");
+    s.sim.mario.aim = None;
+    s.step(2);
+    assert_eq!(emits(&mut s, 30), 0, "kept firing after the target broke");
+    // Still held: still off, even with the target back.
+    s.sim.mario.aim = Some(libsms::Aim { yaw: 0x4000, pitch: 0 });
+    assert_eq!(emits(&mut s, 30), 0, "restarted without a fresh press");
+    s.pad.r_analog = 0;
+    s.step(10);
+    {
+        let p = s.sim.mario.params.clone();
+        s.sim.mario.fludd.as_mut().unwrap().refill(&p);
+    }
+    s.pad.r_analog = 255;
+    assert!(emits(&mut s, 200) > 0, "a fresh press didn't start it again");
+}
+
 /// Both FLUDD gauges draw `Mario::nozzle_gauge`: for the Turbo it fills with the dash wind-up too, and is
 /// only full once the dash is ready.
 #[test]
@@ -5093,3 +5225,5 @@ fn a_spinning_pound_jumps_much_higher_than_a_plain_one() {
     assert!(spun > plain * 2.0, "{spun} vs {plain}");
     assert!((spun_off - plain).abs() < plain * 0.1, "{spun_off} vs {plain}");
 }
+
+
