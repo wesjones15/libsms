@@ -832,6 +832,12 @@ fn fx_matrix(at: FxAt, root: Mat4, joints: &[Mat4], center: Option<usize>, muzzl
         FxAt::MuzzleFollow(i) => muzzles
             .get(i as usize)
             .map(|m| Mat4::from_translation((root * *m).w_axis.truncate())),
+        // The same exhaust, authored to blow down (-Y), turned to blow along the heading `yaw` (sim axes: yaw 0 is +Z).
+        FxAt::MuzzleFollowAlong(i, yaw) => muzzles.get(i as usize).map(|m| {
+            let a = yaw as f32 * std::f32::consts::PI / 32768.0;
+            let dir = Vec3::new(a.sin(), 0.0, a.cos());
+            Mat4::from_rotation_translation(Quat::from_rotation_arc(Vec3::NEG_Y, dir), (root * *m).w_axis.truncate())
+        }),
     }
 }
 
@@ -2515,7 +2521,7 @@ impl View {
                 let mtx = if VR_EYE_EFFECTS.contains(&cue.name) { at_eye(mtx, tick.pos, eye) } else { mtx };
                 if matches!(cue.at, FxAt::Once { .. }) {
                     self.fx.emit(cue.name, mtx, cue.scale);
-                } else if matches!(cue.at, FxAt::MuzzleFollow(_) | FxAt::FeetFollow | FxAt::JointFollow(_)) {
+                } else if matches!(cue.at, FxAt::MuzzleFollow(_) | FxAt::MuzzleFollowAlong(..) | FxAt::FeetFollow | FxAt::JointFollow(_)) {
                     // Its own slot (past the held effects'), kept bound to the muzzle as it moves.
                     if let Some(i) = MARIO_EFFECTS.iter().position(|&n| n == cue.name) {
                         let slot = FOLLOW_SLOTS + i as u32;
@@ -3871,6 +3877,17 @@ mod tests {
 
     /// The nozzle's effects are on the muzzle FLUDD's drawn nozzle has, and the Rocket's exhaust
     /// stays with it as Mario moves.
+    #[test]
+    fn a_level_exhaust_blows_along_its_heading_not_down() {
+        // The effect is authored to blow down (-Y); the level shot turns it to the heading behind him.
+        let muzzle = Mat4::from_translation(Vec3::new(1.0, 2.0, 3.0));
+        for (yaw, want) in [(i16::MIN, Vec3::NEG_Z), (0, Vec3::Z), (0x4000, Vec3::X)] {
+            let m = fx_matrix(FxAt::MuzzleFollowAlong(0, yaw), Mat4::IDENTITY, &[], None, &[muzzle]).expect("no muzzle");
+            assert!((m.transform_vector3(Vec3::NEG_Y) - want).length() < 1e-4, "yaw {yaw}: {:?}", m.transform_vector3(Vec3::NEG_Y));
+            assert_eq!(m.w_axis.truncate(), Vec3::new(1.0, 2.0, 3.0));
+        }
+    }
+
     #[test]
     fn nozzle_effects_sit_on_the_muzzle_and_the_rockets_exhaust_follows_it() {
         let Some(mut v) = view() else {

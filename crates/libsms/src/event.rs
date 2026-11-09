@@ -135,6 +135,9 @@ pub enum FxAt {
     /// `emitAndBindToPosPtr(id, &getEmitPos0(), 0, this)`: started once on the `n`th muzzle and bound to
     /// it, following it for the effect's own lifetime (the Rocket's exhaust).
     MuzzleFollow(u8),
+    /// [`FxAt::MuzzleFollow`] with the effect turned to blow along the horizontal heading `yaw` (sim angle units)
+    /// instead of downward: the Rocket's exhaust in a dive or slide, where it goes out the back.
+    MuzzleFollowAlong(u8, i16),
 }
 
 /// How Mario hit an enemy (the `HIT_MESSAGE_*` he sent).

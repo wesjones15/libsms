@@ -935,6 +935,10 @@ impl Mario {
                     self.options.aim_alt && self.options.aim_rocket && self.aim_now().is_some();
                 self.precision_fired = false;
             }
+            // A level shot out the back in a dive or slide has the Rocket's exhaust too, turned to blow rearward.
+            if fired.is_some() && !self.rocket_precision && self.horizontal_exhaust_pose() {
+                self.rocket_exhaust_horizontal();
+            }
         }
         if charging {
             self.sound("MSD_SE_SY_NEWP_AIR_TAME", None);

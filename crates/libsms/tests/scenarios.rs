@@ -5227,3 +5227,58 @@ fn a_spinning_pound_jumps_much_higher_than_a_plain_one() {
 }
 
 
+
+/// The Rocket's exhaust effects, authored to blow downward, are turned to blow rearward along the heading
+/// behind him when the shot is level (a dive or slide); with the flag off there is none (the game has no
+/// Rocket in a dive).
+#[test]
+fn the_level_rockets_exhaust_is_turned_rearward() {
+    for on in [true, false] {
+        let mut s = Scene::flat();
+        s.sim.mario.give_fludd();
+        s.sim.mario.options.slide_dive_nozzles = on;
+        {
+            let p = s.sim.mario.params.clone();
+            let f = s.sim.mario.fludd.as_mut().unwrap();
+            f.change_nozzle(NozzleKind::Rocket, false, &p);
+            f.refill(&p);
+        }
+        s.run_forward();
+        s.secs(1.0);
+        s.press_a();
+        s.step(10);
+        s.pad.b = true;
+        s.step(1);
+        s.pad.b = false;
+        s.pad.r_analog = 255;
+        let mut cues = vec![];
+        for _ in 0..360 {
+            s.host.events.clear();
+            s.step(1);
+            for e in s.host.events.iter() {
+                if let Event::Particle(c) = e {
+                    if c.name.starts_with("ms_m_rocket_") {
+                        cues.push((c.name, c.at, s.mario().face_yaw));
+                    }
+                }
+            }
+            if !matches!(s.mario().status, Status::JumpCatch | Status::Catch) && !cues.is_empty() {
+                break;
+            }
+        }
+        if !on {
+            assert!(cues.is_empty(), "a Rocket exhaust with the flag off");
+            continue;
+        }
+        let names: std::collections::BTreeSet<_> = cues.iter().map(|c| c.0).collect();
+        assert_eq!(names.len(), 3, "exhaust effects a, b and b2 expected, got {names:?}");
+        for (name, at, face) in cues {
+            match at {
+                libsms::FxAt::MuzzleFollowAlong(0, yaw) => {
+                    assert_eq!(yaw, face.wrapping_add(i16::MIN), "{name} not turned behind him")
+                }
+                other => panic!("{name} started at {other:?}, not turned rearward"),
+            }
+        }
+    }
+}

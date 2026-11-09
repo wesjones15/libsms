@@ -1066,6 +1066,16 @@ impl Mario {
         }
     }
 
+    /// The Rocket's exhaust for a level shot out the back in a dive or slide (host extension, `Options::slide_dive_nozzles`): the
+    /// same `ms_m_rocket_a`, `_b` and `_b2` as `rocketEffectStart`, authored to blow downward, explicitly turned to
+    /// blow along the heading behind him. The burst at his feet belongs to the upright launch, so it is left out.
+    pub(crate) fn rocket_exhaust_horizontal(&mut self) {
+        let behind = self.face_yaw.wrapping_add(i16::MIN);
+        for name in ["ms_m_rocket_a", "ms_m_rocket_b", "ms_m_rocket_b2"] {
+            self.fx(name, crate::event::FxAt::MuzzleFollowAlong(0, behind));
+        }
+    }
+
     /// `emitSmoke`: a puff of dust as Mario sets off, unless he stands in a pool.
     pub(crate) fn emit_smoke(&mut self, yaw: i16) {
         if !self.in_water {
