@@ -455,6 +455,65 @@ fn spray_can_start_or_continue_through_a_b_dive_and_belly_slide() {
     }
 }
 
+/// Host extension `Options::slide_dive_nozzles`: dives with the nozzle's trigger held from the
+/// dive on. Returns (emits in the dive, emits in the slide, whether every emit went level, peak
+/// distance travelled from the dive on).
+fn dive_with(nozzle: NozzleKind, on: bool) -> (u32, u32, bool, f32) {
+    let mut s = Scene::flat();
+    s.sim.mario.give_fludd();
+    s.sim.mario.options.slide_dive_nozzles = on;
+    {
+        let p = s.sim.mario.params.clone();
+        let f = s.sim.mario.fludd.as_mut().unwrap();
+        f.change_nozzle(nozzle, false, &p);
+        f.refill(&p);
+    }
+    s.run_forward();
+    s.secs(1.0);
+    s.press_a();
+    s.step(10);
+    s.pad.b = true;
+    s.step(1);
+    s.pad.b = false;
+    s.pad.r_analog = 255;
+    let start = s.mario().pos;
+    let (mut dive, mut slide, mut level) = (0, 0, true);
+    for _ in 0..360 {
+        s.host.events.clear();
+        s.step(1);
+        let (mut emits, mut up) = (0, false);
+        for e in s.host.events.iter() {
+            if let Event::WaterEmit(w) = e {
+                if w.nozzle == nozzle {
+                    emits += 1;
+                    up |= w.dir.y.abs() > 1e-3;
+                }
+            }
+        }
+        level &= !up;
+        match s.mario().status {
+            Status::JumpCatch => dive += emits,
+            Status::Catch => slide += emits,
+            _ if dive + slide > 0 => break,
+            _ => {}
+        }
+    }
+    let travelled = Vec3::new(s.mario().pos.x - start.x, 0.0, s.mario().pos.z - start.z).length();
+    (dive, slide, level, travelled)
+}
+
+#[test]
+fn the_rocket_and_the_turbo_fire_level_in_a_dive_and_a_slide_and_the_flag_switches_it_back() {
+    for nozzle in [NozzleKind::Rocket, NozzleKind::Turbo] {
+        let (dive, slide, level, far_on) = dive_with(nozzle, true);
+        assert!(dive + slide > 0, "{nozzle:?} never fired in a dive or slide");
+        assert!(level, "{nozzle:?} exhaust wasn't level");
+        let (dive_off, slide_off, _, far_off) = dive_with(nozzle, false);
+        assert_eq!(dive_off + slide_off, 0, "{nozzle:?} fires with the flag off");
+        assert!(far_on > far_off, "{nozzle:?} didn't carry him further: on {far_on}, off {far_off}");
+    }
+}
+
 #[test]
 fn spray_can_start_and_stop_during_a_belly_slide() {
     let mut s = Scene::flat();

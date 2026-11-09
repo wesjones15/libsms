@@ -308,6 +308,10 @@ pub struct Options {
     /// [`SPIN_POUND_REGULAR_MULT`], [`SPIN_POUND_FLAME_MULT`]). The flame still starts at the same
     /// height. false: the game's fall speeds (the spin was only a swirl and a bigger landing).
     pub spin_pound_fast: bool,
+    /// Host extension: the Rocket and the Turbo can charge and fire in a B dive and a dry or wet belly
+    /// slide, pushing him along level (the Turbo also thrusts, and its corkscrew speeds up). The game
+    /// offers only the Spray there (and only with [`Options::spray_during_dive`]). false: the game's.
+    pub slide_dive_nozzles: bool,
 }
 
 /// A spinning regular pound falls this many times the plain pound's speed, and at least a tenth faster than the
@@ -353,6 +357,7 @@ impl Default for Options {
             spin_pound_jump: 1.0,
             turbo_air_thrust: true,
             spin_pound_fast: true,
+            slide_dive_nozzles: true,
         }
     }
 }

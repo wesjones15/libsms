@@ -352,6 +352,14 @@ impl Fludd {
 const AIM_DROOP: f32 = 1500.0;
 
 impl Mario {
+    /// A B dive or a belly slide (dry or wet) with `Options::slide_dive_nozzles` on: the poses where the
+    /// Rocket and Turbo push him along level instead of upward (host extension).
+    pub(crate) fn horizontal_exhaust_pose(&self) -> bool {
+        self.options.slide_dive_nozzles
+            && !self.on_yoshi()
+            && matches!(self.status, Status::JumpCatch | Status::Catch)
+    }
+
     /// The exact gameplay emitter, shared by particle emission and asset-free hosts.
     pub fn water_emitter(&self, index: usize) -> Option<(Vec3, Vec3)> {
         let kind = self.fludd.as_ref()?.nozzle;
@@ -381,6 +389,17 @@ impl Mario {
             _ => dir,
         };
         let face = self.face_yaw;
+        // Host extension (`Options::slide_dive_nozzles`): in a dive or belly slide the Rocket's and
+        // the Turbo's exhaust goes level out the back along his travel, so their usual recoil drives him
+        // forward (the Rocket's upright exhaust is authored to blow downward). Spray and Hover keep theirs.
+        let dir = if self.horizontal_exhaust_pose()
+            && matches!(kind, NozzleKind::Rocket | NozzleKind::Turbo)
+            && self.aim_now().is_none()
+        {
+            Vec3::new(-sin(face), 0.0, -cos(face))
+        } else {
+            dir
+        };
         // Host extension: in a corkscrew the Spray turns with him about the line of flight, as a spin jump's
         // turns about his height: it comes out of his belly (down, flat as he is) and goes round with the
         // roll, so a pass carpets what is below and to either side.
@@ -497,11 +516,15 @@ impl Mario {
         // Host extension: the long fall's `thrown` table entry has `isPumpOK` false, so the game
         // offers no Hover or Rocket out of a fall of more than two seconds. Hosts with long drops
         // may ask for the pump anyway (the `pump` arm clip draws over the flail).
+        // Host extension (`Options::slide_dive_nozzles`): the Rocket and Turbo pump in a B dive and a
+        // belly slide, dry or wet, for a horizontal push (see `Mario::horizontal_exhaust`).
+        let dive_nozzle = self.horizontal_exhaust_pose()
+            && matches!(f.nozzle, NozzleKind::Rocket | NozzleKind::Turbo);
         let long_fall_pump = self.options.pump_in_long_fall
             && self.status == Status::Landing
             && self.anim.clip == "thrown";
         !self.on_yoshi()
-            && (crate::anim::pump_clip(self.anim.clip).is_some() || dive_spray || long_fall_pump)
+            && (crate::anim::pump_clip(self.anim.clip).is_some() || dive_spray || dive_nozzle || long_fall_pump)
             // Host extension: not while a use the host granted this press (`Limits::air_uses`) starts the next one.
             && !(self.status == Status::RocketLanding && np.rocket_type == 1 && !self.limit_granted())
             && !(f.nozzle.is_trigger() && f.trigger_state() == TriggerState::Dead)
@@ -1045,6 +1068,21 @@ impl Mario {
         };
         self.add_velocity(reaction_pow);
         self.vel.y += reaction_y;
+        // Host extension (`Options::slide_dive_nozzles`): the Rocket's thrust is its vertical term, nothing
+        // for a level exhaust, so in a dive or slide the same thrust drives him along instead.
+        if self.horizontal_exhaust_pose() && self.aim_now().is_none() && self.status == Status::Catch {
+            // A slide's speed is its own vector: the exhaust's recoil goes into it too.
+            let cap = 99.0;
+            self.push_along(reaction_pow, cap);
+        }
+        if kind == NozzleKind::Rocket && self.horizontal_exhaust_pose() && self.aim_now().is_none() {
+            let push = power * np.reaction_y * self.options.rocket_thrust;
+            if self.status == Status::Catch {
+                self.push_along(push, 99.0);
+            } else {
+                self.add_velocity(push);
+            }
+        }
         if !(kind.is_trigger() || kind == NozzleKind::Spray) {
             // TNozzleBase::emit also pushes Mario's horizontal velocity.
             self.vel.x -= dir.x * reaction;

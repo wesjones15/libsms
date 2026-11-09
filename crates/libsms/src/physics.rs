@@ -626,12 +626,10 @@ impl Mario {
         // Host extension (`Options::turbo_air_thrust`): the held Turbo pushes in the air, after the
         // brakes above so they cannot eat it. It ramps in with the dash wind-up (`dash_speed` to its 32
         // ceiling, about half a second, as long as a jump) and stops at the dash's `mDashMax`.
-        if self.options.turbo_air_thrust && self.turbo_held && !self.on_yoshi() {
+        if self.options.turbo_air_thrust {
             let cap = self.params.mario.dash_max;
             if self.forward_vel < cap {
-                let ramp = (self.dash_speed / 32.0).clamp(0.0, 1.0);
-                self.forward_vel =
-                    (self.forward_vel + crate::mario::TURBO_AIR_ACCEL * ramp).min(cap);
+                self.forward_vel = (self.forward_vel + self.turbo_thrust()).min(cap);
             }
         }
 
@@ -640,6 +638,39 @@ impl Mario {
         self.slide_z = self.forward_vel * cos(f) + side_vel * cos(f.wrapping_add(0x4000));
         self.vel.x = self.slide_x;
         self.vel.z = self.slide_z;
+    }
+
+    /// Host extension: pushes him along his travel by `amount`, never past `cap` (a belly slide keeps its speed
+    /// in `slide_x`/`slide_z`, not `forward_vel`; every other status moves `forward_vel`).
+    pub(crate) fn push_along(&mut self, amount: f32, cap: f32) {
+        if amount == 0.0 {
+            return;
+        }
+        if self.status != Status::Catch {
+            if self.forward_vel < cap {
+                self.forward_vel = (self.forward_vel + amount).min(cap);
+            }
+            return;
+        }
+        let mag = (self.slide_x * self.slide_x + self.slide_z * self.slide_z).sqrt();
+        let (dx, dz) = if mag > 1e-3 {
+            (self.slide_x / mag, self.slide_z / mag)
+        } else {
+            (sin(self.face_yaw), cos(self.face_yaw))
+        };
+        let add = amount.min((cap - mag).max(0.0));
+        self.slide_x += dx * add;
+        self.slide_z += dz * add;
+    }
+
+    /// Host extension: this tick's forward push from a held Turbo with no feet on the ground (a jump, a dive,
+    /// a belly slide, a corkscrew), `TURBO_AIR_ACCEL` ramped in with the dash wind-up (`dash_speed` to 32).
+    /// 0 when the Turbo isn't held.
+    pub(crate) fn turbo_thrust(&self) -> f32 {
+        if !self.turbo_held || self.on_yoshi() {
+            return 0.0;
+        }
+        crate::mario::TURBO_AIR_ACCEL * (self.dash_speed / 32.0).clamp(0.0, 1.0)
     }
 
     /// `doSlipJumping`: steering for slip-fall.

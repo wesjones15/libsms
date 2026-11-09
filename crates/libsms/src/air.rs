@@ -625,6 +625,14 @@ impl Mario {
             }
             self.model_yaw = self.face_yaw;
             self.model_pitch = 0x4000 - (self.corkscrew_pitch * 32768.0 / std::f32::consts::PI) as i16;
+            // Host extension (`Options::slide_dive_nozzles`): an active Turbo keeps speeding the corkscrew up,
+            // to the same cap `jump_process` limits its flight to.
+            if self.options.slide_dive_nozzles {
+                let cap = self.params.jump.jumping_max * CORKSCREW_CAP;
+                if self.corkscrew_speed < cap {
+                    self.corkscrew_speed = (self.corkscrew_speed + self.turbo_thrust()).min(cap);
+                }
+            }
             self.set_player_velocity(self.corkscrew_speed * self.corkscrew_pitch.cos());
             self.vel.y = self.corkscrew_speed * self.corkscrew_pitch.sin();
         } else {
