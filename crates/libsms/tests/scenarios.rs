@@ -4918,6 +4918,58 @@ fn spray_keeps_up_with_a_boosted_jump() {
 }
 
 /// Apex of the jump out of a pound from 1500, with or without a stick circle in the fall.
+/// Pounds from 8000 up; returns (fastest fall speed while plain, fastest while flaming, height the flame began).
+fn pound_fall(circle: bool, fast: bool) -> (f32, f32, f32) {
+    let mut s: Scene<FlatHost> = Scene::flat();
+    s.sim.mario.options.spin_pound_fast = fast;
+    s.sim.mario.pos = Vec3::new(0.0, 8000.0, 0.0);
+    s.step(2);
+    s.pad.l = true;
+    s.step(1);
+    s.pad.l = false;
+    let (mut plain, mut flame, mut flame_at) = (0.0f32, 0.0f32, f32::NAN);
+    let mut angle = 0.0f32;
+    for i in 0..3000 {
+        if circle && i < 40 {
+            angle += std::f32::consts::TAU / 12.0;
+            s.pad.stick = Vec2::new(angle.cos(), angle.sin());
+        } else {
+            s.pad.stick = Vec2::ZERO;
+        }
+        if s.mario().status == Status::HipAttackEnd {
+            break;
+        }
+        s.step(1);
+        match s.mario().pounding() {
+            1 => plain = plain.max(-s.mario().vel.y),
+            2 => {
+                if flame_at.is_nan() {
+                    flame_at = s.mario().pos.y;
+                }
+                flame = flame.max(-s.mario().vel.y);
+            }
+            _ => {}
+        }
+    }
+    (plain, flame, flame_at)
+}
+
+/// Host extension `Options::spin_pound_fast`: a spun pound falls faster, flaming or not, the flame
+/// starts at the same height, and the flag off is the game's fall.
+#[test]
+fn a_spinning_pound_falls_faster_and_still_flames_at_the_same_height() {
+    let (plain, flame, flame_at) = pound_fall(false, true);
+    let (spin_plain, spin_flame, spin_at) = pound_fall(true, true);
+    let (off_plain, off_flame, off_at) = pound_fall(true, false);
+    assert!(spin_plain > flame, "regular spin {spin_plain} isn't faster than a plain flaming pound {flame}");
+    assert!(spin_flame > flame, "flaming spin {spin_flame} isn't faster than a flaming pound {flame}");
+    assert!(spin_plain > plain);
+    assert!(flame_at.is_finite() && spin_at.is_finite(), "no flame: {flame_at} {spin_at}");
+    assert!((spin_at - flame_at).abs() < 40.0, "flame height moved: {flame_at} -> {spin_at}");
+    assert_eq!((off_plain, off_flame), (plain, flame), "flag off changed the fall");
+    assert_eq!(off_at, flame_at);
+}
+
 fn spin_pound_jump_apex(circle: bool, spin_mult: f32) -> f32 {
     let mut s: Scene<FlatHost> = Scene::flat();
     s.sim.mario.options.pound_jump = 0.75;

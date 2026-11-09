@@ -690,6 +690,7 @@ impl Mario {
                 self.status_timer += 1;
                 if self.status_timer >= 60 {
                     self.status_timer = 0;
+                    self.pound_flame_clock = 0.0;
                     self.status_state = 2;
                 }
                 self.vel.y = 0.0;
@@ -705,13 +706,20 @@ impl Mario {
             _ => {
                 self.set_anim(clip::HIP_FALL, 1.0);
                 self.status_timer += 1;
-                if self.status_timer > j.super_hip_attack_ct as i32 {
+                // Host extension (`Options::spin_pound_fast`): a spun pound falls faster, flaming or not, and
+                // its flame clock runs as much faster so the flame still starts at the same height.
+                let spun = self.options.spin_pound_fast && self.pound_spin;
+                let (regular, flaming) = (j.hip_attack_speed_y, j.super_hip_attack_speed_y);
+                let regular_spun = (regular * crate::mario::SPIN_POUND_REGULAR_MULT).min(flaming * 1.1);
+                self.pound_flame_clock += if spun { regular_spun / regular } else { 1.0 };
+                if self.pound_flame_clock > j.super_hip_attack_ct as f32 {
                     self.status_state = 3;
                 }
-                self.vel.y = if self.status_state == 2 {
-                    j.hip_attack_speed_y
-                } else {
-                    j.super_hip_attack_speed_y
+                self.vel.y = match (self.status_state == 2, spun) {
+                    (true, false) => regular,
+                    (true, true) => regular_spun,
+                    (false, false) => flaming,
+                    (false, true) => flaming * crate::mario::SPIN_POUND_FLAME_MULT,
                 };
                 // Host extension: the stick nudges the fall along (up to POUND_AIM_SPEED, a fraction of a
                 // run), turning him toward it, so a pound can be aimed a little in motion.

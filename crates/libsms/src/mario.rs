@@ -304,7 +304,17 @@ pub struct Options {
     /// The game's dash only exists while running
     /// (`TMario::checkController` clears it outside `Run`), so false is the game's: no air thrust.
     pub turbo_air_thrust: bool,
+    /// Host extension: a spinning ground pound falls faster, flaming or not (see
+    /// [`SPIN_POUND_REGULAR_MULT`], [`SPIN_POUND_FLAME_MULT`]). The flame still starts at the same
+    /// height. false: the game's fall speeds (the spin was only a swirl and a bigger landing).
+    pub spin_pound_fast: bool,
 }
+
+/// A spinning regular pound falls this many times the plain pound's speed, and at least a tenth faster than the
+/// ordinary flaming one (host extension, no disc value).
+pub const SPIN_POUND_REGULAR_MULT: f32 = 1.8;
+/// A spinning flaming pound falls this many times the flaming pound's speed (host extension).
+pub const SPIN_POUND_FLAME_MULT: f32 = 1.5;
 
 /// Forward speed the held Turbo adds each tick in the air (host extension, no disc value).
 pub const TURBO_AIR_ACCEL: f32 = 1.0;
@@ -342,6 +352,7 @@ impl Default for Options {
             corkscrew_hold_degrees: 60.0,
             spin_pound_jump: 1.0,
             turbo_air_thrust: true,
+            spin_pound_fast: true,
         }
     }
 }
@@ -554,6 +565,9 @@ pub struct Mario {
     /// Host extension: this ground pound is spinning (a stick circle during it), and its ticks.
     pub(crate) pound_spin: bool,
     pub(crate) pound_spin_age: u16,
+    /// Fall ticks toward `mSuperHipAttackCt`, counted faster by the spin's speed-up so the flame starts at the
+    /// same height (host extension, `Options::spin_pound_fast`).
+    pub(crate) pound_flame_clock: f32,
     /// Host extension: the disc's `mGravity` / `mSpinJumpGravity`, kept while a host scales them
     /// ([`Mario::set_gravity_scale`]).
     gravity_base: Option<(f32, f32)>,
@@ -680,6 +694,7 @@ impl Mario {
             spin_hit: Vec::new(),
             pound_spin: false,
             pound_spin_age: 0,
+            pound_flame_clock: 0.0,
             gravity_base: None,
         }
     }

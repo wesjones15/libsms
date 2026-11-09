@@ -333,7 +333,9 @@ impl Mario {
         if self.on_yoshi() || self.options.yoshi_skin {
             self.think_hold_out();
         }
-        if self.vel.y < -75.0 {
+        // Host extension (`Options::spin_pound_fast`): a spinning ground pound sets its own, faster fall speed.
+        let spun_pound = self.status == Status::HipDrop && self.pound_spin && self.options.spin_pound_fast;
+        if self.vel.y < -75.0 && !spun_pound {
             self.vel.y = -75.0;
         }
     }
