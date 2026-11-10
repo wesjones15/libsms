@@ -396,6 +396,17 @@ impl Mario {
         }
     }
 
+    /// One tick of a level Rocket shot's sustained thrust (host extension): along his travel, with the corkscrew's
+    /// flight-speed cap lifted so a dive keeps it too. Called from the dive and the slide.
+    pub(crate) fn rocket_boost_step(&mut self) {
+        if self.rocket_boost == 0 {
+            return;
+        }
+        self.rocket_boost -= 1;
+        self.sled_air = true;
+        self.push_along(ROCKET_SLIDE_ACCEL, ROCKET_SLIDE_MAX);
+    }
+
     /// A B dive or a belly slide (dry or wet) with `Options::slide_dive_nozzles` on: the poses where the
     /// Rocket and Turbo push him along level instead of upward (host extension).
     pub(crate) fn horizontal_exhaust_pose(&self) -> bool {
@@ -941,6 +952,7 @@ impl Mario {
             // A level shot out the back in a dive or slide has the Rocket's exhaust too, turned to blow rearward.
             if fired.is_some() && !self.rocket_precision && self.horizontal_exhaust_pose() {
                 self.rocket_exhaust_horizontal();
+                self.rocket_boost = ROCKET_SLIDE_BOOST_TICKS;
             }
         }
         if charging {
@@ -1230,13 +1242,18 @@ impl Mario {
     }
 }
 
+/// A level Rocket shot in a dive or slide thrusts this hard (speed a tick) for this many ticks, up to this speed
+/// (a Turbo dash tops out at `mDashMax`): a rocket sled, not a puff (host extension).
+const ROCKET_SLIDE_BOOST_TICKS: u16 = 180;
+const ROCKET_SLIDE_ACCEL: f32 = 9.0;
+pub(crate) const ROCKET_SLIDE_MAX: f32 = 140.0;
 /// How many times as fast the Rocket charges in a dive or belly slide (host extension).
 const ROCKET_SLIDE_CHARGE: f32 = 1.5;
 /// The experimental aimed modes' tuning (host extension; Sunshine has none of these, so there are no disc values).
 /// The Rocket's precision slug hits for this share of what the Spray could deal in the same wind-up.
 const PRECISION_SPRAY_SHARE: f32 = 0.5;
-/// How much faster than the Rocket's fastest drop the slug flies.
-const PRECISION_SPEED_MULT: f32 = 2.0;
+/// How much faster than the Rocket's fastest drop the slug flies: a real sniper shot, crossing most of the screen in a frame or two.
+const PRECISION_SPEED_MULT: f32 = 6.0;
 /// The slug's size next to a Rocket drop's (narrow).
 const PRECISION_SIZE: f32 = 0.6;
 /// Speed the slug kicks him back, opposite the shot (a fraction of the Rocket's own climb).

@@ -285,7 +285,7 @@ pub unsafe extern "C" fn sms_sim_water_segments(sim: *const SmsSim, lag: f32, ou
         for p in &s.water.particles {
             let Some(shape)=libsms_present::water::flight_shape(&s.water,p,frac,nozzle) else{continue};
             let (head,tail)=shape.ends();
-            if !out.is_null()&&n<max {unsafe{out.add(n as usize).write(SmsWaterSegment{head:head.into(),tail:tail.into(),radius:shape.half,flags:u32::from(p.burst)|(u32::from(p.spin)<<1)})}}
+            if !out.is_null()&&n<max {unsafe{out.add(n as usize).write(SmsWaterSegment{head:head.into(),tail:tail.into(),radius:shape.half,flags:u32::from(p.burst)|(u32::from(p.spin)<<1)|(u32::from(p.precise)<<2)})}}
             n+=1;
         }n
     })

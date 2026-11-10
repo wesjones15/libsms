@@ -329,7 +329,10 @@ impl WaterManager {
 
     /// Should a particle be drawn as flying water yet (`calcDrawVtx`)?
     pub fn drawn(&self, p: &Particle) -> bool {
-        p.state == State::Flying && p.life < self.types[p.kind.min(16)].alive - k::DRAW_DELAY
+        // The precision slug starts with `PRECISE_LIFE` times the type's life; drawn from its first frames, not only
+        // once it has used half of it.
+        let full = self.types[p.kind.min(16)].alive * if p.precise { PRECISE_LIFE } else { 1.0 };
+        p.state == State::Flying && p.life < full - k::DRAW_DELAY
     }
 
     /// The type's stretch along the velocity when drawn (`mExtension`).
@@ -346,6 +349,12 @@ impl WaterManager {
         for p in self.particles.iter().filter(|p| p.state == State::Flying) {
             lo = lo.min(p.pos);
             hi = hi.max(p.pos);
+            // The precision slug covers a long stretch each frame: its sweep counts too.
+            if p.precise {
+                let back = p.pos - p.velocity();
+                lo = lo.min(back);
+                hi = hi.max(back);
+            }
         }
         if lo.x > hi.x {
             return;
@@ -361,12 +370,25 @@ impl WaterManager {
             if p.state != State::Flying || p.life <= 0.0 {
                 continue;
             }
-            let Some(e) = found
-                .iter()
-                .find(|e| e.reached_by(p.pos, k::HIT_RADIUS, k::HIT_HEIGHT))
-            else {
+            // A fast slug can cross a whole enemy between two frames: it is tested along the stretch it flew this
+            // frame, a sample every half hit radius, not only where it ended (the nearest enemy to its start wins).
+            let hit = if p.precise {
+                let step = p.velocity();
+                let n = ((step.length() / (k::HIT_RADIUS * 0.5)).ceil() as usize).clamp(1, 64);
+                (0..=n).find_map(|j| {
+                    let at = p.pos - step * (1.0 - j as f32 / n as f32);
+                    found.iter().find(|e| e.reached_by(at, k::HIT_RADIUS, k::HIT_HEIGHT)).map(|e| (e, at))
+                })
+            } else {
+                found
+                    .iter()
+                    .find(|e| e.reached_by(p.pos, k::HIT_RADIUS, k::HIT_HEIGHT))
+                    .map(|e| (e, p.pos))
+            };
+            let Some((e, hit_at)) = hit else {
                 continue;
             };
+            let p = Particle { pos: hit_at, ..p };
             self.events.push(WaterEvent::Hit {
                 id: e.id,
                 pos: p.pos,
@@ -797,6 +819,39 @@ mod tests {
         assert!((y - 150.0).abs() < 0.01, "the slug sagged to {y}");
         assert!(z > 3.0 * z_plain.max(1.0), "the slug ({z}) is not much faster than the plain shot ({z_plain})");
         assert!(y_plain < 150.0 || z_plain < 100.0, "the plain shot didn't show the cap or the drop: z {z_plain} y {y_plain}");
+    }
+
+    /// The slug is drawn from its first frames, and a fast one cannot slip through an enemy between two frames.
+    #[test]
+    fn a_precision_slug_is_seen_at_once_and_cannot_tunnel_through_an_enemy() {
+        struct Dummy;
+        impl crate::host::Host for Dummy {
+            fn ground(&self, _: Vec3) -> Option<crate::GroundHit> {
+                None
+            }
+            fn enemies(&self, _: Vec3, _: f32, out: &mut Vec<crate::host::Enemy>) {
+                out.push(crate::host::Enemy { id: 7, pos: Vec3::new(0.0, 100.0, 1000.0), radius: 30.0, height: 120.0 });
+            }
+        }
+        let mut water = WaterManager::new(&Params::default());
+        let mut shot = emit(Vec3::Z);
+        shot.nozzle = NozzleKind::Rocket;
+        shot.power = 300.0;
+        shot.size = 30.0;
+        shot.precise = true;
+        water.emit(&shot);
+        let mut seen = false;
+        let mut hit = false;
+        for _ in 0..12 {
+            water.step(&Dummy, Vec3::new(0.0, 150.0, 0.0));
+            seen |= water.particles.first().is_some_and(|p| water.drawn(p));
+            hit |= water.events.iter().any(|e| matches!(e, WaterEvent::Hit { id: 7, .. }));
+            if hit {
+                break;
+            }
+        }
+        assert!(seen, "the slug was never drawn");
+        assert!(hit, "the slug passed through the enemy without hitting it");
     }
 
     #[test]

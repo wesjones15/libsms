@@ -471,9 +471,11 @@ impl Mario {
 
         self.vel = Vec3::new(self.slide_x, 0.0, self.slide_z);
         self.forward_vel = (self.slide_x * self.slide_x + self.slide_z * self.slide_z).sqrt();
-        if self.forward_vel > 100.0 {
-            self.slide_x = 100.0 * self.slide_x / self.forward_vel;
-            self.slide_z = 100.0 * self.slide_z / self.forward_vel;
+        // The slide tops out at 100; a level Rocket shot's boost (host extension) lifts that to its own cap.
+        let top = if self.rocket_boost > 0 { crate::fludd::ROCKET_SLIDE_MAX } else { 100.0 };
+        if self.forward_vel > top {
+            self.slide_x = top * self.slide_x / self.forward_vel;
+            self.slide_z = top * self.slide_z / self.forward_vel;
         }
         if !(-0x4000..=0x4000).contains(&turn) {
             self.forward_vel *= -1.0;

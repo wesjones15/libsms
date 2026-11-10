@@ -959,3 +959,10 @@ let friction win while it built, which read as lost momentum). A Turbo belly sli
 smoothed climb of the ground under him; when it flattens, falls away or ends he flies off with that speed as a dive (`SLED_MIN_LIFT`,
 `SLED_MAX_LIFT`), keeping the sled's speed up to the corkscrew's flight cap (`sled_air`), and lands back in a slide. Same flag
 (`slide_dive_nozzles`). Test: `a_turbo_sled_flies_off_the_crest_of_an_embankment`.
+
+Rocket slide and sniper shot (2026-11-09, third pass): a level Rocket shot in a dive or slide starts `rocket_boost` (`ROCKET_SLIDE_*`: 9 a
+tick for 180 ticks, to 140; the game's slide cap of 100 is lifted while it runs; the dive keeps the corkscrew's flight cap), so he
+holds about 136 for 1.5 s. The precision slug is `WaterEmit::precise`: 6 x the Rocket's emit power, no gravity, no speed cap, twice the
+life, drawn from its first frame (`drawn` had waited for half the doubled life, hiding it), hit-tested along the stretch it flew each
+frame so it cannot tunnel through an enemy, and flagged in bit 2 of `SmsWaterSegment::flags` so the stand-in draws it as a bright
+full-length tracer.

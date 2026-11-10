@@ -977,6 +977,7 @@ impl Mario {
             self.blaze -= 1;
             self.set_player_velocity(self.corkscrew_speed);
         }
+        self.rocket_boost_step();
         // Host extension (`Options::slide_dive_nozzles`): a held Turbo pushes the slide along too.
         if self.options.slide_dive_nozzles {
             let (thrust, cap) = (self.turbo_thrust(), self.params.mario.dash_max);

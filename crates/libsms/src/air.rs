@@ -643,6 +643,7 @@ impl Mario {
             self.model_pitch = 0;
             self.model_roll = 0;
             self.set_anim(clip::DIVE, 1.0);
+            self.rocket_boost_step();
             self.do_jumping();
         }
         // After a corkscrew, spin and dive both throw the wet slide's spray, and the landing is a wet slide.

@@ -5356,3 +5356,54 @@ fn a_turbo_sled_flies_off_the_crest_of_an_embankment() {
     let (air_off, high_off, _) = sled_over_the_embankment(false);
     assert!(high_off < 40.0, "flag off still flew: {air_off} ticks, {high_off:.0} up");
 }
+
+/// A level Rocket shot in a belly slide is a rocket sled: well past the dive's speed and the Turbo's, and it holds it
+/// for a good while, not one short surge that friction eats.
+#[test]
+fn a_rocket_slide_is_fast_and_stays_fast() {
+    let run = |on: bool| {
+        let mut s = Scene::flat();
+        s.sim.mario.give_fludd();
+        s.sim.mario.options.slide_dive_nozzles = on;
+        {
+            let p = s.sim.mario.params.clone();
+            let f = s.sim.mario.fludd.as_mut().unwrap();
+            f.change_nozzle(NozzleKind::Rocket, false, &p);
+            f.refill(&p);
+        }
+        s.run_forward();
+        s.secs(1.0);
+        s.press_a();
+        s.step(10);
+        s.pad.b = true;
+        s.step(1);
+        s.pad.b = false;
+        s.pad.r_analog = 255;
+        s.pad.stick = Vec2::ZERO;
+        let start = s.mario().pos;
+        let (mut fired_at, mut peak, mut fast_ticks) = (None, 0.0f32, 0u32);
+        for i in 0..600 {
+            s.host.events.clear();
+            s.step(1);
+            if fired_at.is_none() && s.event_count(|e| matches!(e, Event::TriggerFired(_))) > 0 {
+                fired_at = Some(i);
+            }
+            if fired_at.is_some() {
+                peak = peak.max(s.mario().forward_vel);
+                if s.mario().forward_vel > 100.0 {
+                    fast_ticks += 1;
+                }
+            }
+            if !matches!(s.mario().status, Status::JumpCatch | Status::Catch) && fired_at.is_some() {
+                break;
+            }
+        }
+        let m = s.mario();
+        (peak, fast_ticks, Vec3::new(m.pos.x - start.x, 0.0, m.pos.z - start.z).length())
+    };
+    let (peak, fast, far) = run(true);
+    let (_, _, far_off) = run(false);
+    assert!(peak >= 130.0, "peak speed only {peak}");
+    assert!(fast >= 60, "fast for only {fast} ticks");
+    assert!(far > far_off * 1.8, "went {far}, only {:.1}x the plain slide ({far_off})", far / far_off);
+}

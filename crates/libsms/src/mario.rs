@@ -601,6 +601,8 @@ pub struct Mario {
     pub(crate) sled_vy: f32,
     /// Flying off a crest or lip on the sled: keeps the corkscrew's higher flight-speed cap until the next status change.
     pub(crate) sled_air: bool,
+    /// Ticks left of a level Rocket shot's sustained thrust in a dive or slide (`Options::slide_dive_nozzles`).
+    pub(crate) rocket_boost: u16,
     /// Host extension: the disc's `mGravity` / `mSpinJumpGravity`, kept while a host scales them
     /// ([`Mario::set_gravity_scale`]).
     gravity_base: Option<(f32, f32)>,
@@ -735,6 +737,7 @@ impl Mario {
             alt_aim_r_down: false,
             sled_vy: 0.0,
             sled_air: false,
+            rocket_boost: 0,
             gravity_base: None,
         }
     }
@@ -1595,6 +1598,9 @@ impl Mario {
         self.corkscrew_super = false;
         self.corkscrew_used = false;
         self.sled_air = false;
+        if !matches!(to, Status::Catch | Status::JumpCatch) {
+            self.rocket_boost = 0;
+        }
         self.rocket_super = false;
         self.pound_spin = false;
         if to == Status::HipDrop {
