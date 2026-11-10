@@ -1064,7 +1064,11 @@ impl Host for FfiHost<'_> {
                 e.pos = w.pos.into();
             }
             Event::NozzleChanged(_) => e.kind = SmsEventKind::NozzleChanged as u32,
-            Event::TriggerFired(_) => e.kind = SmsEventKind::TriggerFired as u32,
+            Event::TriggerFired(kind) => {
+                e.kind = SmsEventKind::TriggerFired as u32;
+                // Which nozzle, as `SmsState::nozzle` numbers it (`NozzleKind` + 1: 2 Rocket, 6 Turbo).
+                e.arg = kind as i32 + 1;
+            }
             Event::Fell => e.kind = SmsEventKind::Fell as u32,
             Event::Damaged { damage, health, .. } => {
                 e.kind = SmsEventKind::Damaged as u32;

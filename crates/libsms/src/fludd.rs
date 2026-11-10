@@ -426,14 +426,25 @@ impl Mario {
         }
     }
 
+    /// The aim the nozzle is *drawn* at (the head, the gun angle): the gameplay aim, and also the Rocket's while it is
+    /// pumping with a lock, so the head follows the target through the charge-up and is already on it when the
+    /// shot goes (host extension, `Options::aim_rocket`). Emission uses [`Mario::gameplay_aim`] alone.
+    pub(crate) fn look_aim(&self) -> Option<crate::Aim> {
+        let rocket = self.fludd.as_ref().is_some_and(|f| f.nozzle == NozzleKind::Rocket);
+        if rocket && self.options.aim_alt && self.options.aim_rocket && self.upper == UpperState::Pumping {
+            return self.aim_now();
+        }
+        self.gameplay_aim()
+    }
+
     /// The exact gameplay emitter, shared by particle emission and asset-free hosts.
     pub fn water_emitter(&self, index: usize) -> Option<(Vec3, Vec3)> {
-        self.water_emitter_ex(index, true)
+        self.water_emitter_with(index, self.look_aim())
     }
 
     /// [`Mario::water_emitter`], or with `aimed` false the direction his movement gives it with no lock-on (the Hover
     /// keeps its lift while its jets aim).
-    pub(crate) fn water_emitter_ex(&self, index: usize, aimed: bool) -> Option<(Vec3, Vec3)> {
+    pub(crate) fn water_emitter_with(&self, index: usize, aim: Option<crate::Aim>) -> Option<(Vec3, Vec3)> {
         let kind = self.fludd.as_ref()?.nozzle;
         let (pos, dir) = match self.fludd.as_ref().and_then(|f| f.emitter(index)) {
             _ if self.on_yoshi() => self.yoshi.mouth_world(),
@@ -449,7 +460,6 @@ impl Mario {
         // A host aim (the lock-on) sends the water where it points, whichever way Mario faces
         // or runs; not in the game, where the camera turns Mario instead. Its heading and
         // pitch, whether or not the drawn head has swung that far yet.
-        let aim = if aimed { self.gameplay_aim() } else { None };
         let dir = match aim {
             Some(a) if !self.on_yoshi() => {
                 let pitch = a.pitch as f32 * (std::f32::consts::PI / 32768.0);
@@ -816,7 +826,7 @@ impl Mario {
         let fades = self.options.spray_pressure_fades;
         let hover_time = self.limits.hover_time;
         let spray_fade = self.limits.spray_fade;
-        let aim = self.gameplay_aim();
+        let aim = self.look_aim();
         let upper = self.upper;
         let in_water = self.in_water;
         // Host extension (`Options::slide_dive_nozzles`): a dive or slide is a short window, so the Rocket charges
@@ -1030,7 +1040,7 @@ impl Mario {
         let rate = self.limit_spray_rate(kind);
         // `getEmitPosDirSpeed`: the drawn muzzle when the host reported it; riding, Yoshi's
         // tongue joint (`getEmitMtx`).
-        let (pos, dir) = self.water_emitter(index).expect("FLUDD emission");
+        let (pos, dir) = self.water_emitter_with(index, self.gameplay_aim()).expect("FLUDD emission");
         let face = self.face_yaw;
         // Host extension (the experimental aimed modes, `Options::aim_alt`): see `gameplay_aim`.
         let aimed = self.gameplay_aim().is_some();
@@ -1200,7 +1210,7 @@ impl Mario {
         }
         // The Hover keeps its lift while its jets aim: the recoil comes from where its jets point without the aim.
         let rdir = if kind == NozzleKind::Hover && aimed {
-            self.water_emitter_ex(index, false).map_or(dir, |(_, d)| d)
+            self.water_emitter_with(index, None).map_or(dir, |(_, d)| d)
         } else {
             dir
         };

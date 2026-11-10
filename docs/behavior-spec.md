@@ -966,3 +966,8 @@ holds about 136 for 1.5 s. The precision slug is `WaterEmit::precise`: 6 x the R
 life, drawn from its first frame (`drawn` had waited for half the doubled life, hiding it), hit-tested along the stretch it flew each
 frame so it cannot tunnel through an enemy, and flagged in bit 2 of `SmsWaterSegment::flags` so the stand-in draws it as a bright
 full-length tracer.
+
+Aim during the charge (2026-11-09): `Mario::look_aim` is the aim the Rocket's head is *drawn* at (`water_emitter`, the gun angle, `fludd_look`): it
+follows the lock while the Rocket is pumping with the master and Rocket switches on, so the head is on target through the charge-up and at
+the shot. Emission still uses `gameplay_aim`, which becomes the aim only at the discharge (the precision slug). FFI `TriggerFired` events
+carry the nozzle (`SmsState::nozzle` numbering) in `arg`.

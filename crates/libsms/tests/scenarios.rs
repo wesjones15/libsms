@@ -5407,3 +5407,36 @@ fn a_rocket_slide_is_fast_and_stays_fast() {
     assert!(fast >= 60, "fast for only {fast} ticks");
     assert!(far > far_off * 1.8, "went {far}, only {:.1}x the plain slide ({far_off})", far / far_off);
 }
+
+/// The Rocket's head follows the lock through the charge-up (before it fires), so it is already on target when the
+/// shot goes; with the master switch off nothing aims.
+#[test]
+fn the_rocket_aims_during_the_charge_up_as_well_as_the_shot() {
+    for master in [true, false] {
+        let mut s = Scene::flat();
+        s.sim.mario.give_fludd();
+        s.sim.mario.options.pump_in_long_fall = true;
+        s.sim.mario.options.aim_alt = master;
+        {
+            let p = s.sim.mario.params.clone();
+            let f = s.sim.mario.fludd.as_mut().unwrap();
+            f.change_nozzle(NozzleKind::Rocket, false, &p);
+            f.refill(&p);
+        }
+        s.sim.mario.pos = Vec3::new(0.0, 12000.0, 0.0);
+        s.step(5);
+        s.sim.mario.aim = Some(libsms::Aim { yaw: 0x4000, pitch: 0 });
+        s.pad.r_analog = 255;
+        s.step(30);
+        let charging = s.mario().fludd.as_ref().unwrap().trigger_state();
+        assert_eq!(charging, libsms::fludd::TriggerState::Inactive, "it already fired");
+        let (_, dir) = s.mario().water_emitter(0).expect("no emitter");
+        let look = s.mario().fludd_look().expect("no look");
+        if master {
+            assert!(dir.x > 0.99, "the head isn't on the target while charging: {dir:?}");
+            assert!(look.aimed, "the look isn't aimed while charging");
+        } else {
+            assert!(dir.x < 0.5 && !look.aimed, "aimed with the master switch off: {dir:?}");
+        }
+    }
+}
