@@ -140,6 +140,7 @@ async fn main() {
         particle_type: 0,
         burst: false,
         spin: false,
+        precise: false,
     };
 
     let mut water = WaterManager::new(&Params::from_dir(&dir.join("params_mario")).0);

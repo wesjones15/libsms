@@ -48,6 +48,7 @@ async fn main() {
         particle_type: 0,
         burst: false,
         spin: false,
+        precise: false,
     };
     let mut snapshots = Vec::new();
     let mut look = WaterLook::load(dir);
