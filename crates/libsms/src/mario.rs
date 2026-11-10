@@ -385,6 +385,12 @@ pub const POSE_SLIDE: u8 = 1 << 1;
 pub const POSE_POUND: u8 = 1 << 2;
 /// Spin jump or spinning pound: the core is wider than the body.
 pub const POSE_SPIN: u8 = 1 << 3;
+/// Knocked down lying on his back (a back knock-down, a hard hit's get-up, out of health): flat, face up.
+pub const POSE_DOWN: u8 = 1 << 4;
+/// Knocked down lying on his front.
+pub const POSE_FACEDOWN: u8 = 1 << 5;
+/// On fire: a super ground pound, a corkscrew that has spun for a second, a blazing slide, a flaming Rocket spin.
+pub const POSE_FIRE: u8 = 1 << 6;
 
 #[derive(Debug, Clone)]
 pub struct Mario {
@@ -1010,6 +1016,26 @@ impl Mario {
         }
         if self.spinning() || self.pound_spin {
             pose |= POSE_SPIN;
+        }
+        // The knock-downs: lying on the back or the front (the game's clips; the stumble and the slide are not).
+        if matches!(
+            self.status,
+            Status::BackDown
+                | Status::ShortBackDown
+                | Status::JumpBackDown
+                | Status::JumpShortBackDown
+                | Status::DownLoser
+        ) {
+            pose |= POSE_DOWN;
+        }
+        if matches!(
+            self.status,
+            Status::ForeDown | Status::ShortForeDown | Status::JumpForeDown | Status::JumpShortForeDown
+        ) {
+            pose |= POSE_FACEDOWN;
+        }
+        if self.pounding() == 2 || self.flames() != 0 {
+            pose |= POSE_FIRE;
         }
         pose
     }

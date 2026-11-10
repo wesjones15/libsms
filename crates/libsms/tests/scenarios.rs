@@ -5440,3 +5440,38 @@ fn the_rocket_aims_during_the_charge_up_as_well_as_the_shot() {
         }
     }
 }
+
+/// The stand-in's new cues: lying on the back or the front after a knock-down, and on fire.
+#[test]
+fn the_stand_in_is_told_when_he_lies_down_and_when_he_burns() {
+    let mut s = Scene::flat();
+    for (status, want) in [
+        (Status::BackDown, libsms::POSE_DOWN),
+        (Status::ShortBackDown, libsms::POSE_DOWN),
+        (Status::DownLoser, libsms::POSE_DOWN),
+        (Status::ForeDown, libsms::POSE_FACEDOWN),
+        (Status::SafeBackDown, 0),
+        (Status::Run, 0),
+    ] {
+        s.sim.mario.change_status(status, 0, true);
+        let pose = s.mario().pose();
+        assert_eq!(pose & (libsms::POSE_DOWN | libsms::POSE_FACEDOWN), want, "{status:?}");
+        assert_eq!(pose & libsms::POSE_FIRE, 0, "{status:?} burning");
+    }
+    // A super ground pound burns.
+    let mut s = Scene::flat();
+    s.sim.mario.pos = Vec3::new(0.0, 8000.0, 0.0);
+    s.step(2);
+    s.pad.l = true;
+    s.step(1);
+    s.pad.l = false;
+    let mut burned = false;
+    for _ in 0..1500 {
+        s.step(1);
+        burned |= s.mario().pose() & libsms::POSE_FIRE != 0;
+        if s.mario().status == Status::HipAttackEnd {
+            break;
+        }
+    }
+    assert!(burned, "no fire cue in a super pound");
+}

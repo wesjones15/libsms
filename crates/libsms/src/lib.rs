@@ -53,7 +53,7 @@ pub use host::{Enemy, FlatHost, Fruit, GroundHit, Host, RoofHit, SurfaceFlags, W
 pub use input::{Input, Pad};
 pub use limits::{Limits, WetSlide};
 pub use mario::{
-    Mario, Options, POSE_DIVE, POSE_POUND, POSE_SLIDE, POSE_SPIN, Status, UpperState,
+    Mario, Options, POSE_DIVE, POSE_DOWN, POSE_FACEDOWN, POSE_FIRE, POSE_POUND, POSE_SLIDE, POSE_SPIN, Status, UpperState,
 };
 pub use params::{NozzleKind, Params};
 pub use skeleton::{Clip, ClipLibrary, MtxCalc, Skeleton, Srt, calc_joints};
