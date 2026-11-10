@@ -344,7 +344,7 @@ impl Mario {
     pub(crate) fn jump_process(&mut self, host: &mut dyn Host, arg: u32) -> i32 {
         let speed = (self.vel.x * self.vel.x + self.vel.z * self.vel.z).sqrt();
         let mut max = self.params.jump.jumping_max;
-        if self.corkscrew > 0 {
+        if self.corkscrew > 0 || self.sled_air {
             max *= crate::air::CORKSCREW_CAP;
         }
         if self.pad_gravity.is_none() && speed > max {
@@ -671,7 +671,14 @@ impl Mario {
         if !self.turbo_held || self.on_yoshi() || self.gameplay_aim().is_some() {
             return 0.0;
         }
-        crate::mario::TURBO_AIR_ACCEL * (self.dash_speed / 32.0).clamp(0.0, 1.0)
+        // A dive or slide is a sled: full thrust from the first tick, since the ramp would let friction win
+        // while it builds and he would lose the dive's momentum.
+        let ramp = if matches!(self.status, Status::JumpCatch | Status::Catch) {
+            1.0
+        } else {
+            (self.dash_speed / 32.0).clamp(0.0, 1.0)
+        };
+        crate::mario::TURBO_AIR_ACCEL * ramp
     }
 
     /// `doSlipJumping`: steering for slip-fall.

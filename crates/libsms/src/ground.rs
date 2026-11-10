@@ -12,6 +12,10 @@ use crate::mario::{Mario, Status};
 use crate::math::{self, cos, diff, fconverge, matan, sin};
 use crate::params::NozzleKind;
 
+/// A turbo sled flies off a crest when its recent climb is at least this fast (`vel.y` units; about 9 degrees at a
+/// sled's speed), with at most `SLED_MAX_LIFT` (host extension).
+const SLED_MIN_LIFT: f32 = 12.0;
+const SLED_MAX_LIFT: f32 = 90.0;
 /// Clip frame from which a host may let Mario out of a knock-down ([`Options::knockdown_cancel`]).
 const KNOCKDOWN_CANCEL_FRAME: f32 = 12.0;
 /// Slide speed under which it may.
@@ -930,6 +934,34 @@ impl Mario {
         false
     }
 
+    /// Host extension (`Options::slide_dive_nozzles`): a Turbo belly slide is a sled. The ground it climbs gives him
+    /// an upward speed (`sled_vy`, the smoothed rise per tick in `vel.y` units); when the ground flattens, falls
+    /// away or ends under him at a crest or lip, he flies off it with that speed as a dive, keeping the sled's
+    /// speed (up to the corkscrew's flight cap), and lands back in a slide. `y0` and `speed0` are the height
+    /// and speed before this tick's slide step.
+    fn sled_launch(&mut self, y0: f32, speed0: f32) {
+        if !(self.options.slide_dive_nozzles && self.turbo_held) || self.on_yoshi() {
+            self.sled_vy = 0.0;
+            return;
+        }
+        let rise = (self.pos.y - y0) * 4.0;
+        let sliding = self.status == Status::Catch;
+        let left_ground = self.status == Status::Landing;
+        let crest = sliding && self.sled_vy > SLED_MIN_LIFT && rise < self.sled_vy * 0.5;
+        if crest || (left_ground && self.sled_vy > 0.0) {
+            self.vel.y = self.sled_vy.min(SLED_MAX_LIFT);
+            self.sled_vy = 0.0;
+            self.change_status(Status::JumpCatch, 1, false);
+            self.forward_vel = speed0;
+            self.set_player_velocity(speed0);
+            self.sled_air = true;
+        } else if sliding {
+            self.sled_vy = 0.5 * self.sled_vy + 0.5 * rise;
+        } else {
+            self.sled_vy = 0.0;
+        }
+    }
+
     fn catching(&mut self, host: &mut dyn Host) -> bool {
         if !self.input.slip && self.input.jump {
             if self.forward_vel > self.params.mario.clash_speed {
@@ -955,7 +987,9 @@ impl Mario {
             self.set_player_velocity(0.0);
             return self.change_status(Status::CatchLost, 0, false);
         }
+        let (y0, speed0) = (self.pos.y, self.forward_vel);
         self.slipping_basic(host, Status::CatchLost, Status::Landing, clip::DIVE);
+        self.sled_launch(y0, speed0);
         self.sound("MSD_SE_MA_SLIP", None);
         // The dive clip holds its belly-slide pose (frame 50) for as long as the slide lasts.
         if self.anim.frame > 50.0 {

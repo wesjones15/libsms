@@ -953,3 +953,9 @@ it plays or feels.
 gravity and no flight-speed cap (the cap is a particle's size, which the narrow slug had shrunk, so it crawled) and lives
 `PRECISE_LIFE` x as long. In a dive or slide the Rocket charges `ROCKET_SLIDE_CHARGE` x as fast (net about 3x, since the
 trigger pressure leaks 105 a tick while 150 a tick builds): about 0.55 s instead of 1.5 s.
+
+Turbo sled (2026-11-09, after the second play): in a dive or belly slide the Turbo thrust is full from the first tick (no wind-up ramp; the ramp
+let friction win while it built, which read as lost momentum). A Turbo belly slide also launches him off a crest: `sled_vy` is the
+smoothed climb of the ground under him; when it flattens, falls away or ends he flies off with that speed as a dive (`SLED_MIN_LIFT`,
+`SLED_MAX_LIFT`), keeping the sled's speed up to the corkscrew's flight cap (`sled_air`), and lands back in a slide. Same flag
+(`slide_dive_nozzles`). Test: `a_turbo_sled_flies_off_the_crest_of_an_embankment`.

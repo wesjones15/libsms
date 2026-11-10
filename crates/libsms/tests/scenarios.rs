@@ -5283,3 +5283,76 @@ fn the_level_rockets_exhaust_is_turned_rearward() {
     }
 }
 
+
+
+/// A flat run, then a 30 degree embankment up to a plateau, along +Z.
+struct Embankment;
+impl Embankment {
+    const START: f32 = 2600.0;
+    const TOP: f32 = 3400.0;
+    const SLOPE: f32 = 0.5774;
+}
+impl Host for Embankment {
+    fn ground(&self, p: Vec3) -> Option<libsms::GroundHit> {
+        let (h, normal) = if p.z < Self::START {
+            (0.0, Vec3::Y)
+        } else if p.z < Self::TOP {
+            ((p.z - Self::START) * Self::SLOPE, Vec3::new(0.0, 0.866, -0.5))
+        } else {
+            ((Self::TOP - Self::START) * Self::SLOPE, Vec3::Y)
+        };
+        (p.y >= h).then_some(libsms::GroundHit { height: h, normal, flags: libsms::SurfaceFlags::NONE })
+    }
+}
+
+/// Slides on Turbo up the embankment: returns the most ticks in a row with his feet clear of the ground,
+/// the highest he got above it, and the fastest he went on the way.
+fn sled_over_the_embankment(on: bool) -> (u32, f32, f32) {
+    let mut s = Scene::new(Embankment);
+    s.sim.mario.give_fludd();
+    s.sim.mario.options.slide_dive_nozzles = on;
+    {
+        let p = s.sim.mario.params.clone();
+        let f = s.sim.mario.fludd.as_mut().unwrap();
+        f.change_nozzle(NozzleKind::Turbo, false, &p);
+        f.refill(&p);
+    }
+    s.sim.mario.pos = Vec3::new(0.0, 0.0, 1200.0);
+    s.run_forward();
+    s.secs(0.5);
+    s.press_a();
+    s.step(10);
+    s.pad.b = true;
+    s.step(1);
+    s.pad.b = false;
+    s.pad.r_analog = 255;
+    s.pad.stick = Vec2::ZERO;
+    let (mut run, mut best, mut high, mut fastest) = (0u32, 0u32, 0.0f32, 0.0f32);
+    for _ in 0..900 {
+        s.step(1);
+        let m = s.mario();
+        fastest = fastest.max(m.forward_vel);
+        let ground = Embankment.ground(m.pos + Vec3::Y * 30.0).map_or(0.0, |g| g.height);
+        let clear = m.pos.y - ground;
+        if clear > 3.0 && m.pos.z > Embankment::START {
+            run += 1;
+            best = best.max(run);
+            high = high.max(clear);
+        } else {
+            run = 0;
+        }
+        if m.pos.z > Embankment::TOP + 800.0 {
+            break;
+        }
+    }
+    (best, high, fastest)
+}
+
+#[test]
+fn a_turbo_sled_flies_off_the_crest_of_an_embankment() {
+    let (air, high, fast) = sled_over_the_embankment(true);
+    assert!(air >= 20 && high > 40.0, "no airtime off the crest: {air} ticks, {high:.0} up (fastest {fast:.0})");
+    // Flag off: the game's slide takes the slope, nothing like that.
+    let (air_off, high_off, _) = sled_over_the_embankment(false);
+    assert!(high_off < 40.0, "flag off still flew: {air_off} ticks, {high_off:.0} up");
+}
