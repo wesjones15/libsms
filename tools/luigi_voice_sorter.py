@@ -33,6 +33,8 @@ except ImportError:  # not Windows: the clips still list and sort, they just don
     winsound = None
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import mario_voice_info  # what each Mario cue is for (decomp call sites)
 
 # Buckets to start with, named after what the Mario cues need. Add or rename freely.
 DEFAULT_BUCKETS = [
@@ -258,6 +260,10 @@ class App:
         self.note_entry.bind("<Return>", lambda e: (self.save_note(), self.root.focus_set()))
         self.status = ttk.Label(mid, text="", foreground="#555")
         self.status.pack(anchor="w", pady=(10, 0))
+        self.cue_info = ttk.LabelFrame(mid, text="What Mario uses this cue for", padding=6)
+        self.cue_info.pack(fill="x", pady=(10, 0))
+        self.cue_text = ttk.Label(self.cue_info, text="Press a bucket's M button or pick a Mario cue.", wraplength=420, justify="left")
+        self.cue_text.pack(anchor="w")
 
         right = ttk.Frame(body, padding=(6, 0))
         right.pack(side="left", fill="y")
@@ -470,6 +476,12 @@ class App:
         self.last_ref = bid
         winsound.PlaySound(self.mario[cues[i]], winsound.SND_FILENAME | winsound.SND_ASYNC)
         self.status.configure(text="Mario: %s  (%d of %d for %s)" % (cues[i], i + 1, len(cues), self.state.label(bid)))
+        self.show_cue(cues[i])
+
+    def show_cue(self, cue):
+        title, use = mario_voice_info.describe(cue)
+        self.cue_info.configure(text="%s  -  %s" % (cue, title) if title else cue)
+        self.cue_text.configure(text=use or "No note for this cue yet.")
 
     def play_picked(self):
         cue = self.mario_pick.get()
@@ -477,6 +489,7 @@ class App:
             self.last_ref = None
             winsound.PlaySound(self.mario[cue], winsound.SND_FILENAME | winsound.SND_ASYNC)
             self.status.configure(text="Mario: %s" % cue)
+            self.show_cue(cue)
 
     def repeat_mario(self):
         """x: Mario's next reference for the last bucket you played one from."""
