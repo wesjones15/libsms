@@ -213,4 +213,7 @@ pub struct WaterEmit {
     /// Sprayed in a spin (a spin jump, or on the ground), which flies in every direction: a host's aim never bends it, and its
     /// hits say so ([`crate::WaterEvent::Hit`]) so a host can count them for more.
     pub spin: bool,
+    /// The Rocket's precision slug (host extension, `Options::aim_rocket`): it flies straight at full speed, with no
+    /// gravity and no speed cap, and lasts longer, like a sniper's shot.
+    pub precise: bool,
 }

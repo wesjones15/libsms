@@ -948,3 +948,8 @@ dash wind-up, so a full gauge means the dash is ready.
 
 Unverified: all of it. The tests (`scenarios.rs`) prove the sim, the flags and the replay inputs, not how
 it plays or feels.
+
+2026-11-09 follow-up after the first play: the Rocket precision slug (`WaterEmit::precise`, `Particle::precise`) flies with no
+gravity and no flight-speed cap (the cap is a particle's size, which the narrow slug had shrunk, so it crawled) and lives
+`PRECISE_LIFE` x as long. In a dive or slide the Rocket charges `ROCKET_SLIDE_CHARGE` x as fast (net about 3x, since the
+trigger pressure leaks 105 a tick while 150 a tick builds): about 0.55 s instead of 1.5 s.

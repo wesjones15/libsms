@@ -347,7 +347,7 @@ mod tests {
             let muzzle=Vec3::new(0.,150.,40.);
             water.emit(&WaterEmit { nozzle:NozzleKind::Spray,pos:muzzle,dir:Vec3::Z,power:40.,count:1,attack:1,
                 hit_radius:50.,hit_height:80.,inherit:Vec3::ZERO,size:if burst{70.}else{50.},size_tremble:0.,
-                dir_tremble:0.,pow_tremble:0.,particle_type:0,burst,spin:false });
+                dir_tremble:0.,pow_tremble:0.,particle_type:0,burst,spin:false,precise:false });
             let mut look=WaterLook::default();look.nozzle=Some(muzzle);let mut compared=false;
             for _ in 0..8 {
                 water.step(&FlatHost::default(),Vec3::ZERO);
@@ -383,6 +383,7 @@ mod tests {
             particle_type: 0,
             burst: false,
             spin: false,
+            precise: false,
         });
         let mut look = WaterLook::default();
         // A camera to the side, so the spray runs across the screen; the display a frame behind.
@@ -412,7 +413,7 @@ mod tests {
             nozzle: NozzleKind::Spray, pos: muzzle, dir,
             power: 40.0, count: 3, attack: 1, hit_radius: 50.0, hit_height: 80.0,
             inherit: Vec3::ZERO, size: 50.0, size_tremble: 0.0, dir_tremble: 0.0,
-            pow_tremble: 0.0, particle_type: 0, burst: false, spin: false,
+            pow_tremble: 0.0, particle_type: 0, burst: false, spin: false, precise: false,
         };
         for _ in 0..8 {
             water.emit(&emit);
@@ -452,7 +453,7 @@ mod tests {
             nozzle: NozzleKind::Spray, pos: muzzle, dir: Vec3::Z,
             power: 40.0, count: 3, attack: 1, hit_radius: 50.0, hit_height: 80.0,
             inherit: Vec3::ZERO, size: 50.0, size_tremble: 0.0, dir_tremble: 0.0,
-            pow_tremble: 0.0, particle_type: 0, burst: false, spin: false,
+            pow_tremble: 0.0, particle_type: 0, burst: false, spin: false, precise: false,
         };
         for _ in 0..10 {
             water.emit(&emit);
@@ -496,6 +497,7 @@ mod tests {
             particle_type: 0,
             burst: false,
             spin: false,
+            precise: false,
         };
         for _ in 0..10 {
             water.emit(&emit);
@@ -538,6 +540,7 @@ mod tests {
             particle_type: 0,
             burst: false,
             spin: false,
+            precise: false,
         });
         let mut look = WaterLook::default();
         let (eye, right, up) = (Vec3::new(500.0, 150.0, 0.0), Vec3::Z, Vec3::Y);
@@ -579,6 +582,7 @@ mod tests {
             particle_type: 0,
             burst: false,
             spin: false,
+            precise: false,
         });
         water.step(&FlatHost::default(), Vec3::ZERO);
         water.particles.clear();

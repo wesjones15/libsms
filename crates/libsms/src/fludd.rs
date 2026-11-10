@@ -808,6 +808,9 @@ impl Mario {
         let aim = self.gameplay_aim();
         let upper = self.upper;
         let in_water = self.in_water;
+        // Host extension (`Options::slide_dive_nozzles`): a dive or slide is a short window, so the Rocket charges
+        // `ROCKET_SLIDE_CHARGE` times as fast there (the trigger pressure leaks as it fills, so about 3x net: roughly 0.55 s, not 1.5 s).
+        let charge_rate = if self.horizontal_exhaust_pose() { ROCKET_SLIDE_CHARGE } else { 1.0 };
         let p = self.params.clone();
         let Some(f) = self.fludd.as_mut() else { return };
         let kind = f.nozzle;
@@ -837,7 +840,7 @@ impl Mario {
                 can = false;
             }
             if can {
-                s.fill += 150.0 * r_level;
+                s.fill += 150.0 * r_level * if kind == NozzleKind::Rocket { charge_rate } else { 1.0 };
                 if s.state == TriggerState::Inactive && r_level > 0.0 {
                     // The charging hiss, every tick it builds (`MSD_SE_SY_NEWP_AIR_TAME`).
                     charging = true;
@@ -1165,6 +1168,7 @@ impl Mario {
             particle_type: np.particle_type,
             burst,
             spin: self.spinning(),
+            precise: precision,
         }));
 
         // Recoil: `addVelocity(reaction * -(dir . forward) * power)`; vertical reaction pushes
@@ -1226,6 +1230,8 @@ impl Mario {
     }
 }
 
+/// How many times as fast the Rocket charges in a dive or belly slide (host extension).
+const ROCKET_SLIDE_CHARGE: f32 = 1.5;
 /// The experimental aimed modes' tuning (host extension; Sunshine has none of these, so there are no disc values).
 /// The Rocket's precision slug hits for this share of what the Spray could deal in the same wind-up.
 const PRECISION_SPRAY_SHARE: f32 = 0.5;

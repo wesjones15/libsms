@@ -69,6 +69,9 @@ pub enum State {
     Wall = 3,
 }
 
+/// How many times as long the Rocket's precision slug flies as its water type's own lifetime (host extension).
+pub const PRECISE_LIFE: f32 = 2.0;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Particle {
     /// Body runoff is not a fresh spray contact: it must not re-wet its emitter forever.
@@ -95,6 +98,8 @@ pub struct Particle {
     pub burst: bool,
     /// From a spin's spray ([`WaterEmit::spin`]).
     pub spin: bool,
+    /// From the Rocket's precision slug ([`WaterEmit::precise`]).
+    pub precise: bool,
     /// The surface it sticks to: normal and whether it is wet (`isWaterSlip`).
     surface: Option<(Vec3, bool)>,
 }
@@ -253,7 +258,7 @@ impl WaterManager {
             hit_radius: p.hit_radius, hit_height: p.hit_height, inherit: velocity,
             size: p.size, size_tremble: p.size_tremble, dir_tremble: p.dir_tremble,
             pow_tremble: p.pow_tremble, particle_type: p.particle_type,
-            burst: false, spin: false,
+            burst: false, spin: false, precise: false,
         };
         let first = self.particles.len();
         let count = self.emit_carried(&w);
@@ -305,7 +310,8 @@ impl WaterManager {
                 vel,
                 carry,
                 size,
-                life: self.types[kind].alive,
+                // A sniper's shot carries far: the slug lives `PRECISE_LIFE` times as long.
+                life: self.types[kind].alive * if w.precise { PRECISE_LIFE } else { 1.0 },
                 state: State::Flying,
                 kind,
                 attack: w.attack,
@@ -313,6 +319,7 @@ impl WaterManager {
                 travel_speed,
                 burst: w.burst,
                 spin: w.spin,
+                precise: w.precise,
                 surface: None,
             });
             n += 1;
@@ -483,7 +490,9 @@ impl WaterManager {
             .map(|p| (p.pos, p.size, p.life > 0.0)).collect();
         // Fly, slide, fall; cap horizontal speed at the particle's size.
         for i in 0..self.particles.len() {
-            let gravity = self.kind(i).gravity;
+            // The Rocket's precision slug flies straight: no gravity, no horizontal speed cap (the cap is the
+            // particle's size, and the slug is narrow and fast).
+            let gravity = if self.particles[i].precise { 0.0 } else { self.kind(i).gravity };
             let p = &mut self.particles[i];
             let d = mario - p.pos;
             if d.x * d.x + d.z * d.z > k::RANGE * k::RANGE {
@@ -494,7 +503,7 @@ impl WaterManager {
             let relative=p.vel-carry;
             let h2 = relative.x * relative.x + relative.z * relative.z;
             let cap = p.size * p.reach;
-            if h2 > cap * cap {
+            if h2 > cap * cap && !p.precise {
                 let s = (cap - 0.1) / h2.sqrt();
                 p.vel.x=relative.x*s+carry.x;
                 p.vel.z=relative.z*s+carry.z;
@@ -760,7 +769,34 @@ mod tests {
             particle_type: 0,
             burst: false,
             spin: false,
+            precise: false,
         }
+    }
+
+    /// The Rocket's precision slug (`WaterEmit::precise`) flies like a sniper's shot: straight and at its full
+    /// speed even though it is narrow (the flight-speed cap is a particle's size), where the same shot without
+    /// the flag crawls and sags.
+    #[test]
+    fn a_precision_slug_flies_straight_and_fast_though_narrow() {
+        let fly = |precise: bool| {
+            let mut water = WaterManager::new(&Params::default());
+            let mut shot = emit(Vec3::Z);
+            shot.nozzle = NozzleKind::Rocket;
+            shot.power = 100.0;
+            shot.size = 30.0;
+            shot.precise = precise;
+            water.emit(&shot);
+            for _ in 0..15 {
+                water.step(&FlatHost::default(), Vec3::new(0.0, 150.0, 0.0));
+            }
+            let p = water.particles.first().copied();
+            p.map(|p| (p.pos.z, p.pos.y))
+        };
+        let (z, y) = fly(true).expect("the slug vanished");
+        let (z_plain, y_plain) = fly(false).unwrap_or((0.0, 0.0));
+        assert!((y - 150.0).abs() < 0.01, "the slug sagged to {y}");
+        assert!(z > 3.0 * z_plain.max(1.0), "the slug ({z}) is not much faster than the plain shot ({z_plain})");
+        assert!(y_plain < 150.0 || z_plain < 100.0, "the plain shot didn't show the cap or the drop: z {z_plain} y {y_plain}");
     }
 
     #[test]
