@@ -655,7 +655,7 @@ pub struct SmsState {
     /// The fitted nozzle: 0 without FLUDD, else `NozzleKind` + 1 (1 Spray, 2 Rocket, 5 Hover, 6 Turbo).
     pub nozzle: u8,
     /// Stand-in pose cues: bit 1 a dive, 2 a belly slide, 4 a ground pound (or its get-up),
-    /// 8 a spin jump or spinning pound, 16 lying on his back after a knock-down, 32 lying on his front, 64 on fire (a super pound, a burning corkscrew or slide, a flaming Rocket spin). Native views pose themselves; hosts that draw a
+    /// 8 a spin jump or spinning pound, 16 lying on his back after a knock-down, 32 lying on his front, 64 on fire (a super pound, a burning corkscrew or slide, a flaming Rocket spin), 128 the Turbo's dash is on (its run, or its thrust through a jump, dive, slide or corkscrew). Native views pose themselves; hosts that draw a
     /// procedural body use these so it follows the same action.
     pub pose: u8,
     /// Procedural side/triple jump pitch in signed angle units (65536 per turn).
