@@ -391,9 +391,6 @@ pub const POSE_DOWN: u8 = 1 << 4;
 pub const POSE_FACEDOWN: u8 = 1 << 5;
 /// On fire: a super ground pound, a corkscrew that has spun for a second, a blazing slide, a flaming Rocket spin.
 pub const POSE_FIRE: u8 = 1 << 6;
-/// The Turbo's dash is on: the run's (`dashing`) or its thrust through a jump, dive, slide or corkscrew (`air_dashing`), for a
-/// stand-in's exhaust where the disc's water-boost cone would be.
-pub const POSE_DASH: u8 = 1 << 7;
 
 #[derive(Debug, Clone)]
 pub struct Mario {
@@ -1047,9 +1044,6 @@ impl Mario {
         }
         if self.pounding() == 2 || self.flames() != 0 {
             pose |= POSE_FIRE;
-        }
-        if self.dashing() || self.air_dashing() {
-            pose |= POSE_DASH;
         }
         pose
     }

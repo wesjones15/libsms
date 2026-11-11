@@ -20,12 +20,6 @@ mod surface;
 /// `unk5D18`: how far the stretched quad reaches along the velocity.
 const STRETCH: f32 = 4.0;
 
-/// The Rocket's precision slug is narrow and fast (host extension): drawn as a visible tracer like the stand-in's, no
-/// thinner than this half-width (sim units, about 9 cm: the stand-in's tracer radius), and laid down `PRECISE_LAYERS` times
-/// so the translucent water tint adds up to something that reads at its speed.
-const PRECISE_MIN_HALF: f32 = 8.0;
-const PRECISE_LAYERS: usize = 3;
-
 /// Asset-independent flight shape shared by the textured quads and primitive hosts.
 /// `calcDrawVtx` stretch and nozzle clipping affect presentation only.
 #[derive(Debug, Clone, Copy)]
@@ -226,7 +220,6 @@ impl WaterLook {
         let mut flow = Vec3::ZERO;
         for p in water.particles.iter().take(SLOTS) {
             let half = 1.414 * 0.5 * p.size;
-            let half = if p.precise { half.max(PRECISE_MIN_HALF) } else { half };
             let corners = match p.state {
                 State::Flying => {
                     let Some(shape)=flight_shape(water,p,frac,self.nozzle) else {continue};
@@ -279,10 +272,7 @@ impl WaterLook {
                 flow += p.velocity().normalize_or_zero();
                 push(corners, 1.0, &mut stream);
             } else {
-                let layers = if p.precise && p.state == State::Flying { PRECISE_LAYERS } else { 1 };
-                for _ in 0..layers {
-                    push(corners, 1.0, &mut self.vertices);
-                }
+                push(corners, 1.0, &mut self.vertices);
             }
         }
         // Seeing the stream down its own axis collapses its depth into one silhouette: the
@@ -451,28 +441,6 @@ mod tests {
             }
         }
         assert!(along > 0, "no drop was streaked");
-    }
-
-    /// The precision slug is drawn as a visible tracer in the asset path too: wide enough and layered.
-    #[test]
-    fn the_rockets_precision_slug_is_drawn_wide_and_layered() {
-        let mut water = WaterManager::new(&Params::default());
-        let shot = WaterEmit {
-            nozzle: NozzleKind::Rocket, pos: Vec3::new(0.0, 120.0, 0.0), dir: Vec3::Z,
-            power: 300.0, count: 1, attack: 40, hit_radius: 50.0, hit_height: 80.0,
-            inherit: Vec3::ZERO, size: 3.0, size_tremble: 0.0, dir_tremble: 0.0,
-            pow_tremble: 0.0, particle_type: 0, burst: false, spin: false, precise: true,
-        };
-        water.emit(&shot);
-        for _ in 0..4 {
-            water.step(&FlatHost::default(), Vec3::ZERO);
-        }
-        let mut look = WaterLook::default();
-        look.build(&water, 0.0, Vec3::new(500.0, 150.0, 0.0), Vec3::Z, Vec3::Y, 0);
-        assert!(look.drop_quads as usize >= PRECISE_LAYERS, "{} quads", look.drop_quads);
-        let quad = &look.vertices[..4];
-        let width = (quad[1].pos - quad[3].pos).length().min((quad[0].pos - quad[2].pos).length());
-        assert!(width >= PRECISE_MIN_HALF, "the tracer is only {width} across");
     }
 
     #[test]
