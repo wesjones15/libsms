@@ -748,6 +748,38 @@ impl Mario {
             // `startSoundActor(MSD_SE_PO_SNIPER_TRIGGER)` on Mario, as the dash begins.
             self.cue("MSD_SE_PO_SNIPER_TRIGGER");
         }
+        self.turbo_air_dash_effects();
+    }
+
+    /// Host extension: the dash's look and sound for the Turbo's thrust off the ground. The cone, the two particle
+    /// emitters and the held `MSD_SE_PO_SPREAD` are the run dash's (`TMarioEffect::perform`), every tick it pushes; its
+    /// blast (`MSD_SE_PO_SNIPER_TRIGGER`) plays as the thrust begins, and a corkscrew started with the Turbo held
+    /// plays the charge hiss and the blast again (its trigger fired at the press, long before).
+    fn turbo_air_dash_effects(&mut self) {
+        let sled = matches!(self.status, Status::JumpCatch | Status::Catch);
+        // Full wind-up in a jump (the run's dash starts only when it is ready); a dive or slide pushes from the first tick.
+        let pushing = self.options.turbo_air_thrust
+            && self.turbo_held
+            && !self.on_yoshi()
+            && self.gameplay_aim().is_none()
+            && !self.fludd_emitting
+            && (sled || (!self.on_ground() && self.dash_speed >= 32.0));
+        self.air_dash = pushing;
+        if pushing {
+            if !self.air_dash_was {
+                self.cue("MSD_SE_PO_SNIPER_TRIGGER");
+            }
+            self.cue("MSD_SE_PO_SPREAD");
+            self.fx("ms_watboost_a", crate::event::FxAt::Muzzle(0));
+            self.fx("ms_watboost_b", crate::event::FxAt::Muzzle(0));
+        }
+        self.air_dash_was = pushing;
+        let screwing = self.status == Status::JumpCatch && self.corkscrew > 0;
+        if screwing && !self.corkscrew_was && self.turbo_held && self.options.turbo_air_thrust {
+            self.sound("MSD_SE_SY_NEWP_AIR_TAME", None);
+            self.cue("MSD_SE_PO_SNIPER_TRIGGER");
+        }
+        self.corkscrew_was = screwing;
     }
 
     /// `gunExec`: per-tick FLUDD update (nozzle trigger, emission, recoil, tank).

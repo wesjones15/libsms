@@ -2628,7 +2628,7 @@ impl View {
         let boost_part = self.boost.as_mut().and_then(|b| {
             let game_frame = m.ticks / 4;
             for _ in 0..game_frame.saturating_sub(b.game_frame).min(8) {
-                b.step(m.dashing());
+                b.step(m.dashing() || m.air_dashing());
             }
             b.game_frame = game_frame;
             if b.state == 0 {

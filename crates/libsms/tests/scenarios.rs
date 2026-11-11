@@ -4511,6 +4511,67 @@ fn a_stick_circle_in_a_plain_jump_with_the_turbo_held_is_the_corkscrew() {
     assert_eq!(s.sim.mario.model_pitch, 0x4000, "it isn't the corkscrew");
 }
 
+/// The Turbo's thrust through the air gets the run dash's cone, particles and spread sound, and a blast as it begins; a
+/// corkscrew started with the Turbo held plays the charge hiss and the blast again. The flag off gives none of it.
+#[test]
+fn the_turbo_in_the_air_has_the_dash_effects_and_the_corkscrew_its_sounds() {
+    let names = |s: &Scene<FlatHost>, n: &str| {
+        s.host.events.iter().filter(|e| matches!(e, Event::Particle(c) if c.name == n)).count()
+    };
+    let mut corkscrew_sounds = [0usize; 2];
+    for flag in [true, false] {
+        let mut s = Scene::flat();
+        s.sim.mario.give_fludd();
+        s.sim.mario.options.turbo_air_thrust = flag;
+        {
+            let p = s.sim.mario.params.clone();
+            let f = s.sim.mario.fludd.as_mut().unwrap();
+            f.change_nozzle(NozzleKind::Turbo, false, &p);
+            f.refill(&p);
+        }
+        // Wound up on the spot first, so the jump has the Turbo's full thrust at once.
+        s.pad.r_analog = 255;
+        s.step(150);
+        s.press_a();
+        s.step(8);
+        s.host.events.clear();
+        let mut air_dash_ticks = 0;
+        for _ in 0..40 {
+            s.step(1);
+            air_dash_ticks += s.sim.mario.air_dashing() as u32;
+        }
+        let spreads = voices(&s.host.events, "MSD_SE_PO_SPREAD");
+        if flag {
+            assert!(air_dash_ticks > 5, "the jump never showed the dash: {air_dash_ticks}");
+            assert!(names(&s, "ms_watboost_a") > 5 && names(&s, "ms_watboost_b") > 5, "no dash particles in the jump");
+            assert!(spreads > 5, "no spread sound in the jump: {spreads}");
+        } else {
+            assert_eq!(air_dash_ticks, 0, "the flag is off but the jump dashed");
+            assert_eq!(names(&s, "ms_watboost_a"), 0);
+        }
+        // A stick circle: the corkscrew.
+        s.host.events.clear();
+        for i in 0..24 {
+            let a = i as f32 * std::f32::consts::TAU / 12.0;
+            s.pad.stick = Vec2::new(a.cos(), a.sin());
+            s.step(1);
+            if s.sim.mario.status == Status::JumpCatch {
+                break;
+            }
+        }
+        assert_eq!(s.sim.mario.status, Status::JumpCatch, "the circle didn't start the corkscrew");
+        s.step(3);
+        let hiss = voices(&s.host.events, "MSD_SE_SY_NEWP_AIR_TAME");
+        let blast = voices(&s.host.events, "MSD_SE_PO_SNIPER_TRIGGER");
+        corkscrew_sounds[flag as usize] = hiss + blast;
+        if flag {
+            assert!(hiss >= 1 && blast >= 1, "the corkscrew is silent: hiss {hiss}, blast {blast}");
+            assert!(s.sim.mario.air_dashing(), "the corkscrew isn't dashing");
+        }
+    }
+    assert!(corkscrew_sounds[1] > corkscrew_sounds[0], "the flag added no corkscrew sounds: {corkscrew_sounds:?}");
+}
+
 /// Host extension `Options::turbo_air_thrust`: a Turbo held in a standing jump pushes him forward
 /// once its wind-up is full; with the flag off (the game's) it adds nothing.
 fn turbo_air_speed(thrust: bool) -> f32 {

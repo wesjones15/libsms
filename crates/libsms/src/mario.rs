@@ -465,6 +465,11 @@ pub struct Mario {
     /// Ticks left of the Turbo corkscrew dive's roll (host extension), and how far it has rolled about
     /// the dive's own axis (a 16-bit angle) for a view to draw.
     pub(crate) corkscrew: u16,
+    /// Host extension: the Turbo's thrust is pushing him with no feet on the run (a jump, a dive, a slide, a corkscrew):
+    /// the dash's cone, particles and sounds follow it ([`Mario::air_dashing`]).
+    pub(crate) air_dash: bool,
+    pub(crate) air_dash_was: bool,
+    pub(crate) corkscrew_was: bool,
     /// The speed the corkscrew flies at until it ends (it is held, not braked like a plain dive's).
     pub(crate) corkscrew_speed: f32,
     /// Ticks the corkscrew has lasted (it burns after CORKSCREW_SUPER_TICKS).
@@ -671,6 +676,9 @@ impl Mario {
             wet_ticks: 0,
             rocket_spin: false,
             corkscrew: 0,
+            air_dash: false,
+            air_dash_was: false,
+            corkscrew_was: false,
             corkscrew_speed: 0.0,
             corkscrew_age: 0,
             corkscrew_used: false,
@@ -1068,6 +1076,12 @@ impl Mario {
     /// cone and binds `ms_watboost_a/b` to FLUDD's muzzle while it lasts.
     pub fn dashing(&self) -> bool {
         self.fludd_emitting
+    }
+
+    /// Host extension (`Options::turbo_air_thrust`): the held Turbo is thrusting him through the air, a dive, a slide or
+    /// a corkscrew, so a host draws the dash's water-boost cone there as it does for the run's dash ([`Mario::dashing`]).
+    pub fn air_dashing(&self) -> bool {
+        self.air_dash
     }
 
     /// Starts particle effect `name` (a view draws it; MarioParticle.cpp).
