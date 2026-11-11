@@ -339,7 +339,10 @@ impl Mario {
             return false;
         }
         use Status::*;
+        // Host extension (`Options::knockdown_cancel`): the air of a burn or a knock-down is no reason to lose the Feather's
+        // extra jump; it pulls him out into a fresh jump like a dive (`hit_airborne`).
         let next = match self.status {
+            _ if self.hit_airborne() => Jump,
             Jump => SecondJump,
             SecondJump | UltraJump => UltraJump,
             ForceJump | Landing | RocketLanding | BackJump | BroadJump | RotateBroadJump
@@ -357,6 +360,27 @@ impl Mario {
         self.lim.air_jumps += 1;
         self.events.push(Event::AirJump);
         self.change_status(next, 0, true)
+    }
+
+    /// Host extension (`Options::knockdown_cancel`): he is in the air part of a burn (the fire hit's throw and bounces, the
+    /// panicked hop, the fall off an edge on fire) or of a knock-down, where the game offers no move at all.
+    pub(crate) fn hit_airborne(&self) -> bool {
+        use Status::*;
+        self.options.knockdown_cancel
+            && !self.on_ground()
+            && matches!(
+                self.status,
+                FireDown | FireJump | FireLand | JumpShortBackDown | JumpShortForeDown | JumpForeDown | JumpBackDown
+            )
+    }
+
+    /// Host extension (`Options::knockdown_cancel`): a ground pound (B then L, as in any jump) out of the air part of a burn or
+    /// a knock-down. Runs after the input is read, before the state machine.
+    pub(crate) fn limit_hit_pound(&mut self) -> bool {
+        if !self.hit_airborne() || !(self.input.dive && self.input.l_pressed) || self.on_yoshi() {
+            return false;
+        }
+        self.change_status(Status::HipDrop, 0, false)
     }
 
     /// Ground covered per tick, times this: the host's speed ([`crate::Options::move_speed`])

@@ -4511,6 +4511,45 @@ fn a_stick_circle_in_a_plain_jump_with_the_turbo_held_is_the_corkscrew() {
     assert_eq!(s.sim.mario.model_pitch, 0x4000, "it isn't the corkscrew");
 }
 
+/// A burn or a knock-down in the air: A with a Feather's extra jump (`limits.air_jumps`) is a fresh jump, B then L a ground
+/// pound; without the flag or the jump, nothing (the game's behaviour).
+#[test]
+fn the_air_of_a_burn_or_a_knock_down_allows_the_feathers_jump_and_a_ground_pound() {
+    let ignite = |flag: bool, air_jumps: u32| {
+        let mut s = Scene::flat();
+        s.sim.mario.options.knockdown_cancel = flag;
+        s.sim.mario.limits.air_jumps = air_jumps;
+        s.step(2);
+        assert!(s.sim.mario.damage(Vec3::new(0.0, 0.0, 100.0), libsms::DamageKind::Fire));
+        // Up in the throw.
+        assert!(s.until(120, |m| m.status == Status::FireDown && !m.on_ground() && m.vel.y > 0.0));
+        s
+    };
+    // The Feather's jump.
+    let mut s = ignite(true, 1);
+    s.press_a();
+    s.step(2);
+    assert_eq!(s.mario().status, Status::Jump, "the Feather's jump out of the burn: {:?}", s.mario().status);
+    // No spare jump, or the flag off: A does nothing there.
+    for (flag, jumps) in [(true, 0u32), (false, 1u32)] {
+        let mut s = ignite(flag, jumps);
+        s.press_a();
+        s.step(2);
+        assert!(matches!(s.mario().status, Status::FireDown | Status::FireJumpEnd), "{flag}/{jumps}: {:?}", s.mario().status);
+    }
+    // The pound: B, then L.
+    let mut s = ignite(true, 0);
+    s.pad.l = true;
+    s.pad.b = true;
+    s.step(2);
+    assert_eq!(s.mario().status, Status::HipDrop, "the ground pound out of the burn: {:?}", s.mario().status);
+    let mut s = ignite(false, 0);
+    s.pad.l = true;
+    s.pad.b = true;
+    s.step(2);
+    assert_ne!(s.mario().status, Status::HipDrop, "the flag is off but he pounded out of the burn");
+}
+
 /// The Turbo's thrust through the air gets the run dash's cone, particles and spread sound, and a blast as it begins; a
 /// corkscrew started with the Turbo held plays the charge hiss and the blast again. The flag off gives none of it.
 #[test]

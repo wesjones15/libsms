@@ -1227,6 +1227,8 @@ impl Mario {
         self.check_player_action(host, pad);
         if self.limit_air_jump() {
             self.input.jump = false;
+        } else {
+            self.limit_hit_pound();
         }
         self.check_yoshi_collision(host);
         self.check_enemy_collision(host);
