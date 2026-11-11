@@ -365,7 +365,7 @@ impl Mario {
         if self.input.jump && self.pad.r && nozzle == NozzleKind::Spray {
             return self.change_status(Status::BackJump, 0, false);
         }
-        if rocket_type == 1 && emitting {
+        if rocket_type == 1 && emitting && !self.hover_gun_now() {
             self.hover_target_y = self.floor_y + self.params.water_gun.hover_height;
             return self.change_status(Status::Rocket, 0, false);
         }

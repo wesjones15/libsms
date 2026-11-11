@@ -417,6 +417,10 @@ impl Mario {
         if self.rocket_precision {
             return false;
         }
+        // Host extension: an aimed Hover on the ground is a gun, not a lift-off (`Mario::hover_gun_now`).
+        if self.hover_gun_now() {
+            return false;
+        }
         if self.status == Status::Rocket
             || (self.status == Status::RocketLanding && !granted)
             || self.air_rocket_used

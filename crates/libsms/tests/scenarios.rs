@@ -595,6 +595,106 @@ fn an_aimed_hover_points_both_jets_at_the_target_and_keeps_its_lift() {
     assert!(vy_aimed > 0.0 && (vy_aimed - vy_plain).abs() < 1.0, "lift changed: {vy_aimed} vs {vy_plain}");
 }
 
+/// Holds R on the ground (or at height) with `nozzle`; returns every emit's (power, direction) and where he ended.
+fn hover_or_spray_from_the_ground(nozzle: NozzleKind, aim: bool) -> (Vec<(f32, Vec3)>, Vec3, f32, bool) {
+    let mut s = Scene::flat();
+    s.sim.mario.give_fludd();
+    s.sim.mario.options.aim_alt = true;
+    {
+        let p = s.sim.mario.params.clone();
+        let f = s.sim.mario.fludd.as_mut().unwrap();
+        f.change_nozzle(nozzle, false, &p);
+        f.refill(&p);
+    }
+    s.step(30);
+    let start = s.mario().pos;
+    if aim {
+        s.sim.mario.aim = Some(libsms::Aim { yaw: 0x4000, pitch: 0 });
+    }
+    s.pad.r_analog = 255;
+    let mut emits = vec![];
+    let mut max_vy = 0.0f32;
+    let mut stayed = true;
+    for _ in 0..90 {
+        s.host.events.clear();
+        s.step(1);
+        max_vy = max_vy.max(s.mario().vel.y);
+        stayed &= s.mario().on_ground();
+        for e in s.host.events.iter() {
+            if let Event::WaterEmit(w) = e {
+                if w.nozzle == nozzle {
+                    emits.push((w.power, w.dir));
+                }
+            }
+        }
+    }
+    (emits, s.mario().pos - start, max_vy, stayed)
+}
+
+#[test]
+fn a_grounded_aimed_hover_is_a_gun_that_reaches_as_far_as_the_spray_and_moves_nothing() {
+    let (shots, moved, max_vy, stayed) = hover_or_spray_from_the_ground(NozzleKind::Hover, true);
+    assert!(shots.len() >= 2, "both jets should fire, got {}", shots.len());
+    assert!(shots.iter().all(|(_, d)| d.x > 0.99), "the jets are off the aim");
+    assert!(moved.length() < 1.0 && max_vy <= 0.1 && stayed, "it moved him: {moved:?}, vy {max_vy}");
+    let (spray, _, _, _) = hover_or_spray_from_the_ground(NozzleKind::Spray, false);
+    let top = |v: &[(f32, Vec3)]| v.iter().map(|e| e.0).fold(0.0f32, f32::max);
+    assert!((top(&shots) - top(&spray)).abs() < 0.05 * top(&spray), "power {} vs the Spray's {}", top(&shots), top(&spray));
+    // No lock: the plain Hover still lifts him off the ground.
+    let (_, _, plain_vy, _) = hover_or_spray_from_the_ground(NozzleKind::Hover, false);
+    assert!(plain_vy > 0.5, "the plain Hover no longer lifts: {plain_vy}");
+}
+
+/// A Hover held in the air: the lock is taken part way, then let go, and the Hover goes on.
+#[test]
+fn lb_aims_a_hover_in_flight_and_letting_go_keeps_hovering() {
+    let mut s = Scene::flat();
+    s.sim.mario.give_fludd();
+    s.sim.mario.options.pump_in_long_fall = true;
+    s.sim.mario.options.aim_alt = true;
+    {
+        let p = s.sim.mario.params.clone();
+        let f = s.sim.mario.fludd.as_mut().unwrap();
+        f.change_nozzle(NozzleKind::Hover, false, &p);
+        f.refill(&p);
+    }
+    s.sim.mario.pos = Vec3::new(0.0, 12000.0, 0.0);
+    s.step(5);
+    s.pad.r_analog = 255;
+    let burst = |s: &mut Scene<FlatHost>, n: u32| {
+        let (mut dirs, mut vy) = (vec![], 0.0f32);
+        for _ in 0..n {
+            s.host.events.clear();
+            s.step(1);
+            vy += s.mario().vel.y;
+            for e in s.host.events.iter() {
+                if let Event::WaterEmit(w) = e {
+                    if w.nozzle == NozzleKind::Hover {
+                        dirs.push(w.dir);
+                    }
+                }
+            }
+        }
+        (dirs, vy / n as f32)
+    };
+    let (plain, vy0) = burst(&mut s, 30);
+    assert!(plain.len() >= 2 && plain.iter().all(|d| d.y < -0.5), "the hover isn't straight down: {plain:?}");
+    // LB pressed mid-flight: the jets swing to the target, the lift goes on.
+    s.sim.mario.aim = Some(libsms::Aim { yaw: 0x4000, pitch: 0 });
+    let (aimed, vy1) = burst(&mut s, 30);
+    assert!(aimed.len() >= 2 && aimed.iter().all(|d| d.x > 0.99), "mid-flight LB didn't aim the jets");
+    assert!(vy1 > 0.0 && (vy1 - vy0).abs() < 1.5, "flight changed with the aim: {vy0} -> {vy1}");
+    // LB let go with R still held: the hover goes on, straight down again.
+    s.sim.mario.aim = None;
+    let (after, vy2) = burst(&mut s, 30);
+    assert!(after.len() >= 2 && after.iter().all(|d| d.y < -0.5), "the hover stopped or stayed aimed after LB let go");
+    assert!((vy2 - vy0).abs() < 1.5, "lift changed after LB let go: {vy0} -> {vy2}");
+    // Lock again: aimed again, with no new press of R.
+    s.sim.mario.aim = Some(libsms::Aim { yaw: 0x4000, pitch: 0 });
+    let (again, _) = burst(&mut s, 30);
+    assert!(again.iter().all(|d| d.x > 0.99) && !again.is_empty(), "a regained lock didn't aim again");
+}
+
 #[test]
 fn a_lost_target_ends_an_aimed_stream_until_r_is_pressed_again() {
     let mut s = Scene::flat();

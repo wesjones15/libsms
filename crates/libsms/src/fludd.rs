@@ -382,6 +382,13 @@ impl Mario {
             self.alt_aim_block = false;
             return;
         }
+        // The Hover follows the LB lock level by level, not by the R press: aimed while R is held and a target is held,
+        // plain (straight down, full lift) the moment the lock is let go or lost, and aimed again when it is regained.
+        if kind == Some(NozzleKind::Hover) {
+            self.alt_aim_block = false;
+            self.alt_aim_latched = self.options.aim_alt && self.options.aim_hover && self.aim_now().is_some();
+            return;
+        }
         if pressed {
             self.alt_aim_block = false;
             let on = match kind {
@@ -435,6 +442,17 @@ impl Mario {
             return self.aim_now();
         }
         self.gameplay_aim()
+    }
+
+    /// Host extension: the Hover is fitted, aimed at a held lock (`Options::aim_alt` and `aim_hover`), and he is on the
+    /// ground: it shoots instead of lifting him (the ground states don't start a hover; `emit_one` pushes nothing).
+    pub(crate) fn hover_gun_now(&self) -> bool {
+        self.options.aim_alt
+            && self.options.aim_hover
+            && self.status != Status::Rocket
+            && self.on_ground()
+            && self.fludd.as_ref().is_some_and(|f| f.nozzle == NozzleKind::Hover)
+            && self.aim_now().is_some()
     }
 
     /// The exact gameplay emitter, shared by particle emission and asset-free hosts.
@@ -1036,7 +1054,26 @@ impl Mario {
     }
 
     fn emit_one(&mut self, host: &mut dyn Host, kind: NozzleKind, index: usize, p: &Params) {
-        let np = p.nozzle(kind).clone();
+        // Host extension: an aimed Hover on the ground is a gun, not a hover: both jets shoot as far as the Spray
+        // does (its speed, size and hits; the Hover's own water use) and push him nowhere.
+        let grounded_gun = kind == NozzleKind::Hover && self.gameplay_aim().is_some() && self.on_ground() && self.status != Status::Rocket;
+        let mut np = p.nozzle(kind).clone();
+        if grounded_gun {
+            // Keep the Hover's own trigger, water use and hits; take the Spray's stream: its speed (at any pressure),
+            // drop type, size, scatter and hit box, so it carries as far as the Spray's water does.
+            let spray = p.nozzle(NozzleKind::Spray);
+            np.emit_pow = spray.emit_pow;
+            np.emit_pow_min = spray.emit_pow;
+            np.particle_type = spray.particle_type;
+            np.size = spray.size;
+            np.size_min = spray.size;
+            np.size_tremble = spray.size_tremble;
+            np.pow_tremble = spray.pow_tremble;
+            np.dir_tremble = spray.dir_tremble;
+            np.dir_tremble_min = spray.dir_tremble;
+            np.hit_radius = spray.hit_radius;
+            np.hit_height = spray.hit_height;
+        }
         let rate = self.limit_spray_rate(kind);
         // `getEmitPosDirSpeed`: the drawn muzzle when the host reported it; riding, Yoshi's
         // tongue joint (`getEmitMtx`).
@@ -1193,6 +1230,9 @@ impl Mario {
             precise: precision,
         }));
 
+        if grounded_gun {
+            return;
+        }
         // Recoil: `addVelocity(reaction * -(dir . forward) * power)`; vertical reaction pushes
         // along -dir.y.
         if precision {
