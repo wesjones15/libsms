@@ -2255,6 +2255,7 @@ impl View {
             l.gun_angle = 0.0;
             l.aimed = false;
             l.aim_turn = 0;
+            l.aim_dir = Vec3::Z;
         }
 
         // Blink every few seconds (the game runs `ma_wink_tx` on idle; 30 frames a second).
@@ -2423,12 +2424,16 @@ impl View {
             (Some(l), Some(i)) => {
                 let model = models::NOZZLES[i];
                 let bmd = &self.models[model as usize].bmd;
+                // The Rocket, Turbo and Hover under a host aim (host extension) are turned as a whole about their base
+                // so the drawn muzzle points along the water, below; only the Spray's own neck joints swivel.
+                let whole = l.aimed && matches!(l.nozzle, NozzleKind::Rocket | NozzleKind::Turbo | NozzleKind::Hover);
                 let extra = |name: &str| match name {
                     // `NozzleCtrl`: the neck dips with the aim, never above level.
                     // A host aim (the lock-on) also swivels the head round to the target
                     // and lifts it above level; not in the game. The pose is in the models'
                     // right-handed space and the host draws it mirrored across X, so the
                     // turn goes the other way round here to look right on screen.
+                    "chn_muzzle_1" | "jnt_back_nozzle_neck" if whole => None,
                     "chn_muzzle_1" | "jnt_back_nozzle_neck" if l.aimed => Some(
                         Mat4::from_rotation_y(-deg(l.aim_turn as f32))
                             * Mat4::from_rotation_z(deg(l.gun_angle)),
@@ -2448,6 +2453,25 @@ impl View {
                     |j| clip.and_then(|c| c.sample(j, l.nozzle_frame)),
                     |j| extra(&bmd.joints[j].name),
                 );
+                // Turn the whole nozzle about its first joint so its (first) muzzle points at the aim: the rotation that
+                // takes the muzzle's drawn direction to the aim's, in the models' right-handed space (the host mirrors
+                // it across X when drawn, so the aim's X flips here).
+                let nozzle_at = nozzle_at.map(|at| {
+                    if !whole {
+                        return at;
+                    }
+                    let Some(m0) = bmd.joint("null_G_muzzle") else { return at };
+                    let have = (at * js[m0]).x_axis.truncate().normalize_or_zero();
+                    let want = Vec3::new(-l.aim_dir.x, l.aim_dir.y, l.aim_dir.z).normalize_or_zero();
+                    if have == Vec3::ZERO || want == Vec3::ZERO {
+                        return at;
+                    }
+                    let pivot = (at * js[0]).w_axis.truncate();
+                    Mat4::from_translation(pivot)
+                        * Mat4::from_quat(Quat::from_rotation_arc(have, want))
+                        * Mat4::from_translation(-pivot)
+                        * at
+                });
                 if let Some(at) = nozzle_at.filter(|_| l.nozzle != NozzleKind::Yoshi) {
                     for name in ["null_G_muzzle", "null_G_muzzle2"] {
                         if let Some(j) = bmd.joint(name) {
@@ -3785,6 +3809,50 @@ mod tests {
             (swing + std::f32::consts::FRAC_PI_2).abs() < 0.2,
             "swing {swing}"
         );
+    }
+
+    /// The disc's Rocket, Turbo and Hover heads have no Spray neck: they are turned as a whole, and their drawn muzzle
+    /// points where the aimed water goes (the stand-in does the same from the shared emitter).
+    #[test]
+    fn the_aimed_rocket_turbo_and_hover_point_their_drawn_muzzle_at_the_aim() {
+        let Some(mut v) = view() else {
+            return;
+        };
+        let a = libsms::Assets::discover(None).unwrap();
+        for kind in [NozzleKind::Rocket, NozzleKind::Turbo, NozzleKind::Hover] {
+            for turn in [0i16, 0x4000, -0x4000, 0x7000] {
+                for pitch in [0.5f32, 0.0, -0.4] {
+                    let mut sim = Sim::new(a.params.clone(), a.anim_table.clone(), Vec3::ZERO, 0);
+                    sim.mario.give_fludd();
+                    sim.mario.options.aim_alt = true;
+                    {
+                        let p = sim.mario.params.clone();
+                        let f = sim.mario.fludd.as_mut().unwrap();
+                        f.change_nozzle(kind, false, &p);
+                        f.refill(&p);
+                    }
+                    let mut host = libsms::FlatHost::default();
+                    // On the ground and held, so the Hover lifts nothing away and the aim is the same every tick.
+                    let yaw = sim.mario.model_yaw.wrapping_add(turn);
+                    let units = (pitch * (32768.0 / std::f32::consts::PI)) as i16;
+                    sim.mario.aim = Some(libsms::Aim { yaw, pitch: units });
+                    let pad = libsms::Pad { r_analog: 140, ..Default::default() };
+                    for _ in 0..20 {
+                        sim.advance(&mut host, &pad, i16::MIN, 1.0 / 60.0);
+                        v.update(&mut sim, 1.0 / 60.0);
+                    }
+                    let look = sim.mario.fludd_look().expect("FLUDD");
+                    assert!(look.aimed, "{kind:?} is not aimed (turn {turn:#x}, pitch {pitch})");
+                    let (_, d) = sim.mario.fludd.as_ref().unwrap().emitter(0).expect("muzzle reported");
+                    // He may have turned toward the aim while it was held: the turn left is what the head must show.
+                    let t = yaw.wrapping_sub(sim.mario.model_yaw) as f32 * std::f32::consts::PI / 32768.0;
+                    // In the right-handed nozzle space the host mirrors across X.
+                    let want = Vec3::new(-t.sin() * pitch.cos(), pitch.sin(), t.cos() * pitch.cos());
+                    let dot = d.normalize().dot(want);
+                    assert!(dot > 0.97, "{kind:?} turn {turn:#x} pitch {pitch}: drawn muzzle {d:?} vs aim {want:?} (dot {dot:.3})");
+                }
+            }
+        }
     }
 
     #[test]

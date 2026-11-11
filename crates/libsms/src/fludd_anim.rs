@@ -146,6 +146,10 @@ pub struct FluddLook {
     /// so the head points at the target. Not in the game.
     pub aimed: bool,
     pub aim_turn: i16,
+    /// With `aimed`: the unit direction the water is aimed along, in Mario's model space (the nozzle models'
+    /// space mirrored across X, as the host draws them), so a host can turn a nozzle with no neck joint of its
+    /// own (the Rocket, the Hover) to point at it.
+    pub aim_dir: Vec3,
     /// Hover nozzle tilts, left and right (`WaterGunDivingCtrlL/R`).
     pub tilt: [f32; 2],
     /// Turbo propeller angle (`RotateCtrl`).
@@ -438,6 +442,16 @@ impl Mario {
         if self.spinning() { None } else { self.aim }
     }
 
+    /// The unit direction of `aim` in Mario's model space (the inverse of `rotate_model`).
+    fn aim_dir_model(&self, aim: crate::Aim) -> Vec3 {
+        let pitch = aim.pitch as f32 * (std::f32::consts::PI / 32768.0);
+        let world = Vec3::new(pitch.cos() * sin(aim.yaw), pitch.sin(), pitch.cos() * cos(aim.yaw));
+        let (s, c) = (sin(self.model_yaw), cos(self.model_yaw));
+        Vec3::new(world.x * c - world.z * s, world.y, world.x * s + world.z * c)
+            .try_normalize()
+            .unwrap_or(Vec3::Z)
+    }
+
     /// What to draw for FLUDD now, if Mario has it.
     pub fn fludd_look(&self) -> Option<FluddLook> {
         let f = self.fludd.as_ref()?;
@@ -450,6 +464,7 @@ impl Mario {
             nozzle_frame: a.ctrl.frame,
             gun_angle: f.gun_angle(),
             aimed: self.look_aim().is_some(),
+            aim_dir: self.look_aim().map_or(Vec3::Z, |a| self.aim_dir_model(a)),
             aim_turn: self
                 .aim_now()
                 .map_or(0, |a| crate::math::diff(a.yaw, self.model_yaw)),
