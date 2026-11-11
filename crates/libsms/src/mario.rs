@@ -600,8 +600,10 @@ pub struct Mario {
     pub(crate) pound_flame_clock: f32,
     /// This Rocket charge fired with a valid target: its one precision slug, no launch (`Options::aim_rocket`).
     pub(crate) rocket_precision: bool,
-    /// The precision slug of this charge has left.
-    pub(crate) precision_fired: bool,
+    /// How many of this charge's precision drops have left (`PRECISION_DROPS` in all, one a tick).
+    pub(crate) precision_shots: u8,
+    /// The aimed Turbo's ring: where on its circle the next drop leaves (radians, counter-clockwise seen from behind the muzzle).
+    pub(crate) ring_phase: f32,
     /// This press of the Turbo or Hover began with a valid target and the experiment on, so it stays aimed.
     pub(crate) alt_aim_latched: bool,
     /// An aimed stream lost its target: no pumping until R is let go (a held Spray that ran out, as it were).
@@ -745,7 +747,8 @@ impl Mario {
             pound_spin_age: 0,
             pound_flame_clock: 0.0,
             rocket_precision: false,
-            precision_fired: false,
+            precision_shots: 0,
+            ring_phase: 0.0,
             alt_aim_latched: false,
             alt_aim_block: false,
             alt_aim_r_down: false,

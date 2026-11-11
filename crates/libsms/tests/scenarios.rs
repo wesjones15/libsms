@@ -554,19 +554,19 @@ fn aimed_burst(nozzle: NozzleKind, master: bool, switch: bool, aim_on: bool, tic
 }
 
 #[test]
-fn an_aimed_rocket_fires_one_precision_slug_and_does_not_launch_him() {
+fn an_aimed_rocket_fires_five_hard_drops_and_does_not_launch_him() {
     let (shots, rocketed, _) = aimed_burst(NozzleKind::Rocket, true, true, true, 300);
-    assert_eq!(shots.len(), 1, "expected one slug, got {}", shots.len());
-    let (dir, attack, count) = shots[0];
-    assert_eq!(count, 1);
-    assert!(dir.x > 0.99, "slug didn't go where aimed: {dir:?}");
-    assert!(!rocketed, "the slug launched him");
-    // A stronger single hit than the Spray's drop.
+    assert_eq!(shots.len(), 5, "expected five drops, got {}", shots.len());
+    let spray = libsms::params::Params::default().nozzle(NozzleKind::Spray).attack;
+    for (dir, attack, count) in &shots {
+        assert_eq!(*count, 1);
+        assert!(dir.x > 0.99, "a drop didn't go where aimed: {dir:?}");
+        assert_eq!(*attack, spray * 20, "each drop hits for 20x a Spray drop");
+    }
+    assert!(!rocketed, "the stream launched him");
     let (plain, plain_rocketed, _) = aimed_burst(NozzleKind::Rocket, false, true, true, 300);
     assert!(plain_rocketed, "master off: the Rocket should launch as usual");
     assert!(plain.len() > 1);
-    let spray = libsms::params::Params::default().nozzle(NozzleKind::Spray).attack;
-    assert!(attack > spray, "slug {attack} not stronger than a Spray drop {spray}");
     // Each switch off is the movement behavior again.
     let (_, rocketed_off, _) = aimed_burst(NozzleKind::Rocket, true, false, true, 300);
     assert!(rocketed_off, "per-nozzle switch off: it should launch");
@@ -582,8 +582,70 @@ fn the_aimed_turbo_streams_at_the_target_and_the_master_switch_gates_it() {
     assert!(!aimed.is_empty() && !plain.is_empty());
     assert!(aimed.iter().all(|(d, _, _)| d.x > 0.99), "aimed stream off target");
     assert!(plain.iter().all(|(d, _, _)| d.x < 0.5), "master off but the Turbo aimed");
-    let drops = |v: &[(Vec3, i16, u32)]| v.iter().map(|e| e.2).sum::<u32>();
-    assert!(drops(&aimed) > drops(&plain), "the aimed stream isn't faster");
+    assert!(aimed.iter().all(|e| e.2 == 1), "the gatling fires one drop at a time");
+}
+
+/// The aimed Turbo's drops: (position, direction, speed, homing) of each WaterEmit it makes in `ticks`.
+fn aimed_turbo_drops(ticks: u32) -> (Vec<(Vec3, Vec3, f32, bool)>, f32) {
+    let mut s = Scene::flat();
+    s.sim.mario.give_fludd();
+    s.sim.mario.options.pump_in_long_fall = true;
+    s.sim.mario.options.aim_alt = true;
+    {
+        let p = s.sim.mario.params.clone();
+        let f = s.sim.mario.fludd.as_mut().unwrap();
+        f.change_nozzle(NozzleKind::Turbo, false, &p);
+        f.refill(&p);
+    }
+    let spray_speed = s.sim.mario.params.nozzle(NozzleKind::Spray).emit_pow;
+    s.step(5);
+    s.sim.mario.aim = Some(libsms::Aim { yaw: 0x4000, pitch: 0 });
+    s.pad.r_analog = 255;
+    let mut drops = vec![];
+    for _ in 0..ticks {
+        s.host.events.clear();
+        s.step(1);
+        // Where the drop leaves, from where the muzzle is (he is on the ground, nearly still).
+        let muzzle = s.sim.mario.water_emitter(0).map_or(Vec3::ZERO, |(p, _)| p);
+        for e in s.host.events.iter() {
+            if let Event::WaterEmit(w) = e {
+                if w.nozzle == NozzleKind::Turbo {
+                    drops.push((w.pos - muzzle, w.dir, w.power, w.precise));
+                }
+            }
+        }
+    }
+    (drops, spray_speed)
+}
+
+#[test]
+fn the_aimed_turbo_fires_a_ring_one_drop_at_a_time_counter_clockwise_at_twice_the_spray_speed() {
+    let (drops, spray) = aimed_turbo_drops(200);
+    assert!(drops.len() >= 16, "only {} drops", drops.len());
+    assert!(drops.iter().all(|d| d.3), "the gatling's drops home on the lock");
+    for d in &drops {
+        assert!((d.2 - spray * 2.0).abs() < 1e-3, "speed {} is not 2x the Spray's {spray}", d.2);
+        assert!(d.1.x > 0.99, "a drop is off the aim: {:?}", d.1);
+    }
+    // Seen from behind the muzzle (looking along +X): right is -Z, up is +Y. The drops leave one by one round a ring, each
+    // the same step further counter-clockwise.
+    let first = drops.len() - 16;
+    let ring = &drops[first..];
+    let centre = ring.iter().fold(Vec3::ZERO, |a, d| a + d.0) / ring.len() as f32;
+    let angle = |p: Vec3| {
+        let off = p - centre;
+        off.y.atan2(-off.z)
+    };
+    let mut turned = 0.0f32;
+    for pair in ring.windows(2) {
+        let off = pair[0].0 - centre;
+        let radius = (off.y * off.y + off.z * off.z).sqrt();
+        assert!((radius - 45.0).abs() < 8.0, "ring radius {radius}");
+        let step = (angle(pair[1].0) - angle(pair[0].0) + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+        assert!((step - std::f32::consts::TAU / 8.0).abs() < 0.1, "each drop is {step} rad round, not a counter-clockwise eighth");
+        turned += step;
+    }
+    assert!(turned > std::f32::consts::TAU, "no full turn of the ring");
 }
 
 #[test]

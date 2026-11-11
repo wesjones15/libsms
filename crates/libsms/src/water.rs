@@ -98,8 +98,11 @@ pub struct Particle {
     pub burst: bool,
     /// From a spin's spray ([`WaterEmit::spin`]).
     pub spin: bool,
-    /// From the Rocket's precision slug ([`WaterEmit::precise`]).
+    /// From the Rocket's precision stream ([`WaterEmit::precise`]).
     pub precise: bool,
+    /// The enemy a precise drop is locked on (the host's id), once found, and whether it has looked yet.
+    pub lock: Option<u64>,
+    lock_tried: bool,
     /// The surface it sticks to: normal and whether it is wet (`isWaterSlip`).
     surface: Option<(Vec3, bool)>,
 }
@@ -163,6 +166,9 @@ mod k {
     pub const STUCK_LIFE: f32 = 256.0;
     /// `unk5E08`: particles this far from Mario (XZ) vanish.
     pub const RANGE: f32 = 5000.0;
+    /// How far from Mario the aimed Rocket's drops look for their lock, and how far past an enemy's own radius off their line it may be.
+    pub const LOCK_RANGE: f32 = 5000.0;
+    pub const LOCK_MISS: f32 = 300.0;
     /// Friction, fall and dry rate on wet (`isWaterSlip`) and other surfaces.
     pub const FRICTION: (f32, f32) = (0.93, 0.7);
     pub const FALL: (f32, f32) = (-3.0, -1.0);
@@ -320,6 +326,8 @@ impl WaterManager {
                 burst: w.burst,
                 spin: w.spin,
                 precise: w.precise,
+                lock: None,
+                lock_tried: false,
                 surface: None,
             });
             n += 1;
@@ -333,6 +341,43 @@ impl WaterManager {
         // once it has used half of it.
         let full = self.types[p.kind.min(16)].alive * if p.precise { PRECISE_LIFE } else { 1.0 };
         p.state == State::Flying && p.life < full - k::DRAW_DELAY
+    }
+
+    /// The aimed Rocket's drops (host extension) are locked on the enemy the shot was aimed at: found on a drop's first step as the one
+    /// nearest its line (within `LOCK_MISS` of it), then followed every step at the drop's own speed, however it moves. The drop
+    /// carries nothing of Mario's motion. A lock that is gone (the enemy died) lets the drop fly straight on.
+    fn home_precise(&mut self, host: &dyn Host, mario: Vec3) {
+        if !self.particles.iter().any(|p| p.precise && p.state == State::Flying) {
+            return;
+        }
+        let mut enemies = Vec::new();
+        host.enemies(mario, k::LOCK_RANGE, &mut enemies);
+        for p in self.particles.iter_mut().filter(|p| p.precise && p.state == State::Flying) {
+            if !p.lock_tried {
+                p.lock_tried = true;
+                let dir = p.vel.normalize_or_zero();
+                p.lock = enemies
+                    .iter()
+                    .filter_map(|e| {
+                        let centre = e.pos + Vec3::Y * (e.height * 0.5);
+                        let along = (centre - p.pos).dot(dir);
+                        if along <= 0.0 {
+                            return None;
+                        }
+                        let miss = (centre - p.pos - dir * along).length();
+                        (miss <= e.radius + k::LOCK_MISS).then_some((e.id, miss))
+                    })
+                    .min_by(|a, b| a.1.total_cmp(&b.1))
+                    .map(|(id, _)| id);
+            }
+            let Some(id) = p.lock else { continue };
+            let Some(e) = enemies.iter().find(|e| e.id == id) else { continue };
+            let speed = (p.vel - p.carry).length();
+            p.carry = Vec3::ZERO;
+            if let Some(d) = (e.pos + Vec3::Y * (e.height * 0.5) - p.pos).try_normalize() {
+                p.vel = d * speed;
+            }
+        }
     }
 
     /// The type's stretch along the velocity when drawn (`mExtension`).
@@ -508,6 +553,7 @@ impl WaterManager {
         self.wet_patches
             .retain(|p| p.life > 0.0 && p.pos.distance_squared(mario) < k::RANGE * k::RANGE);
         self.hit_enemies(host);
+        self.home_precise(host, mario);
         let starts: Vec<_> = self.particles.iter()
             .map(|p| (p.pos, p.size, p.life > 0.0)).collect();
         // Fly, slide, fall; cap horizontal speed at the particle's size.
@@ -793,6 +839,39 @@ mod tests {
             spin: false,
             precise: false,
         }
+    }
+
+    /// A precise drop is locked on the enemy it was aimed at: aimed well off it (but nearest to its line), it still hits; the same
+    /// drop without the flag misses.
+    #[test]
+    fn a_precise_drop_homes_in_on_the_enemy_it_was_aimed_at() {
+        struct Target;
+        impl crate::host::Host for Target {
+            fn ground(&self, _: Vec3) -> Option<crate::GroundHit> {
+                None
+            }
+            fn enemies(&self, _: Vec3, _: f32, out: &mut Vec<crate::host::Enemy>) {
+                out.push(crate::host::Enemy { id: 3, pos: Vec3::new(250.0, 100.0, 1500.0), radius: 30.0, height: 120.0 });
+            }
+        }
+        let run = |precise: bool| {
+            let mut water = WaterManager::new(&Params::default());
+            let mut shot = emit(Vec3::Z);
+            shot.nozzle = NozzleKind::Rocket;
+            shot.pos = Vec3::new(0.0, 160.0, 0.0);
+            shot.power = 160.0;
+            shot.size = 30.0;
+            shot.precise = precise;
+            water.emit(&shot);
+            let mut hit = false;
+            for _ in 0..30 {
+                water.step(&Target, Vec3::new(0.0, 150.0, 0.0));
+                hit |= water.events.iter().any(|e| matches!(e, WaterEvent::Hit { id: 3, .. }));
+            }
+            hit
+        };
+        assert!(run(true), "the locked drop missed the enemy it was aimed at");
+        assert!(!run(false), "the same drop without the flag homed too");
     }
 
     /// The Rocket's precision slug (`WaterEmit::precise`) flies like a sniper's shot: straight and at its full

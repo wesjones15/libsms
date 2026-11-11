@@ -971,3 +971,12 @@ Aim during the charge (2026-11-09): `Mario::look_aim` is the aim the Rocket's he
 follows the lock while the Rocket is pumping with the master and Rocket switches on, so the head is on target through the charge-up and at
 the shot. Emission still uses `gameplay_aim`, which becomes the aim only at the discharge (the precision slug). FFI `TriggerFired` events
 carry the nozzle (`SmsState::nozzle` numbering) in `arg`.
+
+Aimed Rocket and Turbo, redesigned (2026-11-10 night; replaces the single precision slug and the 3x Turbo stream described above). Implemented once in the
+core, so the stand-in and the disc view draw the same water: **Rocket** (`aim_alt` + `aim_rocket`, a valid LB target at the discharge): `PRECISION_DROPS`
+(5) drops, one a tick (the rest still leave if R is let go), each `PRECISION_SPEED_MULT` (4x) the Spray's emit power, `PRECISION_DAMAGE_MULT` (20x) a Spray drop's
+attack, in the Spray's size, drop type and hit box, the whole charge's water paid with the first drop, one small kick. Each drop is `precise` and carries
+`Particle::lock`: on its first step the water manager picks the enemy nearest the drop's line (within its radius + `LOCK_MISS`) and from then on points
+the drop's velocity at that enemy's centre every step at the drop's own speed (no carried motion, no gravity, no speed cap); a lock that is gone lets it fly
+straight on. **Turbo** (`aim_turbo`): the gatling fires one drop a tick, the next on a ring (`TURBO_RING_RADIUS`, 8 drops a turn, counter-clockwise seen from
+behind the muzzle) round the line to the target, each at `TURBO_RING_SPEED_MULT` (2x) the Spray's speed, no scatter, `precise` so each homes on the lock.

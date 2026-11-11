@@ -822,6 +822,9 @@ impl Mario {
             }
         } else if self.upper == UpperState::Pumping {
             self.emit(host);
+        } else if self.rocket_precision && self.precision_shots > 0 && self.precision_shots < PRECISION_DROPS {
+            // R let go early: the rest of the drops still leave.
+            self.emit(host);
         }
         self.nozzle_smoke();
         // Riding, R spits juice without pumping (`onYoshi() && mAnalogR > 0`).
@@ -1001,19 +1004,24 @@ impl Mario {
         // Host extension (`Options::aim_rocket`): a charge that fires with a valid target is the precision slug, decided
         // here at the discharge (no launch, one shot); otherwise the Rocket's own movement behavior.
         if kind == NozzleKind::Rocket {
-            if !rocket_active {
+            // The stream of drops goes on after the charge's own trigger has run out, until the last has left.
+            let streaming = self.rocket_precision && self.precision_shots > 0 && self.precision_shots < PRECISION_DROPS;
+            if !rocket_active && !streaming {
                 self.rocket_precision = false;
-                self.precision_fired = false;
+                self.precision_shots = 0;
             } else if fired.is_some() {
                 self.rocket_precision =
                     self.options.aim_alt && self.options.aim_rocket && self.aim_now().is_some();
-                self.precision_fired = false;
+                self.precision_shots = 0;
             }
             // A level shot out the back in a dive or slide has the Rocket's exhaust too, turned to blow rearward.
             if fired.is_some() && !self.rocket_precision && self.horizontal_exhaust_pose() {
                 self.rocket_exhaust_horizontal();
                 self.rocket_boost = ROCKET_SLIDE_BOOST_TICKS;
             }
+        } else {
+            self.rocket_precision = false;
+            self.precision_shots = 0;
         }
         if charging {
             self.sound("MSD_SE_SY_NEWP_AIR_TAME", None);
@@ -1114,8 +1122,16 @@ impl Mario {
         // Host extension (the experimental aimed modes, `Options::aim_alt`): see `gameplay_aim`.
         let aimed = self.gameplay_aim().is_some();
         let precision = kind == NozzleKind::Rocket && self.rocket_precision;
-        if precision && self.precision_fired {
+        if precision && self.precision_shots >= PRECISION_DROPS {
             return;
+        }
+        let first_shot = self.precision_shots == 0;
+        if precision {
+            // The aimed Rocket's drops are the Spray's water: its drop type and hit box, only faster and harder.
+            let spray = p.nozzle(NozzleKind::Spray);
+            np.particle_type = spray.particle_type;
+            np.hit_radius = spray.hit_radius;
+            np.hit_height = spray.hit_height;
         }
         let turbo_aimed = kind == NozzleKind::Turbo && aimed;
         let inherit = if self.juice_mouth && kind == NozzleKind::Spray {
@@ -1142,39 +1158,42 @@ impl Mario {
             let s = &mut f.slots[kind as usize];
             if kind.is_trigger() {
                 // TNozzleTrigger::emit
-                if s.state != TriggerState::Active {
+                // The precision stream outlives the trigger's own burst.
+                if s.state != TriggerState::Active && !precision {
                     return;
                 }
                 let pressure = s.fill / np.inside_pressure_max;
                 if precision {
-                    // The one slug: a single drop, as fast as `PRECISION_SPEED_MULT` times the Rocket's fastest, hitting for
-                    // `PRECISION_SPRAY_SHARE` of what the Spray could deal in the same wind-up, narrow and straight.
+                    // One drop of the stream a tick (`PRECISION_DROPS`), each `PRECISION_SPEED_MULT` times the Spray's speed and
+                    // `PRECISION_DAMAGE_MULT` times a Spray drop's hit, in the Spray's own size, straight at the lock (the water
+                    // manager homes it, `Particle::lock`).
                     let sp = p.nozzle(NozzleKind::Spray);
-                    let windup = np.inside_pressure_max / (150.0 - np.inside_pressure_dec).max(1.0);
-                    let spray = sp.attack as f32 * sp.num * windup;
                     count = 1;
-                    attack = (spray * PRECISION_SPRAY_SHARE).clamp(1.0, i16::MAX as f32) as i16;
-                    power = np.emit_pow * PRECISION_SPEED_MULT;
+                    attack = (sp.attack as f32 * PRECISION_DAMAGE_MULT).clamp(1.0, i16::MAX as f32) as i16;
+                    power = sp.emit_pow * PRECISION_SPEED_MULT;
                     reaction = 0.0;
-                    size = np.size * PRECISION_SIZE;
+                    size = sp.size;
                     dir_tremble = 0.0;
                 } else {
-                    let num_rate = if turbo_aimed { TURBO_AIM_RATE } else { 1.0 };
-                    s.emit_acc += (pressure * (np.num - np.num_min) + np.num_min) * num_rate;
-                    let n = s.emit_acc as i32;
-                    if n == 0 {
-                        return;
+                    if turbo_aimed {
+                        // One drop a tick, the next on the ring, at 2x the Spray's speed and no scatter.
+                        count = 1;
+                        dir_tremble = 0.0;
+                        power = p.nozzle(NozzleKind::Spray).emit_pow * TURBO_RING_SPEED_MULT;
+                    } else {
+                        s.emit_acc += pressure * (np.num - np.num_min) + np.num_min;
+                        let n = s.emit_acc as i32;
+                        if n == 0 {
+                            return;
+                        }
+                        s.emit_acc -= n as f32;
+                        count = n;
+                        power = pressure * (np.emit_pow - np.emit_pow_min) + np.emit_pow_min;
                     }
-                    s.emit_acc -= n as f32;
-                    count = n;
                     attack = (pressure * (np.attack - np.attack_min) as f32 + np.attack_min as f32)
                         as i16;
-                    power = pressure * (np.emit_pow - np.emit_pow_min) + np.emit_pow_min;
                     reaction =
                         pressure * (np.reaction_pow - np.reaction_pow_min) + np.reaction_pow_min;
-                    if turbo_aimed {
-                        dir_tremble *= TURBO_AIM_TREMBLE;
-                    }
                 }
             } else if matches!(kind, NozzleKind::Spray | NozzleKind::Yoshi) {
                 // TNozzleDeform::emit (without the secondary bomb trigger)
@@ -1226,7 +1245,8 @@ impl Mario {
             // (`limits.rs`) takes that much less water a drop, so the tank lasts as long.
             // The precision slug costs what its whole charge would have (`num` drops for `trigger_time` ticks).
             let cost_count = if precision {
-                ((np.num * np.trigger_time as f32).round() as i32).max(1)
+                // The whole charge's water, paid with the first drop.
+                if first_shot { ((np.num * np.trigger_time as f32).round() as i32).max(1) } else { 0 }
             } else {
                 count
             };
@@ -1242,6 +1262,18 @@ impl Mario {
             f.emitted += count as u32;
         }
 
+        // The gatling's ring: this drop leaves from its place on a circle round the line to the target (counter-clockwise seen from
+        // behind the muzzle: +X to +Y with +Z ahead), and homes in on the lock from there.
+        let pos = if turbo_aimed {
+            let ahead = dir.try_normalize().unwrap_or(Vec3::Z);
+            let right = Vec3::Y.cross(ahead).try_normalize().unwrap_or(Vec3::X);
+            let up = ahead.cross(right);
+            let a = self.ring_phase;
+            self.ring_phase = (a + std::f32::consts::TAU / TURBO_RING_STEPS).rem_euclid(std::f32::consts::TAU);
+            pos + (right * a.cos() + up * a.sin()) * TURBO_RING_RADIUS
+        } else {
+            pos
+        };
         host.event(Event::WaterEmit(WaterEmit {
             nozzle: kind,
             pos,
@@ -1253,13 +1285,13 @@ impl Mario {
             hit_height: np.hit_height,
             inherit,
             size,
-            size_tremble: if precision { 0.0 } else { np.size_tremble },
+            size_tremble: if precision || turbo_aimed { 0.0 } else { np.size_tremble },
             dir_tremble,
-            pow_tremble: if precision { 0.0 } else { np.pow_tremble },
+            pow_tremble: if precision || turbo_aimed { 0.0 } else { np.pow_tremble },
             particle_type: np.particle_type,
             burst,
             spin: self.spinning(),
-            precise: precision,
+            precise: precision || turbo_aimed,
         }));
 
         if grounded_gun {
@@ -1270,14 +1302,16 @@ impl Mario {
         if precision {
             // The slug's kick: opposite the shot vector, `PRECISION_KICK` (a fraction of the Rocket's own launch), and
             // nothing else. In a dive or slide it takes the place of the horizontal boost.
-            self.precision_fired = true;
-            let dir_scale = -dir.x * sin(face) - dir.z * cos(face);
-            if self.status == Status::Catch {
-                self.push_along(PRECISION_KICK * dir_scale, 99.0);
-            } else {
-                self.add_velocity(PRECISION_KICK * dir_scale);
+            self.precision_shots += 1;
+            if first_shot {
+                let dir_scale = -dir.x * sin(face) - dir.z * cos(face);
+                if self.status == Status::Catch {
+                    self.push_along(PRECISION_KICK * dir_scale, 99.0);
+                } else {
+                    self.add_velocity(PRECISION_KICK * dir_scale);
+                }
+                self.vel.y += -dir.y * PRECISION_KICK;
             }
-            self.vel.y += -dir.y * PRECISION_KICK;
             return;
         }
         // The Hover keeps its lift while its jets aim: the recoil comes from where its jets point without the aim.
@@ -1332,17 +1366,20 @@ pub(crate) const ROCKET_SLIDE_MAX: f32 = 140.0;
 /// How many times as fast the Rocket charges in a dive or belly slide (host extension).
 const ROCKET_SLIDE_CHARGE: f32 = 1.5;
 /// The experimental aimed modes' tuning (host extension; Sunshine has none of these, so there are no disc values).
-/// The Rocket's precision slug hits for this share of what the Spray could deal in the same wind-up.
-const PRECISION_SPRAY_SHARE: f32 = 0.5;
-/// How much faster than the Rocket's fastest drop the slug flies: a real sniper shot, crossing most of the screen in a frame or two.
-const PRECISION_SPEED_MULT: f32 = 6.0;
-/// The slug's size next to a Rocket drop's (narrow).
-const PRECISION_SIZE: f32 = 0.6;
+/// The aimed Rocket fires this many drops, one a tick.
+pub(crate) const PRECISION_DROPS: u8 = 5;
+/// Their speed, times the Spray's.
+const PRECISION_SPEED_MULT: f32 = 4.0;
+/// A drop's hit, times a Spray drop's.
+const PRECISION_DAMAGE_MULT: f32 = 20.0;
 /// Speed the slug kicks him back, opposite the shot (a fraction of the Rocket's own climb).
 const PRECISION_KICK: f32 = 8.0;
-/// An aimed Turbo fires this many times as many drops a tick, spread this much less, and thrusts this much less.
-const TURBO_AIM_RATE: f32 = 3.0;
-const TURBO_AIM_TREMBLE: f32 = 0.5;
+/// The aimed Turbo (the gatling) fires one drop a tick round a ring, counter-clockwise seen from behind the muzzle: this many
+/// drops a turn, on a ring this wide (sim units) round the line to the target, each at this many times the Spray's speed, and
+/// each homes on the lock like the Rocket's.
+const TURBO_RING_STEPS: f32 = 8.0;
+const TURBO_RING_RADIUS: f32 = 45.0;
+const TURBO_RING_SPEED_MULT: f32 = 2.0;
 const TURBO_AIM_THRUST_SCALE: f32 = 0.5;
 
 fn np_min(p: &Params, k: NozzleKind) -> f32 {
