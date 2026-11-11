@@ -1917,6 +1917,67 @@ fn mario_picks_up_fruit_carries_puts_and_throws_it() {
     assert!(s.event_count(|e| matches!(e, Event::Throw { id: 7, .. })) == 1);
 }
 
+/// A takeable of the host's throwing kind (`libsms::carry::TAKE_THROWS`: the small enemies): B throws it standing and walking too, where any
+/// other takeable is put down, and in the air as well (the host extension that throws instead of diving).
+#[test]
+fn a_throwing_kind_is_thrown_by_b_standing_walking_and_jumping() {
+    const ENEMY: u64 = libsms::carry::TAKE_THROWS | 7;
+    struct EnemyHost {
+        at: Vec3,
+        held: bool,
+    }
+    impl Host for EnemyHost {
+        fn ground(&self, _p: Vec3) -> Option<libsms::GroundHit> {
+            Some(libsms::GroundHit { height: 0.0, normal: Vec3::Y, flags: libsms::SurfaceFlags::NONE })
+        }
+        fn takeables(&self, pos: Vec3, radius: f32, out: &mut Vec<libsms::host::Takeable>) {
+            if !self.held && (self.at - pos).length() < radius + 40.0 {
+                out.push(libsms::host::Takeable { id: ENEMY, pos: self.at, radius: 40.0, fruit: None });
+            }
+        }
+        fn take(&mut self, id: u64) -> bool {
+            self.held = id == ENEMY;
+            self.held
+        }
+    }
+    let pick_up = |s: &mut Scene<EnemyHost>| {
+        s.host.world.held = false;
+        s.host.world.at = s.mario().pos + Vec3::new(0.0, 0.0, 60.0);
+        s.pad.b = true;
+        s.step(1);
+        s.pad.b = false;
+        assert!(s.until(300, |m| m.held == Some(ENEMY) && m.status == Status::Wait), "no pick-up");
+    };
+    // Standing: B throws (a fruit would be put down).
+    let mut s = Scene::new(EnemyHost { at: Vec3::new(0.0, 0.0, 60.0), held: false });
+    s.step(2);
+    pick_up(&mut s);
+    s.step(5);
+    press_b(&mut s);
+    assert_eq!(s.mario().status, Status::Pitching, "standing B put the enemy down: {:?}", s.mario().status);
+    assert!(s.until(120, |m| m.held.is_none()));
+    assert_eq!(s.event_count(|e| matches!(e, Event::Throw { id: ENEMY, .. })), 1);
+    assert_eq!(s.event_count(|e| matches!(e, Event::Put { .. })), 0);
+    assert!(s.until(300, |m| m.status == Status::Wait));
+    // Walking slowly (well under a run's 16): B throws too.
+    pick_up(&mut s);
+    s.pad.stick = Vec2::new(0.0, 0.4);
+    assert!(s.until(120, |m| m.status == Status::Run && m.forward_vel > 1.0 && m.forward_vel < 16.0), "not walking: {:?}", s.mario().status);
+    press_b(&mut s);
+    assert_eq!(s.mario().status, Status::Pitching, "walking B didn't throw: {:?}", s.mario().status);
+    assert!(s.until(120, |m| m.held.is_none()));
+    // In a jump: B throws and he stays in his jump.
+    s.pad.stick = Vec2::new(0.0, 0.0);
+    assert!(s.until(300, |m| m.status == Status::Wait));
+    pick_up(&mut s);
+    s.press_a();
+    s.step(10);
+    assert!(!s.mario().on_ground());
+    press_b(&mut s);
+    assert!(s.mario().held.is_none(), "B in the air did not throw");
+    assert!(!matches!(s.mario().status, Status::JumpCatch), "he dived instead of throwing");
+}
+
 /// Low gravity (a host's moon): the same jump goes higher and comes down slower; 1 is the game's own.
 #[test]
 fn a_gravity_scale_makes_jumps_higher_and_falls_slower() {

@@ -16,6 +16,11 @@ use crate::host::{Host, Takeable};
 use crate::mario::{Mario, Status, UpperState};
 use crate::math::{cos, diff, matan, sin};
 
+/// Host convention: a takeable whose id has this bit set (and not the one above it, the teammates') is a *throwing kind*: B with it in hand
+/// throws it, standing, walking or running, instead of putting it down below a run (`waitMain` and `isThrowStart` in the game
+/// choose by the held object's kind). The host uses it for the small enemies Mario picks up.
+pub const TAKE_THROWS: u64 = 0x4000_0000;
+
 /// Clips (`ANIM_RAISE`, `ANIM_GET_FAIL`...).
 pub mod clip {
     use crate::anim::ClipName;
@@ -248,7 +253,8 @@ impl Mario {
         if self.held.is_none() || !self.input.b_pressed {
             return false;
         }
-        if running && self.forward_vel > 16.0 {
+        let throwing_kind = self.held.is_some_and(|id| id & 0xC000_0000 == TAKE_THROWS);
+        if (running && self.forward_vel > 16.0) || throwing_kind {
             return self.change_status(Status::Pitching, 0, false);
         }
         if self.can_put(host) {
